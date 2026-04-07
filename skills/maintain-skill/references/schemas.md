@@ -6,7 +6,9 @@ JSON data structures used throughout the maintain-skill workflow.
 
 ## evals.json
 
-Defines the test cases for a skill. Located at `evals/evals.json` within the skill directory.
+Defines the test cases for a skill. Canonical location: `<workspace>/iteration-N/evals.json`.
+
+This file is an iteration snapshot. Keep one copy per iteration so historical review pages and benchmarks do not silently change when prompts or expectations evolve later.
 
 ```json
 {
@@ -28,7 +30,7 @@ Defines the test cases for a skill. Located at `evals/evals.json` within the ski
 
 - `skill_name` — Name matching the skill's frontmatter
 - `evals[].id` — Unique integer identifier
-- `evals[].dir_name` — Directory name used for this eval under each iteration folder (e.g. `"setup-vite-vue"`). Must match the actual directory name. Used by `generate-review.mjs` to map prompts and expectations to runs.
+- `evals[].dir_name` — Directory name used for this eval under each iteration folder (e.g. `"setup-vite-vue"`). Must match the actual directory name. Used by `generate-review.mjs` and `aggregate-benchmark.mjs` to map prompts and expectations to runs.
 - `evals[].prompt` — The task to execute
 - `evals[].expected_output` — Human-readable description of success
 - `evals[].files` — Optional input file paths (relative to skill root)
@@ -40,7 +42,7 @@ Defines the test cases for a skill. Located at `evals/evals.json` within the ski
 
 Per-eval metadata placed in each eval directory. Located at `<eval-name>/eval_metadata.json`.
 
-This file is **optional** when `evals.json` includes `dir_name` fields (the preferred approach). The review generator (`generate-review.mjs`) looks for `eval_metadata.json` first, then falls back to matching `dir_name` in `evals/evals.json`. You only need this file if you want to override the prompt or expectations for a specific run.
+This file is **optional** when the current iteration's `evals.json` includes `dir_name` fields. The review generator (`generate-review.mjs`) looks for `eval_metadata.json` first, then falls back to matching `dir_name` in the iteration-local `evals.json`. You only need this file if you want to override the prompt or expectations for a specific run.
 
 ```json
 {

@@ -24,20 +24,44 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, resolve, basename } from 'path';
+import { join, resolve, basename, dirname } from 'path';
 
 /**
- * Load evals array from evals/evals.json, searching root and parent directory.
+ * Load evals array from evals.json.
+ * Canonical location is <workspace>/iteration-N/evals.json.
+ * Legacy fallback: <workspace>/iteration-N/evals/evals.json, then sibling skill-dir equivalents.
  * Returns an array of eval entries or null.
  */
 function loadEvalsJson(root) {
+  const candidateBases = [];
+  const seenBases = new Set();
+
   for (const base of [root, join(root, '..')]) {
-    const evalsPath = join(base, 'evals', 'evals.json');
-    if (existsSync(evalsPath)) {
-      try {
-        const data = JSON.parse(readFileSync(evalsPath, 'utf-8'));
-        return data.evals || [];
-      } catch { /* ignore */ }
+    const resolvedBase = resolve(base);
+    if (!seenBases.has(resolvedBase)) {
+      candidateBases.push(resolvedBase);
+      seenBases.add(resolvedBase);
+    }
+
+    const baseName = basename(resolvedBase);
+    if (baseName.endsWith('-workspace')) {
+      const skillDir = join(dirname(resolvedBase), baseName.slice(0, -'-workspace'.length));
+      const resolvedSkillDir = resolve(skillDir);
+      if (!seenBases.has(resolvedSkillDir)) {
+        candidateBases.push(resolvedSkillDir);
+        seenBases.add(resolvedSkillDir);
+      }
+    }
+  }
+
+  for (const base of candidateBases) {
+    for (const evalsPath of [join(base, 'evals.json'), join(base, 'evals', 'evals.json')]) {
+      if (existsSync(evalsPath)) {
+        try {
+          const data = JSON.parse(readFileSync(evalsPath, 'utf-8'));
+          return data.evals || [];
+        } catch { /* ignore */ }
+      }
     }
   }
   return null;
@@ -111,7 +135,7 @@ function loadRunResults(benchmarkDir) {
         evalId = meta.eval_id ?? 0;
       } catch { /* ignore */ }
     } else {
-      // Fallback: look up by dir_name in evals/evals.json
+      // Fallback: look up by dir_name in the iteration evals snapshot
       const evalEntry = getEvalByDirName(benchmarkDir, evalName);
       if (evalEntry) {
         evalId = evalEntry.id ?? 0;

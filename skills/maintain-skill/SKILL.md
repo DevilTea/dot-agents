@@ -176,7 +176,7 @@ Skills must not contain malware, exploit code, or content that could compromise 
 
 After writing the skill draft, create 2–3 realistic test prompts — the kind of thing a real user would actually say. Share them with the user: "Here are test cases I'd like to try. Do these look right, or should we add more?"
 
-Save to `evals/evals.json`:
+Save them as an iteration-local snapshot at `<workspace>/iteration-N/evals.json`:
 
 ```json
 {
@@ -194,7 +194,9 @@ Save to `evals/evals.json`:
 }
 ```
 
-The `dir_name` field must match the directory name used for this eval under each iteration folder (e.g. `iteration-1/descriptive-eval-name/with_skill/`). The review generator uses this to map prompts and expectations to runs.
+The `dir_name` field must match the directory name used for this eval under each iteration folder (e.g. `iteration-1/descriptive-eval-name/with_skill/`). The review generator and benchmark aggregator use the iteration-local `evals.json` snapshot to map prompts and expectations to runs.
+
+Treat this file as frozen metadata for that iteration. If you start `iteration-2`, copy the previous iteration's `evals.json` forward first, then edit the new copy.
 
 Don't write assertions yet — just prompts. Assertions come in the next phase while runs are in progress.
 
@@ -239,11 +241,13 @@ For each test case, spawn two subagents — one with the skill, one without. The
 Subagents inherit the parent conversation's system context (AGENTS.md, skill descriptions, repo memory, user memory). This shared context contaminates both runs equally. To produce a meaningful delta, enforce these constraints **in the subagent prompt itself**:
 
 **With-skill run** — allowed to:
+
 - Read the skill file and any reference files the skill directs
 - Read input files listed in the eval
 - Write output files
 
 **With-skill run** — forbidden from:
+
 - Reading workspace source code, docs, examples, or demo projects beyond what the skill references provide
 - Using `search_subagent`, `semantic_search`, `grep_search`, `file_search`, or `list_dir` to explore the codebase
 - Running terminal commands that read codebase files (cat, grep, find, etc.)
@@ -251,10 +255,12 @@ Subagents inherit the parent conversation's system context (AGENTS.md, skill des
 Rationale: the skill's value is measured by how well its bundled knowledge replaces codebase exploration. If the with-skill run also reads source code, you can't attribute the result to the skill.
 
 **Baseline run** — allowed to:
+
 - Write output files
 - Read input files listed in the eval
 
 **Baseline run** — forbidden from:
+
 - Reading ANY workspace files (source code, docs, examples, configs, demo projects, test files)
 - Using `read_file`, `search_subagent`, `semantic_search`, `grep_search`, `file_search`, `list_dir`, or `run_in_terminal` for codebase exploration
 - Reading any skill files (including the skill being tested)
@@ -306,7 +312,7 @@ At the end, write a metrics summary to: <workspace>/iteration-N/<eval-name>/with
 - Creating a new skill: no skill at all.
 - Improving an existing skill: snapshot the old version first, use that as baseline.
 
-Use the `dir_name` field in `evals/evals.json` to map each eval to its iteration directory. The eval directory structure should be:
+Use the `dir_name` field in `<workspace>/iteration-N/evals.json` to map each eval to its iteration directory. The eval directory structure should be:
 
 ```
 iteration-N/
@@ -319,7 +325,7 @@ iteration-N/
       transcript.md
 ```
 
-The review generator (`generate-review.mjs`) looks up prompts and expectations from `evals/evals.json` by matching directory names to `dir_name`. You don't need to write `eval_metadata.json` files unless you want to override per-run metadata.
+The review generator (`generate-review.mjs`) looks up prompts and expectations from the current iteration's `evals.json` by matching directory names to `dir_name`. You don't need to write `eval_metadata.json` files unless you want to override per-run metadata.
 
 ### Step 2: Draft assertions while runs execute
 
@@ -332,7 +338,7 @@ Use this time productively. Draft quantitative assertions for each test case:
 
 Subjective skills are better evaluated qualitatively — don't force assertions.
 
-Update `evals/evals.json` with the drafted assertions.
+Update the current iteration's `evals.json` with the drafted assertions.
 
 ### Step 3: Grade each run
 

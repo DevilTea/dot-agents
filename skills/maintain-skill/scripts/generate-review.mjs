@@ -19,7 +19,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, resolve, relative, extname, basename } from 'path';
+import { join, resolve, relative, extname, basename, dirname } from 'path';
 import { execSync } from 'child_process';
 
 const TEXT_EXTS = new Set([
@@ -80,15 +80,36 @@ function findRunsRecursive(root, current, runs) {
 }
 
 function loadEvalsJson(root) {
-  // Try evals/evals.json relative to workspace root, then its parent
-  // (handles iteration dirs like workspace/iteration-N where evals is at workspace/evals/)
+  // Canonical location: <workspace>/iteration-N/evals.json.
+  // Legacy fallback: <workspace>/iteration-N/evals/evals.json, then sibling skill-dir equivalents.
+  const candidateBases = [];
+  const seenBases = new Set();
   for (const base of [root, join(root, '..')]) {
-    const evalsPath = join(base, 'evals', 'evals.json');
-    if (existsSync(evalsPath)) {
-      try {
-        const data = JSON.parse(readFileSync(evalsPath, 'utf-8'));
-        return data.evals || [];
-      } catch { /* ignore */ }
+    const resolvedBase = resolve(base);
+    if (!seenBases.has(resolvedBase)) {
+      candidateBases.push(resolvedBase);
+      seenBases.add(resolvedBase);
+    }
+
+    const baseName = basename(resolvedBase);
+    if (baseName.endsWith('-workspace')) {
+      const skillDir = join(dirname(resolvedBase), baseName.slice(0, -'-workspace'.length));
+      const resolvedSkillDir = resolve(skillDir);
+      if (!seenBases.has(resolvedSkillDir)) {
+        candidateBases.push(resolvedSkillDir);
+        seenBases.add(resolvedSkillDir);
+      }
+    }
+  }
+
+  for (const base of candidateBases) {
+    for (const evalsPath of [join(base, 'evals.json'), join(base, 'evals', 'evals.json')]) {
+      if (existsSync(evalsPath)) {
+        try {
+          const data = JSON.parse(readFileSync(evalsPath, 'utf-8'));
+          return data.evals || [];
+        } catch { /* ignore */ }
+      }
     }
   }
   return null;
@@ -147,7 +168,7 @@ function buildRun(root, runDir) {
     }
   }
 
-  // Fallback: look up prompt from evals/evals.json using eval directory name
+  // Fallback: look up prompt from the discovered evals snapshot using eval directory name
   if (!prompt) {
     const parentDirName = basename(join(runDir, '..'));
     const evalDirMap = getEvalDirMap(root);
