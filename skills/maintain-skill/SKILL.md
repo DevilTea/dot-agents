@@ -204,17 +204,17 @@ Don't write assertions yet — just prompts. Assertions come in the next phase w
 
 When you draft assertions (in Phase 4 Step 2), avoid vague "presence checks" that can be satisfied by fabricated content. The without-skill baseline will often generate plausible-looking but factually wrong output. Your expectations must distinguish correct from plausible-but-wrong.
 
-**Bad**: "展示至少兩個 plugin lifecycle hook"
-— A model without the skill can invent plausible-sounding hook names that don't actually exist.
+**Bad**: "展示如何處理非同步錯誤"
+— A model can show any async pattern, including incorrect ones.
 
-**Good**: "展示至少兩個正確的 PikaCSS plugin lifecycle hook（例如 configureRawConfig, configureEngine, transformStyleItems）"
-— Specifies real hook names; fabricated ones will fail.
+**Good**: "使用 `process.on('unhandledRejection', handler)` 捕捉未處理的 Promise rejection"
+— Names the exact API; wrong event names or wrong objects will fail.
 
-**Bad**: "提到 variables 的設定方式"
-— Any vaguely related config structure would pass.
+**Bad**: "package.json 包含模組設定"
+— Any JSON with any module-related fields would pass.
 
-**Good**: "使用 variables.variables 巢狀物件結構定義 CSS variables，並從 @pikacss/core 匯入 defineEngineConfig"
-— Anchors to specific API surface; wrong import paths or config shapes will fail.
+**Good**: "package.json 包含 `\"type\": \"module\"` 及 `exports` 欄位，且 `exports['.']` 指向正確的 build 輸出路徑"
+— Anchors to specific fields; missing `type` or wrong `exports` shape will fail.
 
 Rules of thumb:
 
