@@ -15,6 +15,7 @@ ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
 ## Agents
 
 - [Powerful Agent](agents/Powerful%20Agent.agent.md): A powerful agent that operates in continuous task loops, interrogating user intent before execution.
+- [Powerful Review](agents/Powerful%20Review.agent.md): A dedicated read-only reviewer that only inspects work and returns findings-first feedback.
 
 ## Skills
 
