@@ -20,8 +20,14 @@ export async function listTemplates(projectRoot) {
   let entries;
   try {
     entries = await readdir(dir);
-  } catch {
-    return [];
+  } catch (err) {
+    // Only intentional-absence cases should resolve to "no templates".
+    // Any other error (EACCES, EIO, etc.) must bubble up so real
+    // misconfiguration does not masquerade as an empty template set.
+    if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
+      return [];
+    }
+    throw err;
   }
   return entries.filter((f) => f.endsWith(".md")).sort();
 }
@@ -34,6 +40,15 @@ export async function listTemplates(projectRoot) {
  * @returns {Promise<{ filename: string, frontmatter: string, body: string }>}
  */
 export async function readTemplate(projectRoot, filename) {
+  if (
+    typeof filename !== "string" ||
+    filename.length === 0 ||
+    filename.includes("..") ||
+    filename.includes("/") ||
+    filename.includes("\\")
+  ) {
+    throw new Error(`Invalid template filename: ${JSON.stringify(filename)}`);
+  }
   const filePath = join(orbitPaths(projectRoot).templates, filename);
   const { frontmatter, body } = await readMarkdownWithFrontmatter(filePath);
   return { filename, frontmatter, body };
@@ -41,7 +56,7 @@ export async function readTemplate(projectRoot, filename) {
 
 /**
  * Match templates against a user query by checking template filename,
- * frontmatter `name`/`description`/`tags` fields, and body content
+ * frontmatter `name`/`description`/`keywords` fields, and body content
  * for keyword overlap.
  *
  * Returns matched templates sorted by relevance (best first).

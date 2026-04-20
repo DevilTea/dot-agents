@@ -94,7 +94,10 @@ export async function readMarkdownWithFrontmatter(filePath) {
   const raw = await readFile(filePath, "utf-8");
   const match = raw.match(FRONTMATTER_RE);
   if (match) {
-    return { frontmatter: match[1], body: match[2] };
+    // Strip at most one leading newline so the blank-line separator emitted
+    // by writeMarkdownWithFrontmatter (`---\n\n${body}`) round-trips cleanly.
+    const body = match[2].replace(/^\r?\n/, "");
+    return { frontmatter: match[1], body };
   }
   return { frontmatter: "", body: raw };
 }

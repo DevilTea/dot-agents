@@ -45,7 +45,7 @@ Use the CLI to list all available templates:
 node .orbit/scripts/cli.mjs templates
 ```
 
-Returns a JSON array of template metadata (name, keywords, description, filename).
+Returns a JSON object of the form `{ ok: true, templates: string[] }`, where `templates` is an array of template filenames (e.g. `["refactor-module.md"]`). Use `read-template <filename>` to fetch the frontmatter + body for any specific template.
 
 ### Keyword Matching
 

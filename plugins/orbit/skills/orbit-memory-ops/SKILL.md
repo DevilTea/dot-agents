@@ -71,7 +71,7 @@ The `index.json` file tracks all memories for fast lookup:
    - Relevant tags (technical domains, patterns, tools involved).
    - A 1–2 sentence abstract capturing the technical value.
    - Structured detailed content (decisions made, approaches taken, lessons learned).
-3. Check for duplicates — do not create a new memory when an existing one covers the same ground.
+3. Check for duplicates — do not create a new memory when an existing one covers the same ground. When a duplicate is detected, the archive short-circuits with `index_updated: false` and returns the existing memory's metadata with `duplicate: true` (see Archive Result Contract below).
 4. Create the memory `.md` file with proper frontmatter.
 5. Update `index.json` to include the new entry.
 6. Return the created memory's metadata.
@@ -85,8 +85,15 @@ node .orbit/scripts/cli.mjs memory-list
 # Search memories
 node .orbit/scripts/cli.mjs memory-search "<query>"
 
-# Archive a new memory
+# Archive a new memory (inline body; safe only for single-line content)
 node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstract "..." --body "..."
+
+# Archive a new memory (preferred for real round summaries)
+# --body-file points at a file whose contents become the memory body.
+# Prefer this form whenever the body contains newlines, code fences,
+# or quotes — shell-escaping an inline --body is fragile and can
+# truncate or mangle content.
+node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstract "..." --body-file <path>
 ```
 
 ## Workflow Integration
@@ -131,6 +138,21 @@ node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstra
     "file": "<filename>"
   },
   "index_updated": true
+}
+```
+
+When a duplicate was detected (no new entry created):
+
+```json
+{
+  "status": "archive_complete",
+  "operation": "archive",
+  "memory": {
+    "id": "MEM_YYYYMMDD_NNN",
+    "file": "<filename>",
+    "duplicate": true
+  },
+  "index_updated": false
 }
 ```
 

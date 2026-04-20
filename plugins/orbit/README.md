@@ -42,7 +42,6 @@ The following settings **must** be configured for Orbit to function correctly:
 
 ```
 .orbit/
-.orbit/
 ├── manifest.json     # Version stamp (orbitVersion, timestamps)
 ├── scripts/          # CLI + lib (auto-copied during init)
 ├── templates/        # Task templates (*.md with YAML frontmatter)
@@ -130,8 +129,9 @@ Place `.md` files in `.orbit/templates/` to guide the Clarify phase for common t
 
 ```yaml
 ---
-title: My Template
+name: My Template
 keywords: [refactor, migration]
+description: Short 1-2 sentence description of when to use this template.
 ---
 ## Context
 ...

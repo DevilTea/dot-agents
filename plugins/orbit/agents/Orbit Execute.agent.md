@@ -1,7 +1,6 @@
 ---
 name: Orbit Execute
 description: Execute-phase worker for Orbit. Performs edits and validations in isolation; writes results to .orbit round files. Never interacts with the user.
-target: vscode
 user-invocable: false
 agents: ["Explore"]
 ---
@@ -29,7 +28,7 @@ Before starting your work, you MUST read and apply the following skills:
 
 ## Global Invariants
 
-1. **Never call `#tool:vscode/askQuestions`.** You have no direct user channel. If you discover a new material branch, a destructive action the plan did not authorize, or any other point that requires a human decision, **stop immediately** and return `status: "needs_user_decision"` with the branch details.
+1. **Never call `#tool:vscode_askQuestions`.** You have no direct user channel. If you discover a new material branch, a destructive action the plan did not authorize, or any other point that requires a human decision, **stop immediately** and return `status: "needs_user_decision"` with the branch details.
 2. **`.orbit` state writes are scoped.** You may write to these round files only:
    - `execution-memo.md` — your execution notes and artifacts log.
      You must NOT touch `state.json`, `requirements.md`, `plan.md`, `review-findings.md`, or `summary.md`. Only `Orbit Round` owns `state.json`; the phase transition to `review` happens in Round after it receives your return contract.
@@ -69,10 +68,9 @@ If any required input is missing, return `status: "blocked"` with a `needs_user_
 At the end of execution, update the round's files:
 
 - **`execution-memo.md`**: Replace with a structured log of edits, deliverables, and validation results.
-- **`state.json`**: Update `phase` to `"review"` and `updatedAt` to current timestamp (only on successful completion).
 
-Do **not** touch `state.json`. `Orbit Round` is the sole writer of `state.json` and will advance `phase`/`status` based on your return contract
-If the file write fails, include the content inline in your return response.
+Do **not** touch `state.json`. `Orbit Round` is the sole writer of `state.json` and will advance `phase`/`status` based on your return contract.
+If the write of `execution-memo.md` fails, include its intended content inline in your return response.
 
 ## Output Contract
 

@@ -29,8 +29,9 @@
  *   version                  Show local .orbit version vs plugin version.
  */
 
-import { resolve, relative, isAbsolute } from "node:path";
-import { readFile, cp, copyFile, mkdir } from "node:fs/promises";
+import { resolve, isAbsolute, dirname, sep as pathSep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readFile, cp, copyFile, mkdir, realpath } from "node:fs/promises";
 import {
   initOrbit,
   createTask,
@@ -39,6 +40,7 @@ import {
   updateRoundState,
   roundFiles,
   orbitRoot,
+  orbitPaths,
   isValidTaskDirName,
   listTemplates,
   matchTemplates,
@@ -49,6 +51,7 @@ import {
   migrateOrbit,
   readManifest,
   readPluginVersion,
+  compareSemver,
 } from "./lib/index.mjs";
 
 const args = process.argv.slice(2);
@@ -62,11 +65,25 @@ const projectRoot = process.env.ORBIT_ROOT || process.cwd();
  * Skips the copy when already running from the target location (self-copy guard).
  */
 async function copyScriptsToOrbit(projectRoot) {
-  const scriptsSource = resolve(import.meta.dirname);
+  const scriptsSource = resolve(dirname(fileURLToPath(import.meta.url)));
   const scriptsDest = resolve(projectRoot, ".orbit", "scripts");
 
-  // Avoid self-copy when already running from .orbit/scripts/
-  if (scriptsSource === scriptsDest) return;
+  // Avoid self-copy when already running from .orbit/scripts/.
+  // Canonicalize both source and destination (if the destination exists) so
+  // symlinked setups do not falsely trigger or bypass the guard.
+  let canonicalSource = scriptsSource;
+  let canonicalDest = scriptsDest;
+  try {
+    canonicalSource = await realpath(scriptsSource);
+  } catch {
+    // Source must exist — leave as-is and let subsequent reads surface errors.
+  }
+  try {
+    canonicalDest = await realpath(scriptsDest);
+  } catch {
+    // Destination may not exist yet; fall back to the resolved path.
+  }
+  if (canonicalSource === canonicalDest) return;
 
   await mkdir(resolve(scriptsDest, "lib"), { recursive: true });
   await copyFile(resolve(scriptsSource, "cli.mjs"), resolve(scriptsDest, "cli.mjs"));
@@ -74,6 +91,13 @@ async function copyScriptsToOrbit(projectRoot) {
     recursive: true,
     force: true,
   });
+
+  // Copy plugin.json into `.orbit/` so the local CLI copy can resolve
+  // the plugin version via `<scripts>/../plugin.json` (one level above
+  // the scripts directory).
+  const pluginJsonSource = resolve(scriptsSource, "..", "plugin.json");
+  const pluginJsonDest = resolve(projectRoot, ".orbit", "plugin.json");
+  await copyFile(pluginJsonSource, pluginJsonDest);
 }
 
 async function main() {
@@ -122,24 +146,125 @@ async function main() {
         console.error("Usage: round-state <roundPath> [--patch '{...}']");
         process.exit(1);
       }
-      const absPath = resolve(roundPath);
-      const root = orbitRoot(projectRoot);
-      const rel = relative(root, absPath);
-      if (rel.startsWith("..") || isAbsolute(rel)) {
-        console.error(
-          `roundPath must be located under ${root}; got ${absPath}`
+      const absPath = isAbsolute(roundPath)
+        ? resolve(roundPath)
+        : resolve(projectRoot, roundPath);
+      const tasksRoot = orbitPaths(projectRoot).tasks;
+
+      // Canonicalize both the target path and the tasks root so symlinks
+      // cannot escape the tasks tree. The target path may not exist yet
+      // (e.g. a round created earlier in the same turn has already been
+      // removed, or the caller typoed it); in that case canonicalize the
+      // deepest existing ancestor and append the remaining segments.
+      let canonicalTasksRoot;
+      try {
+        canonicalTasksRoot = await realpath(tasksRoot);
+      } catch (err) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            error: "tasks root not found",
+            detail: err.message,
+          })
+        );
+        process.exit(1);
+      }
+
+      async function canonicalizeAllowingMissing(target) {
+        let current = target;
+        const suffix = [];
+        while (true) {
+          try {
+            const resolved = await realpath(current);
+            return suffix.length ? resolve(resolved, ...suffix) : resolved;
+          } catch (err) {
+            if (err?.code !== "ENOENT") throw err;
+            const parent = dirname(current);
+            if (parent === current) {
+              // Reached filesystem root without finding an existing ancestor.
+              return target;
+            }
+            suffix.unshift(current.slice(parent.length + 1));
+            current = parent;
+          }
+        }
+      }
+
+      let canonicalAbsPath;
+      try {
+        canonicalAbsPath = await canonicalizeAllowingMissing(absPath);
+      } catch (err) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            error: "Failed to resolve roundPath",
+            detail: err.message,
+          })
+        );
+        process.exit(1);
+      }
+
+      const tasksRootWithSep = canonicalTasksRoot + pathSep;
+      if (
+        canonicalAbsPath !== canonicalTasksRoot &&
+        !canonicalAbsPath.startsWith(tasksRootWithSep)
+      ) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            error: `roundPath must be located under ${canonicalTasksRoot}; got ${canonicalAbsPath}`,
+          })
+        );
+        process.exit(1);
+      }
+
+      // Require the path to live inside a `<task>/round-*` directory.
+      const relFromTasks = canonicalAbsPath.slice(tasksRootWithSep.length);
+      const segments = relFromTasks.split(pathSep).filter(Boolean);
+      if (segments.length < 2 || !segments[1].startsWith("round-")) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            error: "roundPath must reside inside a '<task>/round-*' directory",
+          })
         );
         process.exit(1);
       }
 
       const patchIdx = args.indexOf("--patch");
-      if (patchIdx !== -1 && args[patchIdx + 1]) {
-        const patch = JSON.parse(args[patchIdx + 1]);
-        const updated = await updateRoundState(absPath, patch);
-        console.log(JSON.stringify({ ok: true, state: updated }));
-      } else {
-        const state = await readRoundState(absPath);
-        console.log(JSON.stringify({ ok: true, state }));
+      try {
+        if (patchIdx !== -1 && args[patchIdx + 1]) {
+          let patch;
+          try {
+            patch = JSON.parse(args[patchIdx + 1]);
+          } catch (err) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                error: "Invalid --patch JSON",
+                detail: err.message,
+              })
+            );
+            process.exit(1);
+          }
+          const updated = await updateRoundState(canonicalAbsPath, patch);
+          console.log(JSON.stringify({ ok: true, state: updated }));
+        } else {
+          const state = await readRoundState(canonicalAbsPath);
+          console.log(JSON.stringify({ ok: true, state }));
+        }
+      } catch (err) {
+        if (err?.code === "ENOENT") {
+          console.log(
+            JSON.stringify({
+              ok: false,
+              error: "round state not found",
+              detail: err.message,
+            })
+          );
+          process.exit(1);
+        }
+        throw err;
       }
       break;
     }
@@ -192,12 +317,23 @@ async function main() {
     // -----------------------------------------------------------------
     case "memory-search": {
       const query = args.slice(1).join(" ");
-      if (!query) {
+      if (!query || !query.trim()) {
         console.error("Usage: memory-search <query>");
         process.exit(1);
       }
       const results = await searchMemories(projectRoot, query);
-      console.log(JSON.stringify({ ok: true, query, results, count: results.length }));
+      const index = await listMemories(projectRoot);
+      const totalScanned = Array.isArray(index?.memories) ? index.memories.length : 0;
+      console.log(
+        JSON.stringify({
+          ok: true,
+          status: "search_complete",
+          operation: "search",
+          query,
+          results,
+          total_memories_scanned: totalScanned,
+        })
+      );
       break;
     }
 
@@ -219,12 +355,75 @@ async function main() {
         );
         process.exit(1);
       }
-      const body = bodyFile
-        ? await readFile(resolve(bodyFile), "utf-8")
-        : bodyInline;
+      let body;
+      if (bodyFile) {
+        const resolvedBodyFile = resolve(projectRoot, bodyFile);
+        const projectRootAbs = resolve(projectRoot);
+        let canonicalBodyFile;
+        let canonicalProjectRoot;
+        try {
+          canonicalBodyFile = await realpath(resolvedBodyFile);
+        } catch (err) {
+          const error = err?.code === "ENOENT"
+            ? "body-file not found"
+            : "Failed to resolve body-file path";
+          console.log(
+            JSON.stringify({
+              ok: false,
+              error,
+              detail: err.message,
+            })
+          );
+          process.exit(1);
+        }
+        try {
+          canonicalProjectRoot = await realpath(projectRootAbs);
+        } catch {
+          canonicalProjectRoot = projectRootAbs;
+        }
+        if (
+          canonicalBodyFile !== canonicalProjectRoot &&
+          !canonicalBodyFile.startsWith(canonicalProjectRoot + pathSep)
+        ) {
+          console.log(
+            JSON.stringify({
+              ok: false,
+              error: "body-file outside project root",
+            })
+          );
+          process.exit(1);
+        }
+        body = await readFile(canonicalBodyFile, "utf-8");
+      } else {
+        body = bodyInline;
+      }
       const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean) : [];
       const result = await archiveMemory(projectRoot, { title, tags, abstract, body });
-      console.log(JSON.stringify({ ok: true, memory: result }));
+      const memoryPayload = result.duplicate
+        ? {
+            id: result.id,
+            file: result.file,
+            duplicate: true,
+          }
+        : {
+            id: result.id,
+            title,
+            date: result.date ?? undefined,
+            tags,
+            abstract,
+            file: result.file,
+          };
+      // Drop `date` when the library did not supply one (new-memory branch).
+      if (memoryPayload.date === undefined) delete memoryPayload.date;
+      console.log(
+        JSON.stringify({
+          ok: true,
+          status: "archive_complete",
+          operation: "archive",
+          memory: memoryPayload,
+          index_updated: result.index_updated,
+        })
+      );
       break;
     }
 
@@ -247,9 +446,11 @@ async function main() {
       const manifest = await readManifest(projectRoot);
       const pluginVersion = await readPluginVersion();
       const localVersion = manifest?.orbitVersion ?? null;
-      const updateAvailable = localVersion
-        ? localVersion !== pluginVersion
-        : false;
+      // Treat a missing manifest as "0.0.0" for update detection so a
+      // pre-migration .orbit tree is reported as `updateAvailable: true`.
+      // The JSON still exposes `localVersion: null` to signal "no manifest".
+      const updateAvailable =
+        compareSemver(localVersion ?? "0.0.0", pluginVersion) < 0;
       console.log(
         JSON.stringify({
           ok: true,

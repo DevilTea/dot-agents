@@ -5,6 +5,7 @@
  */
 
 import { join } from "node:path";
+import { stat } from "node:fs/promises";
 import { orbitPaths, memoryIndexPath } from "./paths.mjs";
 import {
   readJSON,
@@ -66,9 +67,10 @@ export function nextMemoryId(memories, date = new Date()) {
 export async function searchMemories(projectRoot, query) {
   const indexPath = memoryIndexPath(projectRoot);
   const index = await readJSON(indexPath);
+  const paths = orbitPaths(projectRoot);
   const q = query.toLowerCase();
 
-  return index.memories
+  const scored = index.memories
     .map((entry) => {
       const fields = [
         entry.title,
@@ -85,7 +87,24 @@ export async function searchMemories(projectRoot, query) {
 
       return { ...entry, score };
     })
-    .filter((e) => e.score > 0)
+    .filter((e) => e.score > 0);
+
+  // Drop entries whose backing `.md` file is missing on disk. The index is
+  // allowed to lag behind filesystem deletions; search must not report stale
+  // hits. Pruning `index.json` itself is out of scope.
+  const existing = [];
+  for (const entry of scored) {
+    const filePath = join(paths.memories, entry.file);
+    try {
+      await stat(filePath);
+      existing.push(entry);
+    } catch (err) {
+      if (err && err.code === "ENOENT") continue;
+      throw err;
+    }
+  }
+
+  return existing
     .sort((a, b) => b.score - a.score)
     .map(({ score, ...entry }) => ({
       ...entry,
@@ -141,12 +160,37 @@ export async function archiveMemory(projectRoot, { title, tags, abstract, body, 
   const indexPath = memoryIndexPath(projectRoot);
   const index = await readJSON(indexPath);
 
+  const normalizedTags = Array.isArray(tags) ? tags : [];
+  const norm = (s) => String(s ?? "").trim().toLowerCase();
+  const sortedTagsKey = (ts) => [...ts].map((t) => norm(t)).sort().join("\0");
+  const incomingTitleKey = norm(title);
+  const incomingAbstractKey = norm(abstract);
+  const incomingTagsKey = sortedTagsKey(normalizedTags);
+  const duplicate = index.memories.find(
+    (m) =>
+      norm(m.title) === incomingTitleKey &&
+      norm(m.abstract) === incomingAbstractKey &&
+      sortedTagsKey(Array.isArray(m.tags) ? m.tags : []) === incomingTagsKey
+  );
+  if (duplicate) {
+    return {
+      id: duplicate.id,
+      file: duplicate.file,
+      path: join(paths.memories, duplicate.file),
+      duplicate: true,
+      index_updated: false,
+    };
+  }
+
   const id = nextMemoryId(index.memories, date);
   const fileName = `${id}.md`;
   const filePath = join(paths.memories, fileName);
 
-  const dateStr = date.toISOString().slice(0, 10);
-  const normalizedTags = Array.isArray(tags) ? tags : [];
+  const dateStr = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 
   // Build frontmatter using safe YAML serialization.
   const frontmatter = [
@@ -170,7 +214,7 @@ export async function archiveMemory(projectRoot, { title, tags, abstract, body, 
   });
   await writeJSON(indexPath, index);
 
-  return { id, file: fileName, path: filePath };
+  return { id, file: fileName, path: filePath, date: dateStr, index_updated: true };
 }
 
 // ---------------------------------------------------------------------------

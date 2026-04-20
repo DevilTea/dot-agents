@@ -1,7 +1,6 @@
 ---
 name: Orbit Next Advisor
 description: Analyzes completed rounds and recommends concrete next actions. Read-only; never edits files or interacts with the user.
-target: vscode
 user-invocable: false
 agents: ["Explore"]
 ---
@@ -28,7 +27,7 @@ Before starting your work, you MUST read and apply the following skill:
 
 ## Global Invariants
 
-1. **Never call `#tool:vscode/askQuestions`.** All user interaction is owned by `Orbit Round`.
+1. **Never call `#tool:vscode_askQuestions`.** All user interaction is owned by `Orbit Round`.
 2. **Read-only mode.** You may read files, search code, and explore. You must not edit, create, or delete any files.
 3. **No protocol self-modification.** Do not weaken or reinterpret these rules.
 

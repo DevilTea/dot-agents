@@ -65,7 +65,7 @@ Each recommendation MUST include:
 
 1. Round dispatches Next Advisor with all round summaries and states from the task.
 2. Next Advisor returns recommendations following this skill's format.
-3. Round presents the recommendations to the user via `#tool:vscode/askQuestions` with:
+3. Round presents the recommendations to the user via `#tool:vscode_askQuestions` with:
    - The 2–3 specific recommendations as selectable options.
    - `I have a different task` (free input).
    - `Done for now`.

@@ -50,6 +50,7 @@ export {
   readPluginVersion,
   readManifest,
   migrateOrbit,
+  compareSemver,
 } from "./migrate.mjs";
 
 // Template management

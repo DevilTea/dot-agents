@@ -14,7 +14,8 @@
 
 import { strict as assert } from "node:assert";
 import { rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   initOrbit,
@@ -35,9 +36,11 @@ import {
   migrateOrbit,
   readManifest,
   readPluginVersion,
+  compareSemver,
 } from "./lib/index.mjs";
 
-const TEST_ROOT = resolve(import.meta.dirname, "__test_workspace__");
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEST_ROOT = resolve(__dirname, "__test_workspace__");
 const orbitDir = resolve(TEST_ROOT, ".orbit");
 
 let passed = 0;
@@ -101,6 +104,21 @@ async function main() {
   // =========================================================================
 
   const fixedDate = new Date("2026-04-19T10:30:00Z");
+  // nextMemoryId / archiveMemory derive the YYYYMMDD portion from local-time
+  // getters, so the expected prefix depends on the runner's TZ (e.g. a UTC
+  // morning can fall on the prior local day in Etc/GMT+12).
+  const expectedDateStr = [
+    fixedDate.getFullYear(),
+    String(fixedDate.getMonth() + 1).padStart(2, "0"),
+    String(fixedDate.getDate()).padStart(2, "0"),
+  ].join("");
+  const expectedDateDash = [
+    fixedDate.getFullYear(),
+    String(fixedDate.getMonth() + 1).padStart(2, "0"),
+    String(fixedDate.getDate()).padStart(2, "0"),
+  ].join("-");
+  const expectedMemId1 = `MEM_${expectedDateStr}_001`;
+  const expectedMemId2 = `MEM_${expectedDateStr}_002`;
   let taskName;
 
   await test("createTask produces correct directory name", async () => {
@@ -221,7 +239,7 @@ async function main() {
   const tplPath = resolve(orbitDir, "templates", "feature-request.md");
   await writeMarkdownWithFrontmatter(
     tplPath,
-    'name: Feature Request\ndescription: Template for new feature development.\ntags: [feature, development]',
+    'name: Feature Request\ndescription: Template for new feature development.\nkeywords: [feature, development]',
     "# Feature Request\n\n## Description\n\n<!-- Describe the feature -->\n"
   );
 
@@ -260,15 +278,15 @@ async function main() {
       date: fixedDate,
     });
 
-    assert.equal(result.id, "MEM_20260419_001");
-    assert.equal(result.file, "MEM_20260419_001.md");
+    assert.equal(result.id, expectedMemId1);
+    assert.equal(result.file, `${expectedMemId1}.md`);
     assert.ok(result.path.includes("memories"));
   });
 
   await test("archiveMemory updates index.json", async () => {
     const index = await listMemories(TEST_ROOT);
     assert.equal(index.memories.length, 1);
-    assert.equal(index.memories[0].id, "MEM_20260419_001");
+    assert.equal(index.memories[0].id, expectedMemId1);
     assert.equal(index.memories[0].title, "JWT Authentication Pattern");
     assert.deepEqual(index.memories[0].tags, ["auth", "jwt", "nodejs"]);
   });
@@ -281,19 +299,19 @@ async function main() {
       body: "# Migration Strategy\n\nUsing blue-green pattern with shadow tables.",
       date: fixedDate,
     });
-    assert.equal(result.id, "MEM_20260419_002");
+    assert.equal(result.id, expectedMemId2);
   });
 
   await test("searchMemories finds by keyword in title", async () => {
     const results = await searchMemories(TEST_ROOT, "JWT");
     assert.ok(results.length >= 1);
-    assert.equal(results[0].id, "MEM_20260419_001");
+    assert.equal(results[0].id, expectedMemId1);
   });
 
   await test("searchMemories finds by tag", async () => {
     const results = await searchMemories(TEST_ROOT, "postgresql");
     assert.ok(results.length >= 1);
-    assert.equal(results[0].id, "MEM_20260419_002");
+    assert.equal(results[0].id, expectedMemId2);
   });
 
   await test("searchMemories returns empty for no-match", async () => {
@@ -324,11 +342,11 @@ async function main() {
 
   await test("memory file has correct frontmatter format", async () => {
     const { readMarkdownWithFrontmatter } = await import("./lib/io.mjs");
-    const memPath = resolve(orbitDir, "memories", "MEM_20260419_001.md");
+    const memPath = resolve(orbitDir, "memories", `${expectedMemId1}.md`);
     const { frontmatter, body } = await readMarkdownWithFrontmatter(memPath);
-    assert.ok(frontmatter.includes("id: MEM_20260419_001"));
+    assert.ok(frontmatter.includes(`id: ${expectedMemId1}`));
     assert.ok(frontmatter.includes('title: "JWT Authentication Pattern"'));
-    assert.ok(frontmatter.includes("date: 2026-04-19"));
+    assert.ok(frontmatter.includes(`date: ${expectedDateDash}`));
     assert.ok(frontmatter.includes('tags: ["auth", "jwt", "nodejs"]'));
     assert.ok(frontmatter.includes("abstract:"));
     assert.ok(body.includes("# JWT Auth Details"));
@@ -381,7 +399,7 @@ async function main() {
 
   await test("migration from 0.0.0 creates manifest and adds schemaVersion", async () => {
     // Set up a fresh .orbit WITHOUT manifest (simulate pre-migration state).
-    const MIGRATE_ROOT = resolve(import.meta.dirname, "__test_migrate__");
+    const MIGRATE_ROOT = resolve(__dirname, "__test_migrate__");
     const migrateOrbitDir = resolve(MIGRATE_ROOT, ".orbit");
     const { mkdir: mkdirFs, rm: rmFs, writeFile } = await import("node:fs/promises");
     await rmFs(MIGRATE_ROOT, { recursive: true, force: true });
@@ -433,7 +451,7 @@ async function main() {
   });
 
   await test("migrateOrbit skips when manifest already at target", async () => {
-    const MIGRATE_ROOT2 = resolve(import.meta.dirname, "__test_migrate2__");
+    const MIGRATE_ROOT2 = resolve(__dirname, "__test_migrate2__");
     const { mkdir: mkdirFs, rm: rmFs } = await import("node:fs/promises");
     await rmFs(MIGRATE_ROOT2, { recursive: true, force: true });
 
@@ -473,7 +491,7 @@ async function main() {
     const version = await readPluginVersion();
     // Cross-check by reading plugin.json directly.
     const pluginJson = await readJSON(
-      resolve(import.meta.dirname, "../plugin.json")
+      resolve(__dirname, "../plugin.json")
     );
     assert.equal(version, pluginJson.version);
   });
@@ -482,8 +500,12 @@ async function main() {
     const manifest = await readManifest(TEST_ROOT);
     const pluginVersion = await readPluginVersion();
     assert.equal(manifest.orbitVersion, pluginVersion);
-    // Simulate what the CLI version command does.
-    const updateAvailable = manifest.orbitVersion !== pluginVersion;
+    // Simulate what the CLI version command does (cli.mjs uses
+    // compareSemver(localVersion, pluginVersion) < 0, which correctly
+    // reports no-update when local is ahead; a raw `!==` check would
+    // misfire in that case).
+    const updateAvailable =
+      compareSemver(manifest.orbitVersion, pluginVersion) < 0;
     assert.equal(updateAvailable, false);
   });
 
@@ -497,7 +519,10 @@ async function main() {
     const manifest = await readManifest(TEST_ROOT);
     const pluginVersion = await readPluginVersion();
     assert.notEqual(manifest.orbitVersion, pluginVersion);
-    const updateAvailable = manifest.orbitVersion !== pluginVersion;
+    // Use compareSemver (same semantics as cli.mjs) rather than `!==`,
+    // so this test reflects the real "local is behind" condition.
+    const updateAvailable =
+      compareSemver(manifest.orbitVersion, pluginVersion) < 0;
     assert.equal(updateAvailable, true);
 
     // Restore original manifest.
@@ -505,7 +530,271 @@ async function main() {
   });
 
   // =========================================================================
-  // Summary
+  console.log("\n── 9. Regex & Library Guards ──");
+  // =========================================================================
+
+  await test("isValidTaskDirName requires seconds", async () => {
+    const { isValidTaskDirName } = await import("./lib/paths.mjs");
+    assert.equal(isValidTaskDirName("2026-04-19_10-30"), false);
+    assert.equal(isValidTaskDirName("2026-04-19_10-30-45"), true);
+    assert.equal(isValidTaskDirName("2026-04-19_10-30-45-2"), true);
+  });
+
+  await test("readTemplate rejects path-traversal filenames", async () => {
+    const { readTemplate } = await import("./lib/templates.mjs");
+    await assert.rejects(
+      () => readTemplate(TEST_ROOT, "../plugin.json"),
+      /Invalid template filename/
+    );
+  });
+
+  await test("migration runner picks up a 0.0.0 → 0.1.0 when currentVersion is 0.0.1", async () => {
+    const MIGRATE_ROOT3 = resolve(__dirname, "__test_migrate3__");
+    const { mkdir: mkdirFs, rm: rmFs } = await import("node:fs/promises");
+    await rmFs(MIGRATE_ROOT3, { recursive: true, force: true });
+
+    const migrateDir = resolve(MIGRATE_ROOT3, ".orbit");
+    await mkdirFs(resolve(migrateDir, "tasks"), { recursive: true });
+    await mkdirFs(resolve(migrateDir, "memories"), { recursive: true });
+    await mkdirFs(resolve(migrateDir, "templates"), { recursive: true });
+
+    const { writeJSON: wj } = await import("./lib/io.mjs");
+    await wj(resolve(migrateDir, "manifest.json"), {
+      orbitVersion: "0.0.1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await wj(resolve(migrateDir, "memories", "index.json"), { version: 1, memories: [] });
+
+    const result = await migrateOrbit(MIGRATE_ROOT3, "0.1.0");
+    assert.ok(
+      Array.isArray(result.migrationsRun) && result.migrationsRun.length >= 1,
+      "Expected 0.0.0 → 0.1.0 migration to be selected when currentVersion=0.0.1"
+    );
+    assert.equal(result.currentVersion, "0.1.0");
+
+    await rmFs(MIGRATE_ROOT3, { recursive: true, force: true });
+  });
+
+  await test("createRound refuses to scaffold into a non-existent task", async () => {
+    const { createRound } = await import("./lib/state-manager.mjs");
+    await assert.rejects(
+      () => createRound(TEST_ROOT, "2099-01-01_00-00-00"),
+      /Task directory does not exist/
+    );
+  });
+
+  await test("createRound refuses explicit roundNumber that already exists", async () => {
+    const { createTask, createRound } = await import("./lib/state-manager.mjs");
+    const task = await createTask(TEST_ROOT, new Date("2026-04-19T17:00:00Z"));
+    await createRound(TEST_ROOT, task.name, 1);
+    await assert.rejects(
+      () => createRound(TEST_ROOT, task.name, 1),
+      /already exists/
+    );
+  });
+
+  await test("createRound is atomic under concurrent invocations", async () => {
+    const { createTask, createRound } = await import("./lib/state-manager.mjs");
+    const task = await createTask(TEST_ROOT, new Date("2026-04-19T17:30:00Z"));
+    // Two concurrent createRound calls with the same explicit roundNumber
+    // must not both succeed: exactly one should scaffold the directory,
+    // the other must reject with the "already exists" collision error.
+    const results = await Promise.allSettled([
+      createRound(TEST_ROOT, task.name, 1),
+      createRound(TEST_ROOT, task.name, 1),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    assert.equal(fulfilled.length, 1, "exactly one createRound call should succeed");
+    assert.equal(rejected.length, 1, "exactly one createRound call should fail");
+    assert.match(rejected[0].reason.message, /already exists/);
+  });
+
+  await test("listTemplates surfaces non-ENOENT readdir errors", async () => {
+    const { listTemplates } = await import("./lib/templates.mjs");
+    const { mkdir: mkdirFs, chmod: chmodFs, rm: rmFs } = await import("node:fs/promises");
+    const TEMPL_ROOT = resolve(__dirname, "__test_templates_perm__");
+    await rmFs(TEMPL_ROOT, { recursive: true, force: true });
+    const templatesDir = resolve(TEMPL_ROOT, ".orbit", "templates");
+    await mkdirFs(templatesDir, { recursive: true });
+    // Strip all permissions so readdir rejects with EACCES.
+    await chmodFs(templatesDir, 0o000);
+    try {
+      // Skip the assertion when the current process can still read the
+      // directory anyway (e.g. running as root), to keep the test portable.
+      let raised = false;
+      try {
+        await listTemplates(TEMPL_ROOT);
+      } catch (err) {
+        raised = true;
+        assert.notEqual(err.code, "ENOENT");
+        assert.notEqual(err.code, "ENOTDIR");
+      }
+      if (!raised) {
+        // Unable to provoke a permission error in this environment; that is
+        // an environmental limitation, not a regression.
+      }
+    } finally {
+      await chmodFs(templatesDir, 0o755).catch(() => {});
+      await rmFs(TEMPL_ROOT, { recursive: true, force: true });
+    }
+  });
+
+  await test("createRound stamps schemaVersion on new state.json", async () => {
+    const { createTask, createRound, readRoundState } = await import("./lib/state-manager.mjs");
+    const task = await createTask(TEST_ROOT, new Date("2026-04-19T18:00:00Z"));
+    const r = await createRound(TEST_ROOT, task.name);
+    const state = await readRoundState(r.path);
+    assert.equal(state.schemaVersion, "0.1.0");
+  });
+
+  await test("archiveMemory deduplicates identical entries", async () => {
+    const DEDUP_ROOT = resolve(__dirname, "__test_dedup__");
+    const { rm: rmFs } = await import("node:fs/promises");
+    await rmFs(DEDUP_ROOT, { recursive: true, force: true });
+    await initOrbit(DEDUP_ROOT);
+
+    const opts = {
+      title: "Dup Title",
+      tags: ["b", "a"],
+      abstract: "Same abstract",
+      body: "body",
+      date: new Date("2026-04-19T00:00:00Z"),
+    };
+    const first = await archiveMemory(DEDUP_ROOT, opts);
+    const second = await archiveMemory(DEDUP_ROOT, { ...opts, tags: ["a", "b"] });
+    assert.equal(first.id, second.id);
+    assert.equal(second.duplicate, true);
+    const idx = await listMemories(DEDUP_ROOT);
+    assert.equal(idx.memories.length, 1);
+
+    await rmFs(DEDUP_ROOT, { recursive: true, force: true });
+  });
+
+  // =========================================================================
+  console.log("\n── 10. Project-Local CLI End-to-End ──");
+  // =========================================================================
+
+  await test("project-local CLI: init → version → new-task", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdir: mkdirFs, rm: rmFs, readdir: readdirFs } = await import("node:fs/promises");
+    const E2E_ROOT = resolve(__dirname, "__test_e2e_local__");
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+    await mkdirFs(E2E_ROOT, { recursive: true });
+
+    const pluginCli = resolve(__dirname, "cli.mjs");
+    const localCli = resolve(E2E_ROOT, ".orbit", "scripts", "cli.mjs");
+
+    // 1. Bootstrap via the plugin CLI.
+    const initRes = spawnSync("node", [pluginCli, "init"], {
+      cwd: E2E_ROOT,
+      encoding: "utf-8",
+    });
+    assert.equal(initRes.status, 0, `init failed: ${initRes.stderr}`);
+    const initOut = JSON.parse(initRes.stdout.trim());
+    assert.equal(initOut.ok, true);
+
+    // 2. Run version from the local copy.
+    const verRes = spawnSync("node", [localCli, "version"], {
+      cwd: E2E_ROOT,
+      encoding: "utf-8",
+    });
+    assert.equal(verRes.status, 0, `version failed: ${verRes.stderr}`);
+    const verOut = JSON.parse(verRes.stdout.trim());
+    assert.equal(verOut.ok, true);
+    assert.ok(
+      typeof verOut.pluginVersion === "string" && verOut.pluginVersion.length > 0,
+      `expected non-empty pluginVersion, got ${JSON.stringify(verOut)}`
+    );
+
+    // 3. new-task via the local copy.
+    const newTaskRes = spawnSync("node", [localCli, "new-task"], {
+      cwd: E2E_ROOT,
+      encoding: "utf-8",
+    });
+    assert.equal(newTaskRes.status, 0, `new-task failed: ${newTaskRes.stderr}`);
+    const newTaskOut = JSON.parse(newTaskRes.stdout.trim());
+    assert.equal(newTaskOut.ok, true);
+    const taskEntries = await readdirFs(resolve(E2E_ROOT, ".orbit", "tasks"));
+    assert.ok(
+      taskEntries.includes(newTaskOut.task),
+      `expected task ${newTaskOut.task} in .orbit/tasks/`
+    );
+
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+  });
+
+  // =========================================================================
+  console.log("\n── 11. Round-Trip & Robustness Regressions ──");
+  // =========================================================================
+
+  await test("frontmatter read/write is byte-identical on round-trip", async () => {
+    const { writeMarkdownWithFrontmatter, readMarkdownWithFrontmatter } = await import("./lib/io.mjs");
+    const { mkdtemp, rm: rmFs } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(resolve(tmpdir(), "orbit-rt-"));
+    const f = resolve(dir, "sample.md");
+    const fm = "id: X\ntitle: \"hello\"";
+    const body = "# Heading\n\nSome body content.\nSecond line.\n";
+    await writeMarkdownWithFrontmatter(f, fm, body);
+    const first = await readMarkdownWithFrontmatter(f);
+    assert.equal(first.body, body, "body must not gain a leading newline");
+    // Round-trip: rewrite with the returned body, read again, ensure it is stable.
+    await writeMarkdownWithFrontmatter(f, first.frontmatter, first.body);
+    const second = await readMarkdownWithFrontmatter(f);
+    assert.equal(second.body, body, "body must be stable across repeated round-trips");
+    await rmFs(dir, { recursive: true, force: true });
+  });
+
+  await test("searchMemories drops entries whose backing .md file is missing", async () => {
+    const STALE_ROOT = resolve(__dirname, "__test_stale__");
+    const { rm: rmFs, unlink } = await import("node:fs/promises");
+    await rmFs(STALE_ROOT, { recursive: true, force: true });
+    await initOrbit(STALE_ROOT);
+
+    const archived = await archiveMemory(STALE_ROOT, {
+      title: "Stale Entry",
+      tags: ["stale"],
+      abstract: "Entry whose file will be removed.",
+      body: "# body",
+      date: new Date("2026-04-20T00:00:00Z"),
+    });
+
+    // Pre-delete sanity: search finds it.
+    const before = await searchMemories(STALE_ROOT, "stale");
+    assert.ok(before.some((e) => e.id === archived.id), "should find memory before deletion");
+
+    // Remove the .md file but leave the index entry.
+    await unlink(archived.path);
+
+    const after = await searchMemories(STALE_ROOT, "stale");
+    assert.ok(
+      !after.some((e) => e.id === archived.id),
+      "deleted memory must not appear in search results"
+    );
+
+    await rmFs(STALE_ROOT, { recursive: true, force: true });
+  });
+
+  await test("createRound (auto-numbered) refuses to overwrite an existing round directory", async () => {
+    const { createTask, createRound } = await import("./lib/state-manager.mjs");
+    const { writeFile, mkdir: mkdirFs } = await import("node:fs/promises");
+    const { roundDir, taskDir } = await import("./lib/paths.mjs");
+    const task = await createTask(TEST_ROOT, new Date("2026-04-19T19:00:00Z"));
+    // Pre-create the slot that nextRoundNumber would pick as a plain file.
+    // nextRoundNumber filters on `isDirectory()`, so it still returns 1,
+    // simulating a race where the round-0001 path appears between the
+    // nextRoundNumber lookup and the mkdir call.
+    const tPath = taskDir(TEST_ROOT, task.name);
+    await mkdirFs(tPath, { recursive: true });
+    const collisionPath = roundDir(TEST_ROOT, task.name, "round-0001");
+    await writeFile(collisionPath, "sentinel", "utf-8");
+    await assert.rejects(
+      () => createRound(TEST_ROOT, task.name),
+      /already exists/
+    );
+  });
   // =========================================================================
 
   console.log(`\n${"═".repeat(50)}`);

@@ -38,7 +38,7 @@ export function generateTaskDirName(date = new Date()) {
 export function isValidTaskDirName(name) {
   return (
     typeof name === "string" &&
-    /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}(?:-\d{2})?(?:-\d+)?$/.test(name)
+    /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:-\d+)?$/.test(name)
   );
 }
 

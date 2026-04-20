@@ -6,7 +6,7 @@
  * scaffolding, and state persistence.
  */
 
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import {
   orbitPaths,
   generateTaskDirName,
@@ -23,6 +23,9 @@ import { migrateOrbit } from "./migrate.mjs";
 // ---------------------------------------------------------------------------
 // Constants & validation
 // ---------------------------------------------------------------------------
+
+/** Current state.json schema version, stamped on newly-scaffolded rounds. */
+export const CURRENT_STATE_SCHEMA_VERSION = "0.1.0";
 
 /** Allowed values for `state.phase`. */
 export const ALLOWED_PHASES = Object.freeze([
@@ -127,8 +130,9 @@ export async function nextRoundNumber(taskPath) {
   let entries;
   try {
     entries = await readdir(taskPath, { withFileTypes: true });
-  } catch {
-    return 1;
+  } catch (err) {
+    if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) return 1;
+    throw err;
   }
   const roundNums = entries
     .filter((e) => e.isDirectory() && /^round-\d{4}$/.test(e.name))
@@ -153,18 +157,54 @@ export async function createRound(projectRoot, taskDirName, roundNumber) {
   }
   const tPath = taskDir(projectRoot, taskDirName);
 
-  if (roundNumber == null) {
+  // The task directory must already exist; `createRound` does not scaffold tasks.
+  try {
+    const s = await stat(tPath);
+    if (!s.isDirectory()) {
+      throw new Error(`Task path is not a directory: ${tPath}`);
+    }
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      throw new Error(
+        `Task directory does not exist: ${tPath}. Create it via \`new-task\` before calling \`new-round\`.`
+      );
+    }
+    throw err;
+  }
+
+  const explicitRoundNumber = roundNumber != null;
+  if (!explicitRoundNumber) {
     roundNumber = await nextRoundNumber(tPath);
   }
 
   const name = generateRoundDirName(roundNumber);
   const rPath = roundDir(projectRoot, taskDirName, name);
-  await mkdir(rPath, { recursive: true });
+
+  // Atomically create the round directory. Using `recursive: false` makes
+  // `mkdir` reject with EEXIST when the directory is already present,
+  // which is the collision signal we need. A prior stat+recursive-mkdir
+  // pair was racy: two concurrent `new-round` invocations could both
+  // pass the stat check and both succeed at the recursive mkdir, then
+  // clobber the same scaffold files. Ensure the parent task directory
+  // exists first (it normally does, but we do not rely on recursive
+  // mkdir on the round itself for that).
+  await mkdir(tPath, { recursive: true });
+  try {
+    await mkdir(rPath, { recursive: false });
+  } catch (err) {
+    if (err && err.code === "EEXIST") {
+      throw new Error(
+        `Round directory already exists: ${rPath}. Refusing to overwrite existing state/scaffold files.`
+      );
+    }
+    throw err;
+  }
 
   const files = roundFiles(rPath);
 
   // Scaffold state.json with the initial status.
   await writeJSON(files.state, {
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
     round: roundNumber,
     status: "in-progress",
     phase: "clarify",

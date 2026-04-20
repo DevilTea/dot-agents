@@ -8,7 +8,8 @@
  */
 
 import { readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readJSON, writeJSON } from "./io.mjs";
 import { orbitRoot, orbitPaths } from "./paths.mjs";
 
@@ -20,14 +21,36 @@ import { orbitRoot, orbitPaths } from "./paths.mjs";
  * Read the plugin version from the plugin.json manifest.
  *
  * The path is derived relative to this file:
- *   lib/migrate.mjs → ../../plugin.json
+ *   - Plugin source layout:  lib/migrate.mjs → ../../plugin.json
+ *   - Project-local copy:    .orbit/scripts/lib/migrate.mjs → ../../plugin.json
+ *     (the CLI copies plugin.json into .orbit/ during init, so the same
+ *     "two levels up from lib/" lookup resolves to .orbit/plugin.json)
  *
- * @returns {Promise<string>} Semver version string (e.g. "0.1.0").
+ * Falls back one additional level (`../../../plugin.json`) to stay
+ * compatible with older layouts that predated the .orbit/plugin.json copy.
+ *
+ * @returns {string} Semver version string (e.g. "0.1.0").
  */
 export async function readPluginVersion() {
-  const pluginJsonPath = resolve(import.meta.dirname, "../../plugin.json");
-  const manifest = await readJSON(pluginJsonPath);
-  return manifest.version;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(here, "../../plugin.json"),
+    resolve(here, "../../../plugin.json"),
+  ];
+  let lastErr;
+  for (const candidate of candidates) {
+    try {
+      const manifest = await readJSON(candidate);
+      return manifest.version;
+    } catch (err) {
+      if (err && err.code === "ENOENT") {
+        lastErr = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error("plugin.json not found");
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +125,7 @@ function parseSemver(v) {
  * @param {string} b
  * @returns {number}
  */
-function compareSemver(a, b) {
+export function compareSemver(a, b) {
   const pa = parseSemver(a);
   const pb = parseSemver(b);
   for (let i = 0; i < 3; i++) {
@@ -116,10 +139,20 @@ function compareSemver(a, b) {
 // ---------------------------------------------------------------------------
 
 /**
+ * @typedef {Object} MigrationError
+ * @property {string} path    - Path whose operation failed.
+ * @property {string} code    - fs error code (e.g. "EACCES").
+ * @property {string} message - Original error message.
+ *
+ * @typedef {Object} MigrationResult
+ * @property {MigrationError[]} errors - Non-fatal errors collected while
+ *   iterating. The runner aggregates these and fails the overall migration
+ *   (before stamping the manifest) if any are present.
+ *
  * @typedef {Object} Migration
  * @property {string} from - Source version (e.g. "0.0.0").
  * @property {string} to   - Target version (e.g. "0.1.0").
- * @property {(projectRoot: string) => Promise<void>} run - Migration function.
+ * @property {(projectRoot: string) => Promise<MigrationResult>} run - Migration function.
  */
 
 /** @type {Migration[]} */
@@ -130,12 +163,22 @@ const MIGRATIONS = [
     async run(projectRoot) {
       // 1. Add schemaVersion to existing state.json files that lack it.
       const paths = orbitPaths(projectRoot);
+      /** @type {{ path: string, code: string, message: string }[]} */
+      const errors = [];
       let taskEntries;
       try {
         taskEntries = await readdir(paths.tasks, { withFileTypes: true });
-      } catch {
-        // No tasks directory yet — nothing to migrate.
-        return;
+      } catch (err) {
+        if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
+          // No tasks directory yet — nothing to migrate.
+          return { errors };
+        }
+        errors.push({
+          path: paths.tasks,
+          code: err?.code ?? "UNKNOWN",
+          message: err?.message ?? String(err),
+        });
+        return { errors };
       }
 
       for (const taskEntry of taskEntries) {
@@ -144,7 +187,15 @@ const MIGRATIONS = [
         let roundEntries;
         try {
           roundEntries = await readdir(taskPath, { withFileTypes: true });
-        } catch {
+        } catch (err) {
+          if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
+            continue;
+          }
+          errors.push({
+            path: taskPath,
+            code: err?.code ?? "UNKNOWN",
+            message: err?.message ?? String(err),
+          });
           continue;
         }
         for (const roundEntry of roundEntries) {
@@ -157,11 +208,21 @@ const MIGRATIONS = [
               state.schemaVersion = "0.1.0";
               await writeJSON(stateFile, state);
             }
-          } catch {
-            // state.json missing or unreadable — skip.
+          } catch (err) {
+            if (err && err.code === "ENOENT") {
+              // state.json missing — skip.
+              continue;
+            }
+            errors.push({
+              path: stateFile,
+              code: err?.code ?? "UNKNOWN",
+              message: err?.message ?? String(err),
+            });
           }
         }
       }
+
+      return { errors };
     },
   },
   // Future migrations go here:
@@ -204,20 +265,47 @@ export async function migrateOrbit(projectRoot, targetVersion) {
     };
   }
 
-  // Select and run applicable migrations in order.
+  // Select every migration whose `to` advances past `currentVersion` and
+  // does not overshoot `targetVersion`. Sort ascending so they run in order.
   const applicable = MIGRATIONS.filter(
     (m) =>
-      compareSemver(m.from, currentVersion) >= 0 &&
+      compareSemver(m.to, currentVersion) > 0 &&
       compareSemver(m.to, targetVersion) <= 0
-  );
+  ).sort((a, b) => compareSemver(a.from, b.from));
 
   const migrationsRun = [];
+  /** @type {{ migration: string, path: string, code: string, message: string }[]} */
+  const aggregatedErrors = [];
   for (const migration of applicable) {
-    await migration.run(projectRoot);
+    const result = (await migration.run(projectRoot)) ?? { errors: [] };
+    const errors = Array.isArray(result.errors) ? result.errors : [];
+    for (const err of errors) {
+      aggregatedErrors.push({
+        migration: `${migration.from} → ${migration.to}`,
+        path: err.path,
+        code: err.code,
+        message: err.message,
+      });
+    }
     migrationsRun.push(`${migration.from} → ${migration.to}`);
   }
 
-  // Stamp the manifest with the target version.
+  // Fail loudly BEFORE stamping the manifest if any migration step reported
+  // non-fatal errors while scanning task/round trees. A failed migration must
+  // not leave `.orbit/manifest.json` pointing at the target version.
+  if (aggregatedErrors.length > 0) {
+    const summary = aggregatedErrors
+      .map((e) => `${e.migration}: ${e.path} (${e.code}) — ${e.message}`)
+      .join("; ");
+    const error = new Error(`Migration failed: ${summary}`);
+    error.migrationErrors = aggregatedErrors;
+    throw error;
+  }
+
+  // Stamp the manifest with the target version whenever we are behind it,
+  // regardless of whether any migration matched. An empty `migrationsRun`
+  // indicates the schema was already compatible, but the manifest still needs
+  // to advance so update detection converges.
   await writeManifest(projectRoot, targetVersion);
 
   return {

@@ -1,7 +1,6 @@
 ---
 name: Orbit
 description: Task-oriented persistent agent framework. Manages .orbit state folder, dispatches Orbit Round for each task cycle. Maintains full task history and long-term memory.
-target: vscode
 agents: ["Orbit Round"]
 ---
 
@@ -32,7 +31,7 @@ Within VS Code's depth-5 limit. Required setting: `chat.subagents.allowInvocatio
 ## Global Invariants
 
 1. **No phase work.** You never execute Clarify / Planning / Execute / Review / Next yourself. All of that lives in `Orbit Round`.
-2. **No direct `#tool:vscode/askQuestions` calls** except in recovery scenarios (see § Error Handling).
+2. **No direct `#tool:vscode_askQuestions` calls** except in recovery scenarios (see § Error Handling).
 3. **Round isolation.** Each round gets a fresh `Orbit Round` dispatch with its own round directory.
 4. **Transparent forwarding.** Whatever `Orbit Round` emits is the user-facing content. Do not editorialize.
 5. **No protocol self-modification.** Do not reinterpret these rules.
@@ -41,7 +40,7 @@ Within VS Code's depth-5 limit. Required setting: `chat.subagents.allowInvocatio
 
 On every new user turn, before dispatching a round:
 
-1. **Ensure `.orbit` exists.** Bootstrap the Orbit CLI and create `.orbit/{templates,memories,tasks,scripts}` if missing.
+1. **Ensure `.orbit` exists.** If `.orbit/scripts/cli.mjs` is missing, run the plugin-source bootstrap (see § CLI Bootstrap below) to create `.orbit/{templates,memories,tasks}` and copy the CLI into `.orbit/scripts/`. Otherwise, refresh via `node .orbit/scripts/cli.mjs init`.
 2. **Create task directory** (if this is a new task): `.orbit/tasks/YYYY-MM-DD_hh-mm-ss/`.
 3. **Create round directory**: `.orbit/tasks/.../round-NNNN/` with all scaffold files (`state.json`, `requirements.md`, `plan.md`, `execution-memo.md`, `review-findings.md`, `summary.md`).
 
@@ -49,18 +48,22 @@ On every new user turn, before dispatching a round:
 
 The CLI path is **not hardcoded**. Instead, use the `orbit-init` skill to discover and bootstrap the CLI.
 
-**Step 1 — Bootstrap (first time only):** If `.orbit/scripts/cli.mjs` does not exist yet:
+**Step 1 — Derive `<plugin_cli_path>` (every session):**
 
 1. Read the `orbit-init` skill file (its path is in your system context under `<skills>`).
-2. Derive the CLI path from the skill file's location: strip `skills/orbit-init/SKILL.md` from the path, append `scripts/cli.mjs`.
-3. Run:
-   ```bash
-   node <derived_cli_path> init
-   ```
+2. Derive the plugin-source CLI path from the skill file's location: strip `skills/orbit-init/SKILL.md` from the path, append `scripts/cli.mjs`. Call this `<plugin_cli_path>`.
+
+This derivation is required on every session because both the first-time bootstrap (below) and the later Version Check depend on `<plugin_cli_path>`.
+
+**Step 2 — First-time bootstrap only:** If `.orbit/scripts/cli.mjs` does not exist yet, run:
+
+```bash
+node <plugin_cli_path> init
+```
 
 This creates the `.orbit` directory structure **and** copies the CLI + lib into `.orbit/scripts/`.
 
-**Step 2 — All subsequent calls use the local copy:**
+**Step 3 — All subsequent calls use the local copy:**
 
 ```bash
 # Initialize / update .orbit structure (idempotent, also refreshes scripts)
@@ -77,17 +80,17 @@ node .orbit/scripts/cli.mjs new-round <taskDirName>
 
 ### Version Check
 
-After confirming `.orbit/scripts/cli.mjs` exists, check for plugin updates:
+After confirming `.orbit/scripts/cli.mjs` exists, check for plugin updates using the **plugin-source CLI** — the `<plugin_cli_path>` derived in Step 1 of CLI Bootstrap (which runs every session, not just on first-time bootstrap). This ensures the version comparison reads the authoritative plugin version, not the stale local copy:
 
 ```bash
-node .orbit/scripts/cli.mjs version
+node <plugin_cli_path> version
 ```
 
 If `updateAvailable` is `true`:
 
 1. Notify the user: _"Orbit plugin has been updated from {localVersion} to {pluginVersion}. Run update to get the latest features and fixes?"_
-2. If confirmed, re-derive the plugin CLI path from the `orbit-init` skill and run: `node <plugin_cli_path> init`
-3. After update, verify with `node .orbit/scripts/cli.mjs version` that `updateAvailable` is `false`.
+2. If confirmed, run: `node <plugin_cli_path> init`
+3. After update, verify with `node .orbit/scripts/cli.mjs version` that `updateAvailable` is `false` (the local CLI is now refreshed and equivalent).
 
 If `updateAvailable` is `false`, proceed normally.
 
@@ -110,7 +113,6 @@ To verify, attempt a minimal invocation of each tool (e.g., `read_file` on a kno
 | 🔗    | `runSubagent`         | All agents | Agent delegation chain (incl. `Explore`)  |
 | 💬    | `vscode_askQuestions` | Round      | All user-facing decisions                 |
 | 📖    | `read_file`           | All agents | File reading for context and verification |
-| 🔍    | `tool_search`         | All agents | Deferred tool activation                  |
 | 🔎    | `grep_search`         | All agents | Exact text / regex search                 |
 | 📂    | `file_search`         | All agents | File name / glob pattern search           |
 | 📁    | `list_dir`            | All agents | Directory listing                         |
@@ -118,9 +120,17 @@ To verify, attempt a minimal invocation of each tool (e.g., `read_file` on a kno
 | ▶️    | `run_in_terminal`     | Dispatcher | CLI execution for `.orbit` management     |
 | 📝    | `create_file`         | Execute    | File creation                             |
 
+### Recommended / Informational
+
+These tools improve the session but are not hard blockers. If they are absent, note it in the preflight output without emitting a `Session blocked` banner. Deferred tools (including `vscode_askQuestions`, `runSubagent`, and the task-dependent entries below) must still be activated via `tool_search` when present.
+
+| Emoji | Tool          | Used By    | Purpose                                                   |
+| ----- | ------------- | ---------- | --------------------------------------------------------- |
+| 🔍    | `tool_search` | All agents | Deferred tool activation (informational when not loaded). |
+
 ### Task-Dependent
 
-Check availability before dispatching Execute when the plan involves code changes or diagnostics.
+Check availability before dispatching Execute when the plan involves code changes or diagnostics. Tools listed here are **Recommended** — downgrade them to optional in the preflight summary when the current round's plan does not call for them, rather than marking the session blocked.
 
 | Emoji | Tool                           | Used By         | Purpose                        |
 | ----- | ------------------------------ | --------------- | ------------------------------ |
@@ -131,8 +141,7 @@ Check availability before dispatching Execute when the plan involves code change
 | 📤    | `send_to_terminal`             | Execute         | Interactive terminal input     |
 | 📥    | `get_terminal_output`          | Execute, Review | Terminal output retrieval      |
 | 🔁    | `kill_terminal`                | Execute         | Terminate background terminals |
-| 📋    | `manage_todo_list`             | Execute         | Multi-step progress tracking   |
-| 🔗    | `vscode_listCodeUsages`        | All agents      | Find symbol references/usages  |
+|       | `vscode_listCodeUsages`        | All agents      | Find symbol references/usages  |
 | ✨    | `vscode_renameSymbol`          | Execute         | Semantic symbol rename         |
 | 🖼️    | `view_image`                   | Review          | Inspect image files            |
 
@@ -145,7 +154,7 @@ Core Protocol
   ✅ runSubagent         — Agent delegation (incl. Explore)
   ✅ vscode_askQuestions — User interaction
   ✅ read_file           — File reading
-  ✅ tool_search         — Tool activation
+  ℹ️ tool_search         — Tool activation (recommended, not required)
 
 Exploration
   ✅ grep_search     — Text search
@@ -165,12 +174,11 @@ Validation & Code Intelligence (task-dependent)
   ✅ send_to_terminal      — Terminal input
   ✅ get_terminal_output   — Terminal output
   ✅ kill_terminal         — Terminal cleanup
-  ✅ manage_todo_list      — Progress tracking
   ✅ vscode_listCodeUsages — Symbol references
   ✅ vscode_renameSymbol   — Symbol rename
   ✅ view_image            — Image inspection
 
-Result: 21/21 tools available ✅ | Session ready
+Result: 20/20 tools available ✅ | Session ready
 ```
 
 If any Always Required tool shows ❌, append:
@@ -196,7 +204,7 @@ For every new user turn:
    - Project root path.
    - Template hint (if matched).
    - Carry-over risks from previous round (if any).
-   - Reminder that Round owns `#tool:vscode/askQuestions` and must delegate Execute to `Orbit Execute`.
+   - Reminder that Round owns `#tool:vscode_askQuestions` and must delegate Execute to `Orbit Execute`.
 6. **Consume Return Contract:**
    - `done` → end the turn.
    - `new_task` → loop back to step 3 using `task` as the new request.
@@ -207,7 +215,7 @@ For every new user turn:
 The dispatcher may speak to the user only in these recovery scenarios:
 
 - **`Orbit Round` unavailable**: Report and end.
-- **Malformed Return Contract**: Surface verbatim and ask via `#tool:vscode/askQuestions` whether to retry or abandon.
+- **Malformed Return Contract**: Surface verbatim and ask via `#tool:vscode_askQuestions` whether to retry or abandon.
 - **Recursive `new_task` loop** (>10 iterations without user input): Ask whether to continue or end.
 - **`.orbit` initialization failure**: Report the error and end.
 
