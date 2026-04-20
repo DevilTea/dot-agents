@@ -1,0 +1,23 @@
+{
+  "name": "deviltea-agents",
+  "owner": {
+    "name": "DevilTea"
+  },
+  "metadata": {
+    "description": "Personal collection of agents, skills, and plugins for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "orbit",
+      "source": "./plugins/orbit",
+      "description": "Task-oriented persistent agent framework. Manages .orbit state folder with round-based workflow, long-term memory, and template system.",
+      "version": "0.1.0",
+      "author": {
+        "name": "DevilTea"
+      },
+      "license": "MIT",
+      "keywords": ["agent", "workflow", "persistent", "task-management"],
+      "category": "productivity"
+    }
+  ]
+}
