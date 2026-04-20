@@ -42,6 +42,8 @@ The following settings **must** be configured for Orbit to function correctly:
 
 ```
 .orbit/
+.orbit/
+├── scripts/          # CLI + lib (auto-copied during init)
 ├── templates/        # Task templates (*.md with YAML frontmatter)
 ├── memories/         # Long-term memory entries (index.json + *.md files)
 └── tasks/
@@ -57,31 +59,43 @@ The following settings **must** be configured for Orbit to function correctly:
 
 ## CLI
 
-Agents use the CLI internally via `run_in_terminal`. You can also run it manually for debugging.
+The `init` command copies the CLI and its library into `.orbit/scripts/`, making all subsequent calls **project-local** and independent of the plugin install location.
+
+### First-time bootstrap
+
+Agents use the `orbit-init` skill to discover the plugin's CLI path automatically (derived from the skill file's location). You can also bootstrap manually:
 
 ```bash
-# Initialize .orbit structure in the current directory
-node plugins/orbit/scripts/cli.mjs init
+node <plugin-path>/scripts/cli.mjs init
+```
+
+### After init
+
+All commands use the local copy at `.orbit/scripts/cli.mjs`:
+
+```bash
+# Initialize / update .orbit structure (idempotent, also refreshes scripts)
+node .orbit/scripts/cli.mjs init
 
 # Create a new timestamped task directory
-node plugins/orbit/scripts/cli.mjs new-task
+node .orbit/scripts/cli.mjs new-task
 
 # Create a new round inside a task
-node plugins/orbit/scripts/cli.mjs new-round <taskDirName>
+node .orbit/scripts/cli.mjs new-round <taskDirName>
 
 # Read or patch a round's state.json
-node plugins/orbit/scripts/cli.mjs round-state <roundPath>
-node plugins/orbit/scripts/cli.mjs round-state <roundPath> --patch '{"phase":"planning"}'
+node .orbit/scripts/cli.mjs round-state <roundPath>
+node .orbit/scripts/cli.mjs round-state <roundPath> --patch '{"phase":"planning"}'
 
 # Template management
-node plugins/orbit/scripts/cli.mjs templates
-node plugins/orbit/scripts/cli.mjs match-template "<query>"
-node plugins/orbit/scripts/cli.mjs read-template <filename>
+node .orbit/scripts/cli.mjs templates
+node .orbit/scripts/cli.mjs match-template "<query>"
+node .orbit/scripts/cli.mjs read-template <filename>
 
 # Memory management
-node plugins/orbit/scripts/cli.mjs memory-list
-node plugins/orbit/scripts/cli.mjs memory-search "<query>"
-node plugins/orbit/scripts/cli.mjs memory-archive \
+node .orbit/scripts/cli.mjs memory-list
+node .orbit/scripts/cli.mjs memory-search "<query>"
+node .orbit/scripts/cli.mjs memory-archive \
   --title "My note" \
   --tags "tag1,tag2" \
   --abstract "Short summary" \

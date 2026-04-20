@@ -41,22 +41,39 @@ Within VS Code's depth-5 limit. Required setting: `chat.subagents.allowInvocatio
 
 On every new user turn, before dispatching a round:
 
-1. **Ensure `.orbit` exists.** Run the Orbit CLI or equivalent to create `.orbit/{templates,memories,tasks}` if missing.
+1. **Ensure `.orbit` exists.** Bootstrap the Orbit CLI and create `.orbit/{templates,memories,tasks,scripts}` if missing.
 2. **Create task directory** (if this is a new task): `.orbit/tasks/YYYY-MM-DD_hh-mm-ss/`.
 3. **Create round directory**: `.orbit/tasks/.../round-NNNN/` with all scaffold files (`state.json`, `requirements.md`, `plan.md`, `execution-memo.md`, `review-findings.md`, `summary.md`).
 
-Use the Orbit utility modules at `plugins/orbit/scripts/cli.mjs` via terminal:
+### CLI Bootstrap via `orbit-init` Skill
+
+The CLI path is **not hardcoded**. Instead, use the `orbit-init` skill to discover and bootstrap the CLI.
+
+**Step 1 — Bootstrap (first time only):** If `.orbit/scripts/cli.mjs` does not exist yet:
+
+1. Read the `orbit-init` skill file (its path is in your system context under `<skills>`).
+2. Derive the CLI path from the skill file's location: strip `skills/orbit-init/SKILL.md` from the path, append `scripts/cli.mjs`.
+3. Run:
+   ```bash
+   node <derived_cli_path> init
+   ```
+
+This creates the `.orbit` directory structure **and** copies the CLI + lib into `.orbit/scripts/`.
+
+**Step 2 — All subsequent calls use the local copy:**
 
 ```bash
-# Initialize .orbit structure
-node plugins/orbit/scripts/cli.mjs init
+# Initialize / update .orbit structure (idempotent, also refreshes scripts)
+node .orbit/scripts/cli.mjs init
 
 # Create a new task (returns task name and path)
-node plugins/orbit/scripts/cli.mjs new-task
+node .orbit/scripts/cli.mjs new-task
 
 # Create a new round in the task (returns round name, path, files)
-node plugins/orbit/scripts/cli.mjs new-round <taskDirName>
+node .orbit/scripts/cli.mjs new-round <taskDirName>
 ```
+
+> **Important:** After bootstrap, always invoke via `node .orbit/scripts/cli.mjs`. The CLI operates on the current working directory (or `$ORBIT_ROOT` if set) as the project root.
 
 ## Template Matching
 
@@ -73,32 +90,36 @@ To verify, attempt a minimal invocation of each tool (e.g., `read_file` on a kno
 
 ### Always Required
 
-| Emoji | Tool                          | Used By    | Purpose                                   |
-| ----- | ----------------------------- | ---------- | ----------------------------------------- |
-| 🔗    | `runSubagent`                 | All agents | Agent delegation chain                    |
-| 💬    | `vscode_askQuestions`         | Round      | All user-facing decisions                 |
-| 📖    | `read_file`                   | All agents | File reading for context and verification |
-| 🔍    | `tool_search`                 | All agents | Deferred tool activation                  |
-| 🔎    | `grep_search`                 | All agents | Exact text / regex search                 |
-| 📂    | `file_search`                 | All agents | File name / glob pattern search           |
-| 📁    | `list_dir`                    | All agents | Directory listing                         |
-| 🧭    | `semantic_search`             | All agents | Semantic code search                      |
-| 🕵️    | `search_subagent` / `Explore` | All agents | Codebase exploration                      |
-| ▶️    | `run_in_terminal`             | Dispatcher | CLI execution for `.orbit` management     |
-| 📝    | `create_file`                 | Execute    | File creation                             |
+| Emoji | Tool                  | Used By    | Purpose                                   |
+| ----- | --------------------- | ---------- | ----------------------------------------- |
+| 🔗    | `runSubagent`         | All agents | Agent delegation chain (incl. `Explore`)  |
+| 💬    | `vscode_askQuestions` | Round      | All user-facing decisions                 |
+| 📖    | `read_file`           | All agents | File reading for context and verification |
+| 🔍    | `tool_search`         | All agents | Deferred tool activation                  |
+| 🔎    | `grep_search`         | All agents | Exact text / regex search                 |
+| 📂    | `file_search`         | All agents | File name / glob pattern search           |
+| 📁    | `list_dir`            | All agents | Directory listing                         |
+| 🧭    | `semantic_search`     | All agents | Semantic code search                      |
+| ▶️    | `run_in_terminal`     | Dispatcher | CLI execution for `.orbit` management     |
+| 📝    | `create_file`         | Execute    | File creation                             |
 
 ### Task-Dependent
 
 Check availability before dispatching Execute when the plan involves code changes or diagnostics.
 
-| Emoji | Tool                           | Used By         | Purpose                      |
-| ----- | ------------------------------ | --------------- | ---------------------------- |
-| ✏️    | `replace_string_in_file`       | Execute         | Edit existing files          |
-| ✏️    | `multi_replace_string_in_file` | Execute         | Batch edits across files     |
-| ⚡    | `execution_subagent`           | Execute         | Multi-step command execution |
-| 🩺    | `get_errors`                   | Execute, Review | Compile / lint diagnostics   |
-| 📤    | `send_to_terminal`             | Execute         | Interactive terminal input   |
-| 📥    | `get_terminal_output`          | Execute, Review | Terminal output retrieval    |
+| Emoji | Tool                           | Used By         | Purpose                        |
+| ----- | ------------------------------ | --------------- | ------------------------------ |
+| ✏️    | `replace_string_in_file`       | Execute         | Edit existing files            |
+| ✏️    | `multi_replace_string_in_file` | Execute         | Batch edits across files       |
+| ⚡    | `execution_subagent`           | Execute         | Multi-step command execution   |
+| 🩺    | `get_errors`                   | Execute, Review | Compile / lint diagnostics     |
+| 📤    | `send_to_terminal`             | Execute         | Interactive terminal input     |
+| 📥    | `get_terminal_output`          | Execute, Review | Terminal output retrieval      |
+| 🔁    | `kill_terminal`                | Execute         | Terminate background terminals |
+| 📋    | `manage_todo_list`             | Execute         | Multi-step progress tracking   |
+| 🔗    | `vscode_listCodeUsages`        | All agents      | Find symbol references/usages  |
+| ✨    | `vscode_renameSymbol`          | Execute         | Semantic symbol rename         |
+| 🖼️    | `view_image`                   | Review          | Inspect image files            |
 
 ### Preflight Output Template
 
@@ -106,17 +127,16 @@ Check availability before dispatching Execute when the plan involves code change
 🛫 Session Preflight Check
 
 Core Protocol
-  ✅ runSubagent        — Agent delegation
+  ✅ runSubagent         — Agent delegation (incl. Explore)
   ✅ vscode_askQuestions — User interaction
-  ✅ read_file          — File reading
-  ✅ tool_search        — Tool activation
+  ✅ read_file           — File reading
+  ✅ tool_search         — Tool activation
 
 Exploration
-  ✅ grep_search      — Text search
-  ✅ file_search      — File search
-  ✅ list_dir         — Directory listing
-  ✅ semantic_search  — Semantic search
-  ✅ search_subagent / Explore — Codebase exploration
+  ✅ grep_search     — Text search
+  ✅ file_search     — File search
+  ✅ list_dir        — Directory listing
+  ✅ semantic_search — Semantic search
 
 Execution & Editing
   ✅ run_in_terminal              — Command execution
@@ -124,13 +144,18 @@ Execution & Editing
   ✅ replace_string_in_file       — File editing
   ✅ multi_replace_string_in_file — Batch editing
 
-Validation (task-dependent)
-  ✅ execution_subagent   — Multi-step execution
-  ✅ get_errors           — Diagnostics
-  ✅ send_to_terminal     — Terminal input
-  ✅ get_terminal_output  — Terminal output
+Validation & Code Intelligence (task-dependent)
+  ✅ execution_subagent    — Multi-step execution
+  ✅ get_errors            — Diagnostics
+  ✅ send_to_terminal      — Terminal input
+  ✅ get_terminal_output   — Terminal output
+  ✅ kill_terminal         — Terminal cleanup
+  ✅ manage_todo_list      — Progress tracking
+  ✅ vscode_listCodeUsages — Symbol references
+  ✅ vscode_renameSymbol   — Symbol rename
+  ✅ view_image            — Image inspection
 
-Result: 17/17 tools available ✅ | Session ready
+Result: 21/21 tools available ✅ | Session ready
 ```
 
 If any Always Required tool shows ❌, append:

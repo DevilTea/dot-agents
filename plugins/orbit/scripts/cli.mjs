@@ -4,11 +4,15 @@
  * Orbit CLI — lightweight command-line entry point for agents to invoke
  * state-management operations via `run_in_terminal`.
  *
+ * After `init`, a copy of this CLI + lib is placed in `.orbit/scripts/`
+ * so all subsequent calls use `node .orbit/scripts/cli.mjs <command>`.
+ *
  * Usage:
- *   node plugins/orbit/scripts/cli.mjs <command> [options]
+ *   node .orbit/scripts/cli.mjs <command> [options]
  *
  * Commands:
- *   init                     Ensure .orbit directory structure exists.
+ *   init                     Ensure .orbit directory structure exists and
+ *                            copy CLI scripts into .orbit/scripts/.
  *   new-task                 Create a new timestamped task directory.
  *   new-round <task>         Create a new round inside the given task directory name.
  *   round-state <path> [--patch '{"phase":"planning"}']
@@ -24,7 +28,7 @@
  */
 
 import { resolve, relative, isAbsolute } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, cp, copyFile, mkdir } from "node:fs/promises";
 import {
   initOrbit,
   createTask,
@@ -48,11 +52,31 @@ const command = args[0];
 // Default project root: current working directory.
 const projectRoot = process.env.ORBIT_ROOT || process.cwd();
 
+/**
+ * Copy CLI + lib into `.orbit/scripts/` so agents can invoke from any project.
+ * Skips the copy when already running from the target location (self-copy guard).
+ */
+async function copyScriptsToOrbit(projectRoot) {
+  const scriptsSource = resolve(import.meta.dirname);
+  const scriptsDest = resolve(projectRoot, ".orbit", "scripts");
+
+  // Avoid self-copy when already running from .orbit/scripts/
+  if (scriptsSource === scriptsDest) return;
+
+  await mkdir(resolve(scriptsDest, "lib"), { recursive: true });
+  await copyFile(resolve(scriptsSource, "cli.mjs"), resolve(scriptsDest, "cli.mjs"));
+  await cp(resolve(scriptsSource, "lib"), resolve(scriptsDest, "lib"), {
+    recursive: true,
+    force: true,
+  });
+}
+
 async function main() {
   switch (command) {
     // -----------------------------------------------------------------
     case "init": {
       await initOrbit(projectRoot);
+      await copyScriptsToOrbit(projectRoot);
       console.log(JSON.stringify({ ok: true, orbitRoot: resolve(projectRoot, ".orbit") }));
       break;
     }
@@ -67,7 +91,8 @@ async function main() {
 
     // -----------------------------------------------------------------
     case "new-round": {
-      if (!isValidTaskDirName(taskDirName)) {
+      const taskDirName = args[1];
+      if (!taskDirName || !isValidTaskDirName(taskDirName)) {
         console.error(
           `Invalid taskDirName: ${JSON.stringify(taskDirName)}. Expected "YYYY-MM-DD_hh-mm-ss" (optionally "-N").`
         );
@@ -101,11 +126,6 @@ async function main() {
         );
         process.exit(1);
       }
-      if (!roundPath) {
-        console.error("Usage: round-state <roundPath> [--patch '{...}']");
-        process.exit(1);
-      }
-      const absPath = resolve(roundPath);
 
       const patchIdx = args.indexOf("--patch");
       if (patchIdx !== -1 && args[patchIdx + 1]) {
@@ -123,7 +143,25 @@ async function main() {
     case "templates": {
       const templates = await listTemplates(projectRoot);
       console.log(JSON.stringify({ ok: true, templates }));
-      brea  body: m.body,
+      break;
+    }
+
+    // -----------------------------------------------------------------
+    case "match-template": {
+      const query = args.slice(1).join(" ");
+      if (!query) {
+        console.error("Usage: match-template <query>");
+        process.exit(1);
+      }
+      const matches = await matchTemplates(projectRoot, query);
+      console.log(
+        JSON.stringify({
+          ok: true,
+          query,
+          matches: matches.map((m) => ({
+            filename: m.filename,
+            frontmatter: m.frontmatter,
+            body: m.body,
           })),
         })
       );
@@ -142,32 +180,8 @@ async function main() {
         process.exit(1);
       }
       const tpl = await readTemplate(projectRoot, filename);
-      console.log(JSON.stringify({ ok: true, template: tpl })
-    // -----------------------------------------------------------------
-    case "match-template": {
-      const query = args.slice(1).join(" ");
-      if (!query) {
-        console.error("Usage: match-template <query>");
-        process.exit(1);
-      }
-      const matches = await matchTemplates(projectRoot, query);
-      console.log(
-        JSON.stringify({
-          ok: true,
-          query,
-          matcheInline = getArg("--body");
-      const bodyFile = getArg("--body-file");
-
-      if (!title || !abstract || (!bodyInline && !bodyFile)) {
-        console.error(
-          'Usage: memory-archive --title "..." --tags "t1,t2" --abstract "..." (--body "..." | --body-file <path>)'
-        );
-        process.exit(1);
-      }
-      const body = bodyFile
-        ? await readFile(resolve(bodyFile), "utf-8")
-        : bodyInline;
-      const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean
+      console.log(JSON.stringify({ ok: true, template: tpl }));
+      break;
     }
 
     // -----------------------------------------------------------------
@@ -178,7 +192,7 @@ async function main() {
         process.exit(1);
       }
       const results = await searchMemories(projectRoot, query);
-      console.log(JSON.stringify({ ok: true, query, results, count: results.length }));read-template, 
+      console.log(JSON.stringify({ ok: true, query, results, count: results.length }));
       break;
     }
 
@@ -191,14 +205,19 @@ async function main() {
       const title = getArg("--title");
       const tagsRaw = getArg("--tags");
       const abstract = getArg("--abstract");
-      const body = getArg("--body");
-      if (!title || !abstract || !body) {
+      const bodyInline = getArg("--body");
+      const bodyFile = getArg("--body-file");
+
+      if (!title || !abstract || (!bodyInline && !bodyFile)) {
         console.error(
-          'Usage: memory-archive --title "..." --tags "t1,t2" --abstract "..." --body "..."'
+          'Usage: memory-archive --title "..." --tags "t1,t2" --abstract "..." (--body "..." | --body-file <path>)'
         );
         process.exit(1);
       }
-      const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()) : [];
+      const body = bodyFile
+        ? await readFile(resolve(bodyFile), "utf-8")
+        : bodyInline;
+      const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean) : [];
       const result = await archiveMemory(projectRoot, { title, tags, abstract, body });
       console.log(JSON.stringify({ ok: true, memory: result }));
       break;
@@ -214,7 +233,7 @@ async function main() {
     // -----------------------------------------------------------------
     default:
       console.error(
-        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, memory-search, memory-archive, memory-list`
+        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, read-template, memory-search, memory-archive, memory-list`
       );
       process.exit(1);
   }
