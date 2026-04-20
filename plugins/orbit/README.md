@@ -43,6 +43,7 @@ The following settings **must** be configured for Orbit to function correctly:
 ```
 .orbit/
 .orbit/
+├── manifest.json     # Version stamp (orbitVersion, timestamps)
 ├── scripts/          # CLI + lib (auto-copied during init)
 ├── templates/        # Task templates (*.md with YAML frontmatter)
 ├── memories/         # Long-term memory entries (index.json + *.md files)
@@ -74,7 +75,7 @@ node <plugin-path>/scripts/cli.mjs init
 All commands use the local copy at `.orbit/scripts/cli.mjs`:
 
 ```bash
-# Initialize / update .orbit structure (idempotent, also refreshes scripts)
+# Initialize / update .orbit structure (idempotent, also refreshes scripts and runs migrations)
 node .orbit/scripts/cli.mjs init
 
 # Create a new timestamped task directory
@@ -100,7 +101,18 @@ node .orbit/scripts/cli.mjs memory-archive \
   --tags "tag1,tag2" \
   --abstract "Short summary" \
   --body "Full body text"
+
+# Run forward-only migrations explicitly
+node .orbit/scripts/cli.mjs migrate
 ```
+
+## Migration
+
+The `init` command automatically detects whether the `.orbit` directory is behind the current plugin version and runs forward-only migrations. You can also trigger migrations explicitly with `migrate`.
+
+- **Version tracking:** `.orbit/manifest.json` stores the `orbitVersion` that last touched the directory.
+- **Forward-only:** Migrations run sequentially from the current version to the plugin version. No rollback support.
+- **Idempotent:** Re-running `init` or `migrate` when already up-to-date is a no-op.
 
 ## Round Workflow
 

@@ -25,6 +25,8 @@
  *                  (--body "..." | --body-file <path>)
  *                            Create a new memory entry.
  *   memory-list              List all memories in the index.
+ *   migrate                  Run forward-only migrations on an existing .orbit directory.
+ *   version                  Show local .orbit version vs plugin version.
  */
 
 import { resolve, relative, isAbsolute } from "node:path";
@@ -44,6 +46,9 @@ import {
   searchMemories,
   archiveMemory,
   listMemories,
+  migrateOrbit,
+  readManifest,
+  readPluginVersion,
 } from "./lib/index.mjs";
 
 const args = process.argv.slice(2);
@@ -231,9 +236,35 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
+    case "migrate": {
+      const result = await migrateOrbit(projectRoot);
+      console.log(JSON.stringify({ ok: true, ...result }));
+      break;
+    }
+
+    // -----------------------------------------------------------------
+    case "version": {
+      const manifest = await readManifest(projectRoot);
+      const pluginVersion = await readPluginVersion();
+      const localVersion = manifest?.orbitVersion ?? null;
+      const updateAvailable = localVersion
+        ? localVersion !== pluginVersion
+        : false;
+      console.log(
+        JSON.stringify({
+          ok: true,
+          localVersion,
+          pluginVersion,
+          updateAvailable,
+        })
+      );
+      break;
+    }
+
+    // -----------------------------------------------------------------
     default:
       console.error(
-        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, read-template, memory-search, memory-archive, memory-list`
+        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, read-template, memory-search, memory-archive, memory-list, migrate, version`
       );
       process.exit(1);
   }

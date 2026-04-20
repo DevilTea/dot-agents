@@ -18,6 +18,7 @@ import {
   memoryIndexPath,
 } from "./paths.mjs";
 import { readJSON, writeJSON, writeMarkdown } from "./io.mjs";
+import { migrateOrbit } from "./migrate.mjs";
 
 // ---------------------------------------------------------------------------
 // Constants & validation
@@ -72,6 +73,9 @@ export async function initOrbit(projectRoot) {
       throw err;
     }
   }
+
+  // Run forward-only migrations and stamp the manifest.
+  await migrateOrbit(projectRoot);
 }
 
 // ---------------------------------------------------------------------------

@@ -32,6 +32,9 @@ import {
   listMemories,
   readJSON,
   readMarkdown,
+  migrateOrbit,
+  readManifest,
+  readPluginVersion,
 } from "./lib/index.mjs";
 
 const TEST_ROOT = resolve(import.meta.dirname, "__test_workspace__");
@@ -348,6 +351,157 @@ async function main() {
     const s3 = await readRoundState(r3.path);
     assert.equal(s1.round, 1);
     assert.equal(s3.round, 3);
+  });
+
+  // =========================================================================
+  console.log("\n── 7. Migration System ──");
+  // =========================================================================
+
+  await test("readPluginVersion returns a semver string", async () => {
+    const version = await readPluginVersion();
+    assert.ok(/^\d+\.\d+\.\d+$/.test(version), `Expected semver, got: ${version}`);
+  });
+
+  await test("initOrbit creates manifest.json with plugin version", async () => {
+    const manifest = await readManifest(TEST_ROOT);
+    assert.ok(manifest, "manifest.json should exist after initOrbit");
+    const pluginVersion = await readPluginVersion();
+    assert.equal(manifest.orbitVersion, pluginVersion);
+    assert.ok(manifest.createdAt);
+    assert.ok(manifest.updatedAt);
+  });
+
+  await test("migrateOrbit is a no-op when already current", async () => {
+    const pluginVersion = await readPluginVersion();
+    const result = await migrateOrbit(TEST_ROOT, pluginVersion);
+    assert.equal(result.previousVersion, pluginVersion);
+    assert.equal(result.currentVersion, pluginVersion);
+    assert.deepEqual(result.migrationsRun, []);
+  });
+
+  await test("migration from 0.0.0 creates manifest and adds schemaVersion", async () => {
+    // Set up a fresh .orbit WITHOUT manifest (simulate pre-migration state).
+    const MIGRATE_ROOT = resolve(import.meta.dirname, "__test_migrate__");
+    const migrateOrbitDir = resolve(MIGRATE_ROOT, ".orbit");
+    const { mkdir: mkdirFs, rm: rmFs, writeFile } = await import("node:fs/promises");
+    await rmFs(MIGRATE_ROOT, { recursive: true, force: true });
+
+    // Create minimal .orbit structure manually (no manifest).
+    const tasksDir = resolve(migrateOrbitDir, "tasks");
+    const memoriesDir = resolve(migrateOrbitDir, "memories");
+    const templatesDir = resolve(migrateOrbitDir, "templates");
+    await mkdirFs(tasksDir, { recursive: true });
+    await mkdirFs(memoriesDir, { recursive: true });
+    await mkdirFs(templatesDir, { recursive: true });
+
+    // Create a memory index.
+    const { writeJSON: wj } = await import("./lib/io.mjs");
+    await wj(resolve(memoriesDir, "index.json"), { version: 1, memories: [] });
+
+    // Create a task with a round that has no schemaVersion.
+    const taskPath = resolve(tasksDir, "2026-01-01_00-00-00");
+    const roundPath = resolve(taskPath, "round-0001");
+    await mkdirFs(roundPath, { recursive: true });
+    await wj(resolve(roundPath, "state.json"), {
+      round: 1,
+      status: "in-progress",
+      phase: "clarify",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    // Verify no manifest exists.
+    const beforeManifest = await readManifest(MIGRATE_ROOT);
+    assert.equal(beforeManifest, null, "Should have no manifest before migration");
+
+    // Run migration.
+    const result = await migrateOrbit(MIGRATE_ROOT, "0.1.0");
+    assert.equal(result.previousVersion, "0.0.0");
+    assert.equal(result.currentVersion, "0.1.0");
+    assert.ok(result.migrationsRun.length > 0);
+
+    // Verify manifest was created.
+    const afterManifest = await readManifest(MIGRATE_ROOT);
+    assert.equal(afterManifest.orbitVersion, "0.1.0");
+
+    // Verify schemaVersion was added to state.json.
+    const state = await readJSON(resolve(roundPath, "state.json"));
+    assert.equal(state.schemaVersion, "0.1.0");
+
+    // Cleanup.
+    await rmFs(MIGRATE_ROOT, { recursive: true, force: true });
+  });
+
+  await test("migrateOrbit skips when manifest already at target", async () => {
+    const MIGRATE_ROOT2 = resolve(import.meta.dirname, "__test_migrate2__");
+    const { mkdir: mkdirFs, rm: rmFs } = await import("node:fs/promises");
+    await rmFs(MIGRATE_ROOT2, { recursive: true, force: true });
+
+    const migrateOrbitDir2 = resolve(MIGRATE_ROOT2, ".orbit");
+    await mkdirFs(resolve(migrateOrbitDir2, "tasks"), { recursive: true });
+    await mkdirFs(resolve(migrateOrbitDir2, "memories"), { recursive: true });
+    await mkdirFs(resolve(migrateOrbitDir2, "templates"), { recursive: true });
+
+    // Write a manifest at 0.1.0.
+    const { writeJSON: wj } = await import("./lib/io.mjs");
+    await wj(resolve(migrateOrbitDir2, "manifest.json"), {
+      orbitVersion: "0.1.0",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await wj(resolve(migrateOrbitDir2, "memories", "index.json"), { version: 1, memories: [] });
+
+    const result = await migrateOrbit(MIGRATE_ROOT2, "0.1.0");
+    assert.equal(result.previousVersion, "0.1.0");
+    assert.equal(result.currentVersion, "0.1.0");
+    assert.deepEqual(result.migrationsRun, []);
+
+    await rmFs(MIGRATE_ROOT2, { recursive: true, force: true });
+  });
+
+  // =========================================================================
+  console.log("\n── 8. Version Check ──");
+  // =========================================================================
+
+  await test("readManifest returns current version after init", async () => {
+    const manifest = await readManifest(TEST_ROOT);
+    assert.ok(manifest);
+    assert.equal(typeof manifest.orbitVersion, "string");
+  });
+
+  await test("readPluginVersion matches plugin.json", async () => {
+    const version = await readPluginVersion();
+    // Cross-check by reading plugin.json directly.
+    const pluginJson = await readJSON(
+      resolve(import.meta.dirname, "../plugin.json")
+    );
+    assert.equal(version, pluginJson.version);
+  });
+
+  await test("version check detects no update when versions match", async () => {
+    const manifest = await readManifest(TEST_ROOT);
+    const pluginVersion = await readPluginVersion();
+    assert.equal(manifest.orbitVersion, pluginVersion);
+    // Simulate what the CLI version command does.
+    const updateAvailable = manifest.orbitVersion !== pluginVersion;
+    assert.equal(updateAvailable, false);
+  });
+
+  await test("version check detects update when local is behind", async () => {
+    // Temporarily write a manifest with an older version.
+    const { writeJSON: wj } = await import("./lib/io.mjs");
+    const mPath = resolve(TEST_ROOT, ".orbit", "manifest.json");
+    const original = await readJSON(mPath);
+    await wj(mPath, { ...original, orbitVersion: "0.0.1" });
+
+    const manifest = await readManifest(TEST_ROOT);
+    const pluginVersion = await readPluginVersion();
+    assert.notEqual(manifest.orbitVersion, pluginVersion);
+    const updateAvailable = manifest.orbitVersion !== pluginVersion;
+    assert.equal(updateAvailable, true);
+
+    // Restore original manifest.
+    await wj(mPath, original);
   });
 
   // =========================================================================

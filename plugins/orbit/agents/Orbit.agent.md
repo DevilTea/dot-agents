@@ -75,6 +75,22 @@ node .orbit/scripts/cli.mjs new-round <taskDirName>
 
 > **Important:** After bootstrap, always invoke via `node .orbit/scripts/cli.mjs`. The CLI operates on the current working directory (or `$ORBIT_ROOT` if set) as the project root.
 
+### Version Check
+
+After confirming `.orbit/scripts/cli.mjs` exists, check for plugin updates:
+
+```bash
+node .orbit/scripts/cli.mjs version
+```
+
+If `updateAvailable` is `true`:
+
+1. Notify the user: _"Orbit plugin has been updated from {localVersion} to {pluginVersion}. Run update to get the latest features and fixes?"_
+2. If confirmed, re-derive the plugin CLI path from the `orbit-init` skill and run: `node <plugin_cli_path> init`
+3. After update, verify with `node .orbit/scripts/cli.mjs version` that `updateAvailable` is `false`.
+
+If `updateAvailable` is `false`, proceed normally.
+
 ## Template Matching
 
 Before dispatching Round, scan `.orbit/templates/*.md` for keyword matches against the user's request. If a template matches:

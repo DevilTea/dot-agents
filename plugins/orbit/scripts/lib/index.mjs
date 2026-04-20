@@ -45,6 +45,13 @@ export {
   listMemories,
 } from "./memory.mjs";
 
+// Migration
+export {
+  readPluginVersion,
+  readManifest,
+  migrateOrbit,
+} from "./migrate.mjs";
+
 // Template management
 export {
   listTemplates,

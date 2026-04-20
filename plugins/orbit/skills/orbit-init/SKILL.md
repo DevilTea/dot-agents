@@ -58,18 +58,53 @@ node .orbit/scripts/cli.mjs <command>
 
 Available commands:
 
-| Command                                                                     | Description                                                        |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `init`                                                                      | Re-initialize / update `.orbit` structure and scripts (idempotent) |
-| `new-task`                                                                  | Create a new timestamped task directory                            |
-| `new-round <taskDirName>`                                                   | Create a new round inside the given task                           |
-| `round-state <roundPath> [--patch '{...}']`                                 | Read or patch a round's `state.json`                               |
-| `templates`                                                                 | List all available task templates                                  |
-| `match-template "<query>"`                                                  | Find templates matching a user query                               |
-| `read-template <filename>`                                                  | Read a single template's frontmatter + body                        |
-| `memory-list`                                                               | List all memories in the index                                     |
-| `memory-search "<query>"`                                                   | Search long-term memories                                          |
-| `memory-archive --title "..." --tags "t1,t2" --abstract "..." --body "..."` | Create a new memory entry                                          |
+| Command                                                                     | Description                                                                               |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `init`                                                                      | Re-initialize / update `.orbit` structure and scripts (idempotent). Also runs migrations. |
+| `migrate`                                                                   | Run forward-only migrations on an existing `.orbit` directory                             |
+| `version`                                                                   | Show local `.orbit` version vs plugin version                                             |
+| `new-task`                                                                  | Create a new timestamped task directory                                                   |
+| `new-round <taskDirName>`                                                   | Create a new round inside the given task                                                  |
+| `round-state <roundPath> [--patch '{...}']`                                 | Read or patch a round's `state.json`                                                      |
+| `templates`                                                                 | List all available task templates                                                         |
+| `match-template "<query>"`                                                  | Find templates matching a user query                                                      |
+| `read-template <filename>`                                                  | Read a single template's frontmatter + body                                               |
+| `memory-list`                                                               | List all memories in the index                                                            |
+| `memory-search "<query>"`                                                   | Search long-term memories                                                                 |
+| `memory-archive --title "..." --tags "t1,t2" --abstract "..." --body "..."` | Create a new memory entry                                                                 |
+
+## Version Check (on every session start)
+
+After confirming `.orbit/scripts/cli.mjs` exists, **always** check whether the local copy is up-to-date with the plugin:
+
+```bash
+node .orbit/scripts/cli.mjs version
+```
+
+This returns:
+
+```json
+{
+  "ok": true,
+  "localVersion": "0.1.0",
+  "pluginVersion": "0.2.0",
+  "updateAvailable": true
+}
+```
+
+**If `updateAvailable` is `true`:**
+
+1. Notify the user: _"Orbit plugin has been updated from {localVersion} to {pluginVersion}. Run update to get the latest features and fixes?"_
+2. If the user confirms, re-run init **from the plugin source** (not the local copy) to overwrite scripts and run migrations:
+   ```bash
+   node <derived_cli_path> init
+   ```
+   Where `<derived_cli_path>` is the plugin CLI path derived from this skill file (Step 1 of Bootstrap Procedure).
+3. After update, verify with `node .orbit/scripts/cli.mjs version` that `updateAvailable` is `false`.
+
+**If `updateAvailable` is `false`:** Proceed normally — no action needed.
+
+> **Why re-run from plugin source?** The local `.orbit/scripts/cli.mjs` is a stale copy. Running `init` from the plugin CLI ensures the latest `copyScriptsToOrbit()` logic overwrites the local scripts, and `migrateOrbit()` handles any schema changes.
 
 ## Verification
 
@@ -78,6 +113,20 @@ After running `init`, verify success by checking:
 ```bash
 ls .orbit/scripts/cli.mjs .orbit/scripts/lib/index.mjs
 ```
+
+## Migration
+
+Running `init` automatically applies any pending forward-only migrations when the plugin version is newer than the `.orbit/manifest.json` version. Migrations can also be triggered explicitly:
+
+```bash
+node .orbit/scripts/cli.mjs migrate
+```
+
+The migration system:
+
+- Reads the current version from `.orbit/manifest.json` (defaults to `"0.0.0"` if absent).
+- Runs all applicable migrations sequentially to bring the `.orbit` directory up to the plugin version.
+- Updates `.orbit/manifest.json` with the new version stamp.
 
 Both files should exist. The CLI output will be:
 
