@@ -27,6 +27,13 @@
  *   memory-list              List all memories in the index.
  *   migrate                  Run forward-only migrations on an existing .orbit directory.
  *   version                  Show local .orbit version vs plugin version.
+ *   backlog-list [--sort value|date]
+ *                            List all backlog items (default sort: value).
+ *   backlog-add --slug <slug> --value <1-10> --summary "..." \
+ *              (--body "..." | --body-file <path>)
+ *                            Add a new backlog item.
+ *   backlog-get <slug>       Get a single backlog item.
+ *   backlog-remove <slug>    Remove a backlog item.
  */
 
 import { resolve, isAbsolute, dirname, sep as pathSep } from "node:path";
@@ -52,6 +59,10 @@ import {
   readManifest,
   readPluginVersion,
   compareSemver,
+  listBacklog,
+  addBacklogItem,
+  getBacklogItem,
+  removeBacklogItem,
 } from "./lib/index.mjs";
 
 const args = process.argv.slice(2);
@@ -463,9 +474,125 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
+    case "backlog-list": {
+      const sortIdx = args.indexOf("--sort");
+      const sort = sortIdx !== -1 && args[sortIdx + 1] ? args[sortIdx + 1] : "value";
+      if (sort !== "value" && sort !== "date") {
+        console.error("Usage: backlog-list [--sort value|date]");
+        process.exit(1);
+      }
+      const items = await listBacklog(projectRoot, { sort });
+      console.log(JSON.stringify({ ok: true, items }));
+      break;
+    }
+
+    // -----------------------------------------------------------------
+    case "backlog-add": {
+      const getArg = (flag) => {
+        const idx = args.indexOf(flag);
+        return idx !== -1 && args[idx + 1] ? args[idx + 1] : null;
+      };
+      const slug = getArg("--slug");
+      const valueRaw = getArg("--value");
+      const summary = getArg("--summary");
+      const bodyInline = getArg("--body");
+      const bodyFile = getArg("--body-file");
+
+      if (!slug || !valueRaw || !summary) {
+        console.error(
+          'Usage: backlog-add --slug <slug> --value <1-10> --summary "..." (--body "..." | --body-file <path>)'
+        );
+        process.exit(1);
+      }
+      const value = parseInt(valueRaw, 10);
+      let body = "";
+      if (bodyFile) {
+        const resolvedBodyFile = resolve(projectRoot, bodyFile);
+        const projectRootAbs = resolve(projectRoot);
+        let canonicalBodyFile;
+        let canonicalProjectRoot;
+        try {
+          canonicalBodyFile = await realpath(resolvedBodyFile);
+        } catch (err) {
+          console.log(
+            JSON.stringify({
+              ok: false,
+              error: err?.code === "ENOENT" ? "body-file not found" : "Failed to resolve body-file path",
+              detail: err.message,
+            })
+          );
+          process.exit(1);
+        }
+        try {
+          canonicalProjectRoot = await realpath(projectRootAbs);
+        } catch {
+          canonicalProjectRoot = projectRootAbs;
+        }
+        if (
+          canonicalBodyFile !== canonicalProjectRoot &&
+          !canonicalBodyFile.startsWith(canonicalProjectRoot + pathSep)
+        ) {
+          console.log(
+            JSON.stringify({ ok: false, error: "body-file outside project root" })
+          );
+          process.exit(1);
+        }
+        body = await readFile(canonicalBodyFile, "utf-8");
+      } else if (bodyInline) {
+        body = bodyInline;
+      }
+      try {
+        const filePath = await addBacklogItem(projectRoot, { slug, value, summary, body });
+        console.log(JSON.stringify({ ok: true, slug, filePath }));
+      } catch (err) {
+        console.log(JSON.stringify({ ok: false, error: err.message }));
+        process.exit(1);
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------
+    case "backlog-get": {
+      const slug = args[1];
+      if (!slug) {
+        console.error("Usage: backlog-get <slug>");
+        process.exit(1);
+      }
+      try {
+        const item = await getBacklogItem(projectRoot, slug);
+        console.log(JSON.stringify({ ok: true, item }));
+      } catch (err) {
+        if (err?.code === "ENOENT") {
+          console.log(JSON.stringify({ ok: false, error: "backlog item not found", slug }));
+          process.exit(1);
+        }
+        console.log(JSON.stringify({ ok: false, error: err.message }));
+        process.exit(1);
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------
+    case "backlog-remove": {
+      const slug = args[1];
+      if (!slug) {
+        console.error("Usage: backlog-remove <slug>");
+        process.exit(1);
+      }
+      try {
+        const removed = await removeBacklogItem(projectRoot, slug);
+        console.log(JSON.stringify({ ok: true, removed, slug }));
+      } catch (err) {
+        console.log(JSON.stringify({ ok: false, error: err.message }));
+        process.exit(1);
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------
     default:
       console.error(
-        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, read-template, memory-search, memory-archive, memory-list, migrate, version`
+        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, read-template, memory-search, memory-archive, memory-list, migrate, version, backlog-list, backlog-add, backlog-get, backlog-remove`
       );
       process.exit(1);
   }

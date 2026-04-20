@@ -67,7 +67,7 @@ export function orbitRoot(projectRoot) {
  * Resolve commonly-used subdirectory paths under `.orbit`.
  *
  * @param {string} projectRoot
- * @returns {{ root: string, templates: string, memories: string, tasks: string }}
+ * @returns {{ root: string, templates: string, memories: string, tasks: string, backlog: string }}
  */
 export function orbitPaths(projectRoot) {
   const root = orbitRoot(projectRoot);
@@ -76,6 +76,7 @@ export function orbitPaths(projectRoot) {
     templates: join(root, "templates"),
     memories: join(root, "memories"),
     tasks: join(root, "tasks"),
+    backlog: join(root, "backlog"),
   };
 }
 
@@ -127,4 +128,14 @@ export function roundFiles(roundPath) {
  */
 export function memoryIndexPath(projectRoot) {
   return join(orbitPaths(projectRoot).memories, "index.json");
+}
+
+/**
+ * Return the absolute path to the `.orbit/backlog/` directory.
+ *
+ * @param {string} projectRoot
+ * @returns {string}
+ */
+export function backlogDir(projectRoot) {
+  return orbitPaths(projectRoot).backlog;
 }

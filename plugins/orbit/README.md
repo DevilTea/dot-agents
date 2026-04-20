@@ -31,11 +31,12 @@ The following settings **must** be configured for Orbit to function correctly:
 | Agent                    | User-invocable | Purpose                                                                                         |
 | ------------------------ | -------------- | ----------------------------------------------------------------------------------------------- |
 | **Orbit**                | ✅             | Entry point. Manages `.orbit` folder, creates task/round directories, dispatches `Orbit Round`. |
-| **Orbit Round**          | ❌             | Flow coordinator for one round. Orchestrates Clarify → Planning → Execute → Review → Next.      |
+| **Orbit Round**          | ❌             | Flow coordinator for one round. Orchestrates Clarify → Planning → Execute → Review.             |
 | **Orbit Planner**        | ❌             | Converts clarified requirements into atomic, verifiable execution plans.                        |
 | **Orbit Execute**        | ❌             | Performs edits and validations in isolation; writes results to round files.                     |
 | **Orbit Review**         | ❌             | Read-only reviewer; inspects work and writes findings to round files.                           |
 | **Orbit Next Advisor**   | ❌             | Analyzes completed rounds and recommends concrete next actions.                                 |
+| **Orbit Backlog**        | ❌             | Presents backlog items to the user for selection; dispatched by Dispatcher on demand.           |
 | **Orbit Memory Manager** | ❌             | Manages long-term memory in `.orbit/memories/`.                                                 |
 
 ## `.orbit` Directory Structure
@@ -46,6 +47,7 @@ The following settings **must** be configured for Orbit to function correctly:
 ├── scripts/          # CLI + lib (auto-copied during init)
 ├── templates/        # Task templates (*.md with YAML frontmatter)
 ├── memories/         # Long-term memory entries (index.json + *.md files)
+├── backlog/          # Backlog items (<slug>.md with value-scored frontmatter)
 └── tasks/
     └── YYYY-MM-DD_hh-mm-ss/   # One directory per task
         └── round-0001/         # One directory per round
@@ -115,13 +117,14 @@ The `init` command automatically detects whether the `.orbit` directory is behin
 
 ## Round Workflow
 
-Each Orbit round follows five phases:
+Each Orbit round follows four phases:
 
 1. **Clarify** — Resolve all material branches through `vscode_askQuestions` before writing any files.
 2. **Planning** — Produce an atomic, verifiable plan. User confirms before execution starts.
 3. **Execute** — `Orbit Execute` performs all edits and validations in isolation.
 4. **Review** — `Orbit Review` reads the output and reports findings; critical issues are sent back for a fix loop.
-5. **Next** — `Orbit Next Advisor` recommends concrete follow-up actions; user selects or signals done.
+
+After a round completes, the Orbit Dispatcher may dispatch `Orbit Next Advisor` as a post-round step. Next Advisor analyzes the completed round and recommends concrete follow-up actions; the user selects a recommendation or signals done. This is a dispatcher-level operation, not a phase within Round.
 
 ## Task Templates
 
@@ -138,3 +141,30 @@ description: Short 1-2 sentence description of when to use this template.
 ```
 
 When a user request matches a template's keywords, the template content is passed to `Orbit Round` as a `template_hint`.
+
+## Backlog
+
+The backlog system stores future task ideas in `.orbit/backlog/` as value-scored Markdown files. Each item has a slug-based filename, a priority value (1-10), and free-form body content for initial thoughts.
+
+### Backlog CLI Commands
+
+```bash
+# List all backlog items (default sort: value descending)
+node .orbit/scripts/cli.mjs backlog-list
+node .orbit/scripts/cli.mjs backlog-list --sort date
+
+# Add a new backlog item
+node .orbit/scripts/cli.mjs backlog-add \
+  --slug "improve-error-handling" \
+  --value 8 \
+  --summary "Improve error handling across API endpoints." \
+  --body "Initial thoughts on the approach."
+
+# Get a single backlog item
+node .orbit/scripts/cli.mjs backlog-get improve-error-handling
+
+# Remove a backlog item
+node .orbit/scripts/cli.mjs backlog-remove improve-error-handling
+```
+
+The `Orbit Backlog` agent is dispatched by the Dispatcher to present backlog items to the user for interactive selection. It reads the backlog, asks for sorting preference, presents a multi-select list, and returns the user's selection.

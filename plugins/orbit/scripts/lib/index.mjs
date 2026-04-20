@@ -13,6 +13,7 @@ export {
   roundDir,
   roundFiles,
   memoryIndexPath,
+  backlogDir,
 } from "./paths.mjs";
 
 // I/O utilities
@@ -34,6 +35,7 @@ export {
   readRoundState,
   ALLOWED_PHASES,
   ALLOWED_STATUSES,
+  ALLOWED_MODES,
   updateRoundState,
 } from "./state-manager.mjs";
 
@@ -59,3 +61,11 @@ export {
   readTemplate,
   matchTemplates,
 } from "./templates.mjs";
+
+// Backlog management
+export {
+  listBacklog,
+  addBacklogItem,
+  getBacklogItem,
+  removeBacklogItem,
+} from "./backlog.mjs";

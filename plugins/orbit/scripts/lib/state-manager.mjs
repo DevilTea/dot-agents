@@ -43,7 +43,11 @@ export const ALLOWED_STATUSES = Object.freeze([
   "completed",
   "partial",
   "blocked",
+  "abandoned",
 ]);
+
+/** Allowed values for `state.mode`. */
+export const ALLOWED_MODES = Object.freeze(["simple", "full"]);
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -60,6 +64,7 @@ export async function initOrbit(projectRoot) {
   await mkdir(paths.tasks, { recursive: true });
   await mkdir(paths.memories, { recursive: true });
   await mkdir(paths.templates, { recursive: true });
+  await mkdir(paths.backlog, { recursive: true });
 
   // Seed the memory index if absent. Only ENOENT / ENOTDIR trigger a reset;
   // any other read error (permissions, corrupt JSON, I/O failure) must bubble
@@ -270,6 +275,14 @@ export async function updateRoundState(roundPath, patch) {
   ) {
     throw new Error(
       `updateRoundState: invalid status ${JSON.stringify(patch.status)}; allowed: ${ALLOWED_STATUSES.join(", ")}`
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "mode") &&
+    !ALLOWED_MODES.includes(patch.mode)
+  ) {
+    throw new Error(
+      `updateRoundState: invalid mode ${JSON.stringify(patch.mode)}; allowed: ${ALLOWED_MODES.join(", ")}`
     );
   }
 

@@ -210,7 +210,7 @@ Goal: Independent quality check.
      - `Fix selected findings` (recommended if findings exist)
      - `No fixes — complete round`
    - **Simple mode**: Critical findings → auto-fix (re-dispatch Execute with fix scope). If fix fails (Execute returns `needs_user_decision` or `blocked`), escalate to user via `#tool:vscode_askQuestions`. Warning/Info findings → logged only, no fix prompt.
-5. **If fixing** (full mode: user-selected; simple mode: auto-fix for criticals): Re-dispatch `Orbit Execute` with fix scope → re-dispatch `Orbit Review` → repeat until no critical findings remain (simple mode) or user selects `No fixes` (full mode). **Iteration cap (simple mode):** After 3 auto-fix cycles without resolving all critical findings, stop auto-fixing and escalate to the user via `#tool:vscode_askQuestions`, presenting the remaining critical findings and offering `Fix selected findings` / `No fixes — complete round`.
+5. **If fixing** (full mode: user-selected; simple mode: auto-fix for criticals): Re-dispatch `Orbit Execute` with fix scope → re-dispatch `Orbit Review` → repeat until no critical findings remain (simple mode) or user selects `No fixes` (full mode). **Iteration cap (simple mode):** After 3 auto-fix attempts without resolving all critical findings, stop auto-fixing and escalate to the user via `#tool:vscode_askQuestions`, presenting the remaining critical findings and offering `Fix selected findings` / `No fixes — complete round`.
 6. Update `state.json` → `phase: "done"`, `status: "completed"`.
 
 ## Summary & Return Contract
