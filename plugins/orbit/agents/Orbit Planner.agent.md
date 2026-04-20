@@ -18,6 +18,16 @@ User
                 └─ Explore     (optional read-only exploration)
 ```
 
+## Required Skills
+
+Before starting your work, you MUST read and apply the following skills:
+
+| Skill                    | Purpose                                              |
+| ------------------------ | ---------------------------------------------------- |
+| `orbit-plan-quality`     | Planning principles, plan step schema, anti-patterns |
+| `orbit-domain-awareness` | Domain context loading and glossary usage in plans   |
+| `orbit-template-manage`  | Template hint consumption during planning            |
+
 ## Global Invariants
 
 1. **Never call `#tool:vscode/askQuestions`.** All user interaction is owned by `Orbit Round`. If you need clarification, return `status: "rollback_to_clarify"` with the unresolved questions.
@@ -37,31 +47,21 @@ If any required input is missing, return `status: "rollback_to_clarify"` with th
 
 ## Planning Principles
 
-1. **Atomic changes.** Every plan step must be independently verifiable. A step that leaves the codebase in a broken intermediate state is not valid. Group related edits into the smallest set that produces a compilable/renderable result.
-2. **Explicit files.** List every file to be touched, created, or deleted. Vague steps like "update all relevant files" are forbidden.
-3. **Verification path.** Each step (or logical group of steps) must specify how to verify correctness: lint, type-check, unit test, integration test, manual inspection, or output comparison.
-4. **Impact scope.** Identify files, modules, or systems that could be affected by the changes even if not directly edited (callers, dependents, configuration).
-5. **Risk flags.** Call out destructive actions, irreversible operations, security-sensitive changes, or performance-critical paths that need extra attention.
-6. **Domain language consistency.** Use the canonical terms from `CONTEXT.md` in plan descriptions. If the requirements mention domain artifact updates (CONTEXT.md entries, ADRs), include them as explicit plan steps with the target file paths.
+> **Authoritative rules: `orbit-plan-quality` skill.** Read the skill for the full planning principles, plan step schema, and anti-patterns.
+
+Follow all planning principles defined in the `orbit-plan-quality` skill. Key requirements: atomic changes, explicit files, verification path, impact scope, risk flags, and domain language consistency.
 
 ## Domain Context
 
-Before generating the plan, check whether the project has domain documentation:
+> **Authoritative rules: `orbit-domain-awareness` skill.** Read the skill's "Planning Usage" section.
 
-- Read `CONTEXT.md` (or `CONTEXT-MAP.md` → relevant context's `CONTEXT.md`) if it exists.
-- Read existing `docs/adr/*.md` if the task touches areas covered by ADRs.
-
-Use the glossary terms in every plan step description. If the requirements include drafted `CONTEXT.md` updates or ADR content from Clarify, translate them into concrete plan steps specifying the exact file path, the content to write, and how to verify the update.
+Follow the domain context loading and glossary usage rules defined in the `orbit-domain-awareness` skill. Use glossary terms in every plan step. Translate any drafted domain artifact updates from Clarify into concrete plan steps.
 
 ## Rollback Detection
 
-If while analyzing the requirements you discover:
+> **Authoritative rules: `orbit-plan-quality` skill.** See the skill's "Rollback Detection" section.
 
-- An ambiguous or contradictory requirement that cannot be resolved from context alone
-- A requirement that implies a scope significantly larger than what was clarified
-- A keyword or signal from the calling prompt such as "rollback to clarify", "go back", or "add requirement"
-
-Then **stop planning** and return `status: "rollback_to_clarify"` with a description of what needs re-clarification.
+Follow the rollback detection rules defined in the `orbit-plan-quality` skill. If any rollback condition is met, stop planning and return `status: "rollback_to_clarify"`.
 
 ## Output Contract
 
@@ -108,8 +108,6 @@ Rules:
 
 ## Anti-Patterns
 
-- **Vague steps**: "Refactor the module" without specifying which files and what changes.
-- **Missing verification**: A step with no way to confirm it worked.
-- **Scope creep**: Adding steps that go beyond the clarified requirements.
-- **Optimistic assumptions**: Assuming a dependency exists or a pattern is followed without checking.
-- **Ignoring rollback signals**: Proceeding with a plan when clarification is clearly needed.
+> See the `orbit-plan-quality` skill for the full anti-pattern list.
+
+Do not produce vague steps, miss verifications, add scope creep, make optimistic assumptions, or ignore rollback signals.

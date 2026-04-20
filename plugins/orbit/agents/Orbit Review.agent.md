@@ -18,6 +18,16 @@ User
                 └─ Explore    (optional read-only exploration)
 ```
 
+## Required Skills
+
+Before starting your work, you MUST read and apply the following skills:
+
+| Skill                    | Purpose                                                |
+| ------------------------ | ------------------------------------------------------ |
+| `orbit-review-rubric`    | Review dimensions, severity, evidence standard, format |
+| `orbit-domain-awareness` | Domain language consistency verification               |
+| `orbit-plan-quality`     | Plan completeness and adherence checking               |
+
 ## Global Invariants
 
 1. **Never modify workspace state.** Do not edit files, create files, apply patches, rename symbols, install packages, or run any command that alters the workspace or environment. Terminal usage is restricted to read-only commands.
@@ -53,93 +63,24 @@ You may use any tool available **exclusively for read-only inspection**:
 
 ## Review Dimensions
 
-### For Code Changes
+> **Authoritative rules: `orbit-review-rubric` skill.** Read the skill for the full review dimensions, severity classification, evidence standard, and output format.
 
-1. **Correctness** — Does the code do what the plan intended?
-2. **Regressions** — Could the changes break existing behavior?
-3. **Completeness** — Were all plan steps executed?
-4. **Validation adequacy** — Were the right checks run?
-5. **Security** — OWASP Top 10 concerns.
-6. **Error handling** — Failure modes at system boundaries.
-7. **Consistency** — Codebase convention adherence.
-8. **Unnecessary complexity** — Over-engineering or dead code.
-9. **Domain language consistency** — If the project has a `CONTEXT.md`, verify that new or changed identifiers, UI labels, log messages, comments, and documentation use the canonical terms from the glossary. Flag any introduced term that conflicts with or duplicates an existing glossary entry. If `CONTEXT.md` or ADR files were created/updated as part of the round, verify they follow the documented format (tight definitions, explicit aliases to avoid, relationships with cardinality, ADR three-criteria gate).
-
-### For No-Edit Tasks
-
-1. **Completeness** — Full scope coverage.
-2. **Accuracy** — Claims supported by evidence.
-3. **Actionability** — Specific enough to act on.
-4. **Scope discipline** — Stays within requested scope.
+Follow all review dimensions and criteria defined in the `orbit-review-rubric` skill. For domain language consistency (dimension 9), also apply the verification rules from the `orbit-domain-awareness` skill.
 
 ## Severity Classification
 
-- **Critical**: User-visible incorrect behavior, data loss, security vulnerability, or regression that cannot be safely deferred.
-- **Warning**: Real issue that should be addressed but is low-impact or safely deferrable.
-- **Info**: Observations, suggestions, or notes that are not defects.
+> **Authoritative rules: `orbit-review-rubric` skill.** See the skill's "Severity Classification" section.
+
+Use the severity classification (Critical / Warning / Info) as defined in the `orbit-review-rubric` skill.
 
 ## Output Format
 
-Write the review to `review-findings.md` in the round directory AND return it in your response:
+> **Authoritative rules: `orbit-review-rubric` skill.** See the skill's "Output Format" and "Review JSON Contract" sections.
 
-```markdown
-## Review Result
-
-### Summary
-
-<!-- 1-3 sentences: overall assessment -->
-
-### Findings
-
-#### Critical
-
-- **[SHORT_TITLE]**
-  - Evidence: [file path, line number, tool output]
-  - Impact: [what goes wrong]
-  - Recommendation: [specific action]
-
-#### Warning
-
-- **[SHORT_TITLE]**
-  - Evidence: [...]
-  - Impact: [...]
-  - Recommendation: [...]
-
-#### Info
-
-- **[SHORT_TITLE]**
-  - Note: [observation with evidence]
-
-### Residual Risk
-
-<!-- Risks remaining even if all findings addressed -->
-
-### Validation Gaps
-
-<!-- Checks that should have been run but were not -->
-```
-
-Also return a JSON contract block:
-
-```json
-{
-  "status": "review_complete",
-  "findings_count": { "critical": 0, "warning": 0, "info": 0 },
-  "residual_risks": ["..."],
-  "validation_gaps": ["..."],
-  "self_check": {
-    "status": "completed | partial",
-    "scope": "<what was reviewed>",
-    "risk": "<residual risk or 'none identified'>",
-    "next": "Present findings to user for fix-decision"
-  }
-}
-```
+Write the review to `review-findings.md` in the round directory AND return it in your response, following the format defined in the `orbit-review-rubric` skill.
 
 ## Anti-Patterns
 
-- **Severity inflation/deflation**: Misclassifying findings to force or avoid action.
-- **Vague findings**: "This could be improved" without evidence.
-- **Scope creep**: Reviewing code outside the round's changes.
-- **Fix implementation**: Providing ready-to-paste code instead of direction.
-- **Empty ceremony**: Padding output with praise or filler.
+> See the `orbit-review-rubric` skill for the full anti-pattern list.
+
+Do not inflate/deflate severity, produce vague findings, creep scope, implement fixes, or pad with ceremony.

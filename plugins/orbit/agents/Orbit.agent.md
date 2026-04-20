@@ -93,10 +93,9 @@ If `updateAvailable` is `false`, proceed normally.
 
 ## Template Matching
 
-Before dispatching Round, scan `.orbit/templates/*.md` for keyword matches against the user's request. If a template matches:
+> **Required skill: `orbit-template-manage`.** Read and follow the template discovery and workflow integration rules defined in the skill.
 
-- Read its content.
-- Pass it to `Orbit Round` as a `template_hint` so Clarify can use it as a starting framework.
+Before dispatching Round, perform template matching as described in the `orbit-template-manage` skill's "Dispatcher Phase" section. If a template matches, pass its content to `Orbit Round` as a `template_hint`.
 
 ## Session Preflight
 

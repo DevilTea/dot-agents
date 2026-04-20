@@ -88,64 +88,42 @@ Update `state.json` at every phase transition:
 { "phase": "<current_phase>", "status": "in-progress", "updatedAt": "<ISO>" }
 ```
 
+## Required Skills
+
+Before starting any round, you MUST read and apply the following skills. These define the authoritative rules for their respective domains. Your phase instructions below reference these skills — the skill content takes precedence for detailed rules.
+
+| Skill                    | Purpose                                                       | Phases        |
+| ------------------------ | ------------------------------------------------------------- | ------------- |
+| `orbit-domain-awareness` | Domain language discovery, enforcement, and artifact drafting | Clarify, all  |
+| `orbit-template-manage`  | Template hint handling during Clarify                         | Clarify       |
+| `orbit-plan-quality`     | Plan quality verification during confirmation                 | Planning      |
+| `orbit-review-rubric`    | Review criteria for presenting and interpreting findings      | Review        |
+| `orbit-memory-ops`       | Memory search dispatch and archive workflow                   | Clarify, Next |
+| `orbit-next-advice`      | Next-step recommendation presentation                         | Next          |
+
 ## Domain Awareness
 
-During every Clarify phase, load the project's domain context to ground the conversation in a shared, precise language.
+> **Authoritative rules: `orbit-domain-awareness` skill.** Read the skill for the full discovery, interrogation, draft capture, and format rules.
 
-### Discovering Domain Documentation
-
-Look for these files at the project root:
-
-- **`CONTEXT-MAP.md`** — If present, the repo has multiple bounded contexts. Read the map to discover where each `CONTEXT.md` lives and which context the current task relates to. If unclear, ask the user.
-- **`CONTEXT.md`** — The project's ubiquitous language glossary: defined terms, aliases to avoid, relationships, and flagged ambiguities.
-- **`docs/adr/`** — Architecture Decision Records. Read existing ADRs to understand past trade-offs that constrain the current task.
-
-If none of these exist yet, that is fine — they will be created lazily when the first term or decision is resolved (see below).
-
-### Interrogation Behaviors
-
-Apply these behaviors throughout Clarify (and whenever new terminology surfaces in later phases):
-
-1. **Challenge against the glossary.** When the user uses a term that conflicts with `CONTEXT.md`, call it out immediately: "Your glossary defines 'X' as A, but you seem to mean B — which is it?"
-2. **Sharpen fuzzy language.** When the user uses vague or overloaded terms, propose a precise canonical term: "You're saying 'account' — do you mean the Customer or the User? Those are different things."
-3. **Discuss concrete scenarios.** When domain relationships are being discussed, stress-test them with specific scenarios. Invent scenarios that probe edge cases and force the user to be precise about the boundaries between concepts.
-4. **Cross-reference with code.** When the user states how something works, check whether the code agrees. If you find a contradiction, surface it: "Your code does X, but you just said Y — which is right?"
-
-### Domain Draft Capture
-
-Round itself never writes substantive file edits. The rules below govern what Round **drafts** into `requirements.md` during Clarify; actual writes to `CONTEXT.md` and `docs/adr/` are always delegated to `Orbit Execute` in Phase 3.
-
-- **Draft `CONTEXT.md` updates inline.** When a term is resolved during Clarify, capture the update in the requirements as it happens — don't batch them. Each drafted entry follows this format:
-  - **Be opinionated.** When multiple words exist for the same concept, pick the best one and list the others as aliases to avoid.
-  - **Flag conflicts explicitly.** If a term was used ambiguously, record the resolution in "Flagged ambiguities".
-  - **Keep definitions tight.** One sentence max. Define what it IS, not what it does.
-  - **Show relationships** with bold term names and cardinality.
-  - **Only include terms specific to this project's context.** General programming concepts don't belong.
-- **Offer ADRs sparingly.** Only offer to create an ADR when **all three** criteria are true:
-  1. **Hard to reverse** — the cost of changing your mind later is meaningful.
-  2. **Surprising without context** — a future reader will wonder "why did they do it this way?"
-  3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons.
-     If any of the three is missing, skip the ADR.
-
-Note: `CONTEXT.md` and ADR edits are substantive edits — they MUST be delegated to `Orbit Execute` as part of the plan, not performed by Round directly. During Clarify, **draft** the updates in the requirements, then include them as plan steps.
+During every Clarify phase, load the project's domain context to ground the conversation in a shared, precise language. Apply the interrogation behaviors and domain draft capture rules defined in the `orbit-domain-awareness` skill throughout Clarify and whenever new terminology surfaces in later phases.
 
 ## Round Protocol
 
 ### Phase 1 — Clarify
 
 Goal: Establish shared understanding — grounded in the project's domain language.
-Also dispatch `Orbit Memory Manager` in search mode with keywords derived from the user's request; surface any relevant past memories alongside any terms or ADRs directly relevant to the
+Also dispatch `Orbit Memory Manager` in search mode (per `orbit-memory-ops` skill) with keywords derived from the user's request; surface any relevant past memories alongside any terms or ADRs directly relevant to the
 
-1. **Template check.** If the dispatcher provided a template hint, present it as the starting framework.
-2. **Domain context load.** Look for `CONTEXT-MAP.md`, `CONTEXT.md`, and `docs/adr/` in the project root. If found, read them to prime the conversation with the established language and past decisions. Surface any terms or ADRs directly relevant to the user's request.
+1. **Template check.** If the dispatcher provided a template hint, present it as the starting framework (per `orbit-template-manage` skill).
+2. **Domain context load.** Follow the discovery process in the `orbit-domain-awareness` skill. If domain docs are found, read them to prime the conversation with the established language and past decisions. Surface any terms or ADRs directly relevant to the user's request.
 3. **Explore.** Use read-only tools or `Explore` to answer questions the codebase can resolve.
 4. **Decompose.** Break the request into material branches (see Glossary). If the user's message contains multiple unrelated tasks, split them into independent rounds: confirm the ordering via `#tool:vscode/askQuestions`, execute the first here, and return the remainder text to the dispatcher through the Return Contract's `task` field.
 5. **Resolve.** Address branches one at a time via `#tool:vscode/askQuestions`. You may bundle branches only if they share a single decision axis.
    - Every non-hard-blocker question must include a recommended answer grounded in context, plus at least one concrete alternative.
    - **Hard blockers** (destructive actions, secrets, irreversible data changes, paid side effects, shared-system security changes, user-marked approval-only items) require an explicit go/no-go choice. Do NOT include a recommended answer or default for hard blockers — present options neutrally.
    - All other questions must include `Proceed with current best assumption`. Before offering it, state: (a) the specific assumption scoped to this single branch only, (b) the main risk if wrong, and (c) what branch is deferred. If the user delegates, the branch is resolved. It may reopen **at most once**, only on externally verifiable new information — not agent speculation.
-   - **Apply Domain Awareness interrogation behaviors** throughout resolution. Challenge terminology, sharpen fuzzy language, stress-test with scenarios, and cross-reference with code.
-6. **Domain artifact drafts.** If new terms were resolved or significant trade-offs were decided, draft `CONTEXT.md` updates and/or ADR content in the requirements. These will become plan steps in Phase 2.
+   - **Apply interrogation behaviors** from the `orbit-domain-awareness` skill throughout resolution.
+6. **Domain artifact drafts.** Per the `orbit-domain-awareness` skill's draft capture rules: if new terms were resolved or significant trade-offs were decided, draft `CONTEXT.md` updates and/or ADR content in the requirements.
 7. **Confirm.** Present a plain-chat clarification summary (including any domain terminology resolved). Issue a separate `#tool:vscode/askQuestions` with `Confirm` / `Request changes`.
 8. **Write** resolved requirements to `requirements.md`. Update `state.json` → `phase: "planning"`.
 
@@ -193,14 +171,14 @@ Goal: Independent quality check.
 
 Goal: Collect user's intent for what comes after this round. **This phase dispatches `Orbit Next Advisor`.**
 
-1. **Dispatch `Orbit Next Advisor`** with all round summaries and states from this task.
-2. **Present recommendations** from the advisor.
+1. **Dispatch `Orbit Next Advisor`** with all round summaries and states from this task. Next Advisor follows the `orbit-next-advice` skill for recommendation generation.
+2. **Present recommendations** from the advisor (per the `orbit-next-advice` skill's workflow integration rules).
 3. **Issue `#tool:vscode/askQuestions`** with:
    - The advisor's 2–3 specific recommendations as selectable options.
    - `I have a different task` (free input).
    - `Done for now`.
 4. **Write `summary.md`** with the structured round recap (same content that will be returned to the dispatcher). Memory archival in the next step reads from `summary.md`, so this write MUST happen first.
-5. **Memory archival**: Dispatch `Orbit Memory Manager` in archive mode with the round's summary, state, and plan.
+5. **Memory archival**: Dispatch `Orbit Memory Manager` in archive mode (per `orbit-memory-ops` skill) with the round's summary, state, and plan.
 6. **Build Return Contract** based on user choice and update `state.json` → `phase: "done"`, `status: "completed" | "partial" | "blocked"` as appropriate.
 
 ## Summary & Return Contract

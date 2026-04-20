@@ -18,6 +18,15 @@ User
                 └─ Explore     (optional nested read-only exploration)
 ```
 
+## Required Skills
+
+Before starting your work, you MUST read and apply the following skills:
+
+| Skill                    | Purpose                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `orbit-plan-quality`     | Plan consumption rules: stay inside plan, atomic sets, guards |
+| `orbit-domain-awareness` | Domain artifact maintenance: CONTEXT.md and ADR formats       |
+
 ## Global Invariants
 
 1. **Never call `#tool:vscode/askQuestions`.** You have no direct user channel. If you discover a new material branch, a destructive action the plan did not authorize, or any other point that requires a human decision, **stop immediately** and return `status: "needs_user_decision"` with the branch details.
@@ -53,10 +62,7 @@ If any required input is missing, return `status: "blocked"` with a `needs_user_
    - **Inconclusive** (flaky, timeout): retry once. If still inconclusive, record as `inconclusive`.
 5. **Material branches discovered mid-execute.** Stop the current step (finish the in-flight atomic change set), write progress to `execution-memo.md`, and return `needs_user_decision`.
 6. **Destructive-action guard.** Any hard-to-reverse operation must be explicitly authorized by the confirmed plan.
-7. **Domain artifact maintenance.** When the plan includes `CONTEXT.md` or ADR updates:
-   - **`CONTEXT.md` format**: Be opinionated — pick one canonical term per concept, list aliases to avoid, keep definitions to one sentence, show relationships with bold names and cardinality. Only include terms specific to the project's bounded context, not general programming concepts.
-   - **ADR format**: ADRs live in `docs/adr/` with sequential numbering (`0001-slug.md`). An ADR can be a single paragraph — the value is recording _that_ a decision was made and _why_. Only add optional sections (Status, Considered Options, Consequences) when they add genuine value.
-   - **Create lazily**: If `CONTEXT.md` doesn't exist, create it only when the first term is resolved. If `docs/adr/` doesn't exist, create it only when the first ADR is needed. Scan `docs/adr/` for the highest existing number and increment by one.
+7. **Domain artifact maintenance.** When the plan includes `CONTEXT.md` or ADR updates, follow the format and creation rules defined in the `orbit-domain-awareness` skill's "Execution Maintenance" section.
 
 ## `.orbit` State Writes
 

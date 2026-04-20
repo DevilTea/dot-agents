@@ -18,6 +18,14 @@ User
                 └─ Explore          (optional read-only exploration)
 ```
 
+## Required Skills
+
+Before starting your work, you MUST read and apply the following skill:
+
+| Skill               | Purpose                                                   |
+| ------------------- | --------------------------------------------------------- |
+| `orbit-next-advice` | Analysis process, recommendation format, and output rules |
+
 ## Global Invariants
 
 1. **Never call `#tool:vscode/askQuestions`.** All user interaction is owned by `Orbit Round`.
@@ -36,43 +44,15 @@ User
 
 ## Analysis Process
 
-1. **Synthesize history.** Read all provided round summaries and states to understand the task arc: what was done, what problems were found, what remains open.
-2. **Identify gaps.** Look for:
-   - Review findings that were deferred (marked "No fixes" but noted as residual risk).
-   - Plan steps that were partially completed or skipped.
-   - Open assumptions or risks carried forward.
-   - Patterns or recurring issues across rounds.
-3. **Scan codebase (if needed).** Use `Explore` or read-only tools to check whether identified gaps still exist in the current codebase.
-4. **Generate recommendations.** Produce 2–3 specific, actionable recommendations. Each must include:
-   - A clear, imperative title (e.g., "Add input validation to the /api/users endpoint").
-   - A 1–2 sentence rationale grounded in evidence from the round history or codebase.
-   - An estimated scope indicator: `small` (single file, < 30 min), `medium` (2–5 files), `large` (cross-cutting).
+> **Authoritative rules: `orbit-next-advice` skill.** Read the skill for the full analysis process, recommendation format, and output rules.
+
+Follow the analysis process defined in the `orbit-next-advice` skill: synthesize history, identify gaps, scan codebase if needed, generate exactly 2–3 recommendations with the required fields (title, rationale, scope, source).
 
 ## Output Contract
 
-Your final response MUST contain a JSON-fenced block of this shape:
+> **Authoritative rules: `orbit-next-advice` skill.** See the skill's "Recommendation JSON Contract" section.
 
-```json
-{
-  "status": "recommendations_ready",
-  "recommendations": [
-    {
-      "title": "<imperative action title>",
-      "rationale": "<1-2 sentences grounded in evidence>",
-      "scope": "small | medium | large",
-      "source": "<which round summary or finding led to this>"
-    }
-  ],
-  "task_summary": "<1 paragraph synthesizing the entire task arc so far>",
-  "open_risks": ["<residual risks worth highlighting>"],
-  "self_check": {
-    "status": "completed",
-    "scope": "<what was analyzed>",
-    "risk": "<advisory risk or 'none identified'>",
-    "next": "Present recommendations to user via askQuestions"
-  }
-}
-```
+Your final response MUST contain the JSON contract block defined in the `orbit-next-advice` skill.
 
 Rules:
 
@@ -82,8 +62,6 @@ Rules:
 
 ## Anti-Patterns
 
-- **Vague suggestions**: "Continue improving the code" is not actionable.
-- **Repeating completed work**: Recommending something that was already done and verified.
-- **Ignoring review findings**: The most common source of good next-steps is deferred findings.
-- **Scope inflation**: Recommending large refactors when small targeted fixes are more appropriate.
-- **Speculation without evidence**: Recommendations must trace to round history or codebase facts.
+> See the `orbit-next-advice` skill for the full anti-pattern list.
+
+Do not produce vague suggestions, repeat completed work, ignore review findings, inflate scope, or speculate without evidence.
