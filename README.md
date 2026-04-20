@@ -1,6 +1,6 @@
 # dot-agents
 
-My personal `.agents` directory, which contains agents and skills.
+My personal `.agents` directory, which contains agents, skills, and plugins.
 
 ## AGENTS.md
 
@@ -12,10 +12,23 @@ Run this command to create the link:
 ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
 ```
 
-## Agents
+## Plugins
 
-- [Powerful Agent](agents/Powerful%20Agent.agent.md): A powerful agent that operates in continuous task loops, interrogating user intent before execution.
-- [Powerful Review](agents/Powerful%20Review.agent.md): A dedicated read-only reviewer that only inspects work and returns findings-first feedback.
+### [Orbit](plugins/orbit/README.md)
+
+Task-oriented persistent agent framework. Manages a `.orbit` state folder with round-based workflow (Clarify → Planning → Execute → Review → Next), long-term memory, and a template system.
+
+**Required VS Code settings:**
+
+```jsonc
+{
+  "chat.plugins.enabled": true,
+  "chat.pluginLocations": {
+    "~/.agents/plugins/orbit": true,
+  },
+  "chat.subagents.allowInvocationsFromSubagents": true,
+}
+```
 
 ## Skills
 
@@ -25,5 +38,6 @@ ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
 
 ### Modified
 
+- [domain-model](skills/domain-model): A grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates documentation inline.
 - [maintain-skill](skills/maintain-skill): A skill that maintains skills.
   - Modified from [this](https://github.com/anthropics/skills/tree/main/skills/skill-creator).
