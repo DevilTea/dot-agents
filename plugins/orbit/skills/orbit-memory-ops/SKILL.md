@@ -98,10 +98,13 @@ node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstra
 
 ## Workflow Integration
 
-### Round Dispatches Memory Manager
+### Round Dispatches Memory Manager (Search)
 
 - **Phase 1 (Clarify)**: Round dispatches Memory Manager in **search mode** with keywords derived from the user's request. Surface any relevant past memories alongside terms or ADRs.
-- **Phase 5 (Next)**: After writing `summary.md`, Round dispatches Memory Manager in **archive mode** with the round's summary, state, and plan.
+
+### Next Advisor Dispatches Memory Manager (Archive)
+
+- **Post-Round**: After writing `summary.md`, Next Advisor dispatches Memory Manager in **archive mode** with the round's summary, state, and plan.
 
 ### Search Result Contract
 

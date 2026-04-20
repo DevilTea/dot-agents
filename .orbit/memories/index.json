@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "memories": [
+    {
+      "id": "MEM_20260420_001",
+      "title": "Orbit protocol upgrade: Quick Mode, Plan Checklist, Next Advisor promotion, Write-Before-Confirm",
+      "date": "2026-04-20",
+      "tags": ["orbit", "protocol", "quick-mode", "plan-checklist", "next-advisor", "write-before-confirm", "architecture"],
+      "abstract": "Delivered 4 interconnected Orbit protocol upgrades: Quick Mode (auto-progression for simple tasks), Plan Checklist (markdown checkboxes tracked by Execute and verified by Review), Next Advisor promoted from read-only to interactive Dispatcher-level agent, and Write-Before-Confirm pattern for subagent UI transparency. 9 files modified, smoke test 47/47.",
+      "file": "MEM_20260420_001.md"
+    }
+  ]
+}

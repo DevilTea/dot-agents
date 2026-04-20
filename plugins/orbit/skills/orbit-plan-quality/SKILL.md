@@ -35,6 +35,55 @@ The overall plan MUST also include:
 - **`impact_scope`**: Files/modules affected but not directly edited.
 - **`estimated_validations`**: Overall validation commands to run after all steps.
 
+## Plan Checklist
+
+The plan output includes a **checklist** — a markdown checkbox list derived from the plan steps. The checklist provides a human-readable progress tracker that flows through Execute and Review.
+
+### Schema
+
+The `plan` object in the Planner's output contract gains an optional `checklist` array:
+
+```json
+{
+  "plan": {
+    "steps": [ ... ],
+    "checklist": [
+      "Step 1: <action summary>",
+      "Step 2: <action summary>"
+    ],
+    "impact_scope": [ ... ],
+    "estimated_validations": [ ... ]
+  }
+}
+```
+
+Each checklist entry is a short imperative summary of the corresponding plan step, prefixed with `Step N:`.
+
+### Rendering in `plan.md`
+
+The plan output MUST include a `## Checklist` section at the end, rendered as markdown checkboxes:
+
+```markdown
+## Checklist
+
+- [ ] Step 1: Add validation to the API endpoint
+- [ ] Step 2: Update unit tests for new validation
+```
+
+The checklist is **additive** — it supplements the detailed plan steps, it does not replace them.
+
+### Consumption by Execute (Phase 3)
+
+- Copy the checklist from `plan.md` into `execution-memo.md` at the start of execution.
+- Check off items (`- [x]`) as each corresponding plan step is completed.
+- The final `execution-memo.md` must contain the fully updated checklist reflecting completion status.
+
+### Consumption by Review (Phase 4)
+
+- Copy the checklist from `plan.md` into `review-findings.md`.
+- Annotate each item with a verification result: `PASS`, `FAIL`, or `SKIPPED`, plus brief evidence.
+- Example: `- [x] Step 1: Add validation to the API endpoint — PASS (unit tests cover all branches)`
+
 ## Rollback Detection
 
 If while analyzing the requirements the Planner discovers any of the following, it MUST stop planning and return `rollback_to_clarify`:

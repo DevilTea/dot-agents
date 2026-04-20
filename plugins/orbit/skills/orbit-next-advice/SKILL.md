@@ -5,7 +5,7 @@ description: "Next-step recommendation generation from completed Orbit rounds. D
 
 # Next-Step Advice
 
-This skill defines the authoritative rules for generating next-step recommendations within the Orbit workflow. Every Orbit agent involved in Phase 5 recommendations MUST read and follow these rules.
+This skill defines the authoritative rules for generating next-step recommendations within the Orbit workflow. Every Orbit agent involved in post-round recommendations MUST read and follow these rules.
 
 ## Analysis Process
 
@@ -61,14 +61,41 @@ Each recommendation MUST include:
 
 ## Workflow Integration
 
-### Round Dispatches Next Advisor (Phase 5)
+### Dispatcher Dispatches Next Advisor (Post-Round)
 
-1. Round dispatches Next Advisor with all round summaries and states from the task.
-2. Next Advisor returns recommendations following this skill's format.
-3. Round presents the recommendations to the user via `#tool:vscode_askQuestions` with:
+After `Orbit Round` completes (returns `completed`), the Dispatcher dispatches `Orbit Next Advisor` as a sibling of Round — not nested inside it.
+
+1. Dispatcher dispatches Next Advisor with all round summaries and states from the task.
+2. Next Advisor analyzes history and generates recommendations following this skill's format.
+3. Next Advisor presents recommendations to the user directly via `#tool:vscode_askQuestions` with:
    - The 2–3 specific recommendations as selectable options.
    - `I have a different task` (free input).
    - `Done for now`.
+4. Next Advisor writes `summary.md` with the round recap.
+5. Next Advisor dispatches `Orbit Memory Manager` in archive mode for memory archival.
+6. Next Advisor returns a Dispatcher-facing contract (see below).
+
+### Dispatcher-Facing Return Contract
+
+```json
+{
+  "status": "done | new_task | blocked | partial",
+  "task": "<next task text if new_task, else null>",
+  "recommendations": [ ... ],
+  "task_summary": "<1 paragraph synthesizing the task arc>",
+  "open_risks": ["<residual risks>"],
+  "self_check": {
+    "status": "completed | partial | blocked",
+    "scope": "<what was analyzed>",
+    "risk": "<advisory risk or 'none identified'>",
+    "next": "<what Dispatcher should do next>"
+  }
+}
+```
+
+- `done` → User selected "Done for now". Dispatcher ends the turn.
+- `new_task` → User selected a recommendation or entered a different task. `task` contains the next task text.
+- `blocked` / `partial` → Error or incomplete. Dispatcher reports to user.
 
 ## Anti-Patterns
 

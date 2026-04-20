@@ -66,6 +66,30 @@ You may use any tool available **exclusively for read-only inspection**:
 
 Follow all review dimensions and criteria defined in the `orbit-review-rubric` skill. For domain language consistency (dimension 9), also apply the verification rules from the `orbit-domain-awareness` skill.
 
+## Checklist Verification
+
+If the plan includes a `## Checklist` section, perform checklist verification as part of the review:
+
+1. Copy the checklist from `plan.md` into `review-findings.md`.
+2. For each checklist item, verify whether the corresponding plan step was executed correctly.
+3. Annotate each item with a verification result:
+   - `PASS` — step executed correctly, evidence confirms.
+   - `FAIL` — step was not executed, partially executed, or produced incorrect results.
+   - `SKIPPED` — step was intentionally skipped (with justification in execution-memo.md).
+4. Include brief evidence for each annotation.
+
+Example:
+
+```markdown
+## Checklist Verification
+
+- [x] Step 1: Add validation to the API endpoint — **PASS** (validation logic present in `src/api/users.ts:45-62`, unit tests cover all branches)
+- [ ] Step 2: Update error messages — **FAIL** (error messages not updated in `src/errors.ts`)
+- [x] Step 3: Update documentation — **PASS** (README.md updated with new validation rules)
+```
+
+Checklist verification findings feed into the overall review: a `FAIL` annotation on a checklist item should correspond to a finding in the review output.
+
 ## Severity Classification
 
 > **Authoritative rules: `orbit-review-rubric` skill.** See the skill's "Severity Classification" section.

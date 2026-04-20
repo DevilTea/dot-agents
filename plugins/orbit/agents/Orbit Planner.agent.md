@@ -79,6 +79,7 @@ Your final response to `Orbit Round` MUST contain a JSON-fenced block of exactly
         "risk": "<risk flag or 'none'>"
       }
     ],
+    "checklist": ["Step 1: <action summary>"],
     "impact_scope": ["<affected but not directly edited files/modules>"],
     "estimated_validations": [
       "<overall validation commands to run after all steps>"
