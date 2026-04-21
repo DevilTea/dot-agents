@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 import {
   initOrbit,
   orbitPaths,
+  domainPaths,
+  candidateMemoryPath,
   createTask,
   createRound,
   readRoundState,
@@ -30,13 +32,16 @@ import {
   readTemplate,
   searchMemories,
   archiveMemory,
+  captureCandidateMemory,
+  listCandidateMemories,
+  reconcileCandidateMemories,
+  validateMemoryIndex,
   listMemories,
   readJSON,
   readMarkdown,
   migrateOrbit,
   readManifest,
   readPluginVersion,
-  compareSemver,
 } from "./lib/index.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +59,14 @@ function ok(label) {
 function fail(label, err) {
   failed++;
   console.error(`  ❌ ${label}: ${err.message}`);
+}
+
+function parseCliJson(result) {
+  const raw = result.stdout.trim() || result.stderr.trim();
+  if (!raw) {
+    throw new Error("CLI command produced no JSON output");
+  }
+  return JSON.parse(raw);
 }
 
 async function test(label, fn) {
@@ -80,11 +93,14 @@ async function main() {
   await test("initOrbit creates directory structure", async () => {
     await initOrbit(TEST_ROOT);
     const paths = orbitPaths(TEST_ROOT);
+    const domain = domainPaths(TEST_ROOT);
     // Verify directories exist by reading them.
     const { readdir } = await import("node:fs/promises");
     await readdir(paths.templates);
     await readdir(paths.memories);
     await readdir(paths.tasks);
+    await readdir(paths.domain);
+    await readdir(domain.adrDir);
   });
 
   await test("initOrbit creates memory index.json", async () => {
@@ -151,6 +167,12 @@ async function main() {
     const round = await createRound(TEST_ROOT, taskName);
     assert.equal(round.name, "round-0001");
     roundPath = round.path;
+    assert.ok(round.files.state.endsWith("0_state.json"));
+    assert.ok(round.files.requirements.endsWith("1_clarify_requirements.md"));
+    assert.ok(round.files.plan.endsWith("2_planning_plan.md"));
+    assert.ok(round.files.executionMemo.endsWith("3_execute_execution-memo.md"));
+    assert.ok(round.files.reviewFindings.endsWith("4_review_findings.md"));
+    assert.ok(round.files.summary.endsWith("5_summary.md"));
 
     // Verify all scaffold files exist.
     const state = await readRoundState(roundPath);
@@ -160,6 +182,15 @@ async function main() {
 
     const req = await readMarkdown(round.files.requirements);
     assert.ok(req.includes("Requirements"));
+    const files = roundFiles(roundPath);
+    assert.equal(files.state, round.files.state);
+    assert.equal(files.summary, round.files.summary);
+    const candidates = await readJSON(candidateMemoryPath(roundPath));
+    assert.deepEqual(candidates, {
+      version: 1,
+      candidates: [],
+      lastReconciledAt: null,
+    });
   });
 
   await test("second round auto-increments to round-0002", async () => {
@@ -353,7 +384,116 @@ async function main() {
   });
 
   // =========================================================================
-  console.log("\n── 6. Multi-Round Sequencing ──");
+  console.log("\n── 6. Candidate Memory & Reconciliation ──");
+  // =========================================================================
+
+  await test("captureCandidateMemory appends pending entries to the round-local artifact", async () => {
+    const task = await createTask(TEST_ROOT, new Date("2026-04-19T14:00:00Z"));
+    const round = await createRound(TEST_ROOT, task.name);
+
+    const first = await captureCandidateMemory(round.path, {
+      title: "Round-owned summary sequencing",
+      tags: ["orbit", "summary"],
+      abstract: "Round should write the durable summary before Next Advisor runs.",
+      body: "# Summary Ownership\n\nRound closes durable artifacts before post-round advice.",
+      sourcePhase: "clarify",
+    });
+    const second = await captureCandidateMemory(round.path, {
+      title: "Memory reconciliation ownership",
+      tags: ["orbit", "memory"],
+      abstract: "Round should reconcile candidate memories before completion.",
+      body: "# Memory Reconciliation\n\nRound updates and deletes stale memories before completion.",
+      sourcePhase: "review",
+    });
+
+    assert.equal(first.candidate.id, "CAND_001");
+    assert.equal(second.candidate.id, "CAND_002");
+
+    const store = await listCandidateMemories(round.path);
+    assert.equal(store.candidates.length, 2);
+    assert.equal(store.candidates[0].status, "pending");
+    assert.equal(store.candidates[1].sourcePhase, "review");
+  });
+
+  await test("reconcileCandidateMemories archives, updates, and deletes while keeping index consistency", async () => {
+    const baseDate = new Date("2026-04-19T16:00:00Z");
+    const task = await createTask(TEST_ROOT, new Date("2026-04-19T16:30:00Z"));
+    const round = await createRound(TEST_ROOT, task.name);
+
+    const existing = await archiveMemory(TEST_ROOT, {
+      title: "Orbit glossary baseline",
+      tags: ["orbit", "glossary"],
+      abstract: "Initial glossary baseline for Orbit terminology.",
+      body: "# Glossary\n\nInitial glossary content.",
+      date: baseDate,
+    });
+    const stale = await archiveMemory(TEST_ROOT, {
+      title: "Legacy Next Advisor summary owner",
+      tags: ["orbit", "summary"],
+      abstract: "Older note claiming Next Advisor writes the summary.",
+      body: "# Legacy Summary Owner\n\nThis memory is stale.",
+      date: new Date("2026-04-19T16:31:00Z"),
+    });
+
+    const archiveCandidate = await captureCandidateMemory(round.path, {
+      title: "Round durable summary ownership",
+      tags: ["orbit", "summary", "round"],
+      abstract: "Round writes summary after Review and before completion.",
+      body: "# Durable Summary\n\nRound owns the durable summary artifact.",
+      sourcePhase: "execute",
+    });
+    const updateCandidate = await captureCandidateMemory(round.path, {
+      title: "Orbit glossary current baseline",
+      tags: ["orbit", "glossary", "current"],
+      abstract: "Updated glossary baseline aligned with round-owned summary and reconciliation.",
+      body: "# Glossary\n\nUpdated glossary content.",
+      sourcePhase: "review",
+    });
+
+    const result = await reconcileCandidateMemories(TEST_ROOT, round.path, [
+      { action: "archive", candidateId: archiveCandidate.candidate.id },
+      {
+        action: "update",
+        candidateId: updateCandidate.candidate.id,
+        memoryId: existing.id,
+      },
+      {
+        action: "delete",
+        memoryId: stale.id,
+        reason: "Superseded by round-owned durable summary guidance.",
+      },
+    ]);
+
+    assert.equal(result.applied.length, 3);
+    assert.equal(result.pendingCandidates, 0);
+    assert.equal(result.index.ok, true);
+
+    const index = await listMemories(TEST_ROOT);
+    assert.ok(index.memories.some((entry) => entry.id === existing.id && entry.title === "Orbit glossary current baseline"));
+    assert.ok(index.memories.some((entry) => entry.title === "Round durable summary ownership"));
+    assert.ok(!index.memories.some((entry) => entry.id === stale.id));
+
+    const { stat: statFs } = await import("node:fs/promises");
+    await assert.rejects(() => statFs(resolve(orbitDir, "memories", stale.file)), /ENOENT/);
+
+    const { readMarkdownWithFrontmatter } = await import("./lib/io.mjs");
+    const updatedMemory = await readMarkdownWithFrontmatter(
+      resolve(orbitDir, "memories", existing.file)
+    );
+    assert.ok(updatedMemory.frontmatter.includes('title: "Orbit glossary current baseline"'));
+    assert.ok(updatedMemory.body.includes("Updated glossary content."));
+
+    const candidateStore = await listCandidateMemories(round.path);
+    assert.equal(candidateStore.candidates[0].status, "archived");
+    assert.equal(candidateStore.candidates[1].status, "updated");
+    assert.ok(candidateStore.lastReconciledAt);
+
+    const validation = await validateMemoryIndex(TEST_ROOT);
+    assert.equal(validation.ok, true);
+  });
+
+  // =========================================================================
+  console.log("\n── 7. Multi-Round Sequencing ──");
   // =========================================================================
 
   await test("creating multiple rounds maintains correct sequencing", async () => {
@@ -372,7 +512,7 @@ async function main() {
   });
 
   // =========================================================================
-  console.log("\n── 7. Migration System ──");
+  console.log("\n── 8. Migration System ──");
   // =========================================================================
 
   await test("readPluginVersion returns a semver string", async () => {
@@ -395,13 +535,16 @@ async function main() {
     assert.equal(result.previousVersion, pluginVersion);
     assert.equal(result.currentVersion, pluginVersion);
     assert.deepEqual(result.migrationsRun, []);
+    assert.equal(result.renamedRoundCount, 0);
+    assert.equal(result.renamedArtifactCount, 0);
+    assert.equal(result.guidance.status, "up_to_date");
   });
 
-  await test("migration from 0.0.0 creates manifest and adds schemaVersion", async () => {
+  await test("migration from 0.0.0 creates manifest, adds schemaVersion, and renames legacy round artifacts", async () => {
     // Set up a fresh .orbit WITHOUT manifest (simulate pre-migration state).
     const MIGRATE_ROOT = resolve(__dirname, "__test_migrate__");
     const migrateOrbitDir = resolve(MIGRATE_ROOT, ".orbit");
-    const { mkdir: mkdirFs, rm: rmFs, writeFile } = await import("node:fs/promises");
+    const { mkdir: mkdirFs, rm: rmFs, stat: statFs, writeFile } = await import("node:fs/promises");
     await rmFs(MIGRATE_ROOT, { recursive: true, force: true });
 
     // Create minimal .orbit structure manually (no manifest).
@@ -416,7 +559,7 @@ async function main() {
     const { writeJSON: wj } = await import("./lib/io.mjs");
     await wj(resolve(memoriesDir, "index.json"), { version: 1, memories: [] });
 
-    // Create a task with a round that has no schemaVersion.
+    // Create a task with a round that has no schemaVersion and the legacy layout.
     const taskPath = resolve(tasksDir, "2026-01-01_00-00-00");
     const roundPath = resolve(taskPath, "round-0001");
     await mkdirFs(roundPath, { recursive: true });
@@ -427,6 +570,11 @@ async function main() {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
+    await writeFile(resolve(roundPath, "requirements.md"), "# Requirements\n", "utf-8");
+    await writeFile(resolve(roundPath, "plan.md"), "# Plan\n", "utf-8");
+    await writeFile(resolve(roundPath, "execution-memo.md"), "# Execution Memo\n", "utf-8");
+    await writeFile(resolve(roundPath, "review-findings.md"), "# Review Findings\n", "utf-8");
+    await writeFile(resolve(roundPath, "summary.md"), "# Summary\n", "utf-8");
 
     // Verify no manifest exists.
     const beforeManifest = await readManifest(MIGRATE_ROOT);
@@ -437,14 +585,23 @@ async function main() {
     assert.equal(result.previousVersion, "0.0.0");
     assert.equal(result.currentVersion, "0.1.0");
     assert.ok(result.migrationsRun.length > 0);
+    assert.equal(result.renamedRoundCount, 1);
+    assert.equal(result.renamedArtifactCount, 6);
+    assert.equal(result.guidance.status, "migration_applied");
 
     // Verify manifest was created.
     const afterManifest = await readManifest(MIGRATE_ROOT);
     assert.equal(afterManifest.orbitVersion, "0.1.0");
 
-    // Verify schemaVersion was added to state.json.
-    const state = await readJSON(resolve(roundPath, "state.json"));
+    // Verify schemaVersion was added to the renamed state file.
+    const state = await readJSON(resolve(roundPath, "0_state.json"));
     assert.equal(state.schemaVersion, "0.1.0");
+    await assert.rejects(() => statFs(resolve(roundPath, "state.json")), /ENOENT/);
+    await statFs(resolve(roundPath, "1_clarify_requirements.md"));
+    await statFs(resolve(roundPath, "2_planning_plan.md"));
+    await statFs(resolve(roundPath, "3_execute_execution-memo.md"));
+    await statFs(resolve(roundPath, "4_review_findings.md"));
+    await statFs(resolve(roundPath, "5_summary.md"));
 
     // Cleanup.
     await rmFs(MIGRATE_ROOT, { recursive: true, force: true });
@@ -473,12 +630,57 @@ async function main() {
     assert.equal(result.previousVersion, "0.1.0");
     assert.equal(result.currentVersion, "0.1.0");
     assert.deepEqual(result.migrationsRun, []);
+    assert.equal(result.guidance.status, "up_to_date");
 
     await rmFs(MIGRATE_ROOT2, { recursive: true, force: true });
   });
 
+  await test("inspectOrbitMigrations detects legacy layout drift even when manifest already matches plugin version", async () => {
+    const MIGRATE_ROOT4 = resolve(__dirname, "__test_migrate4__");
+    const { mkdir: mkdirFs, rm: rmFs, writeFile } = await import("node:fs/promises");
+    const { inspectOrbitMigrations } = await import("./lib/migrate.mjs");
+    const { writeJSON: wj } = await import("./lib/io.mjs");
+    const migrateDir = resolve(MIGRATE_ROOT4, ".orbit");
+    const roundPath = resolve(migrateDir, "tasks", "2026-01-02_00-00-00", "round-0001");
+
+    await rmFs(MIGRATE_ROOT4, { recursive: true, force: true });
+    await mkdirFs(resolve(migrateDir, "tasks"), { recursive: true });
+    await mkdirFs(resolve(migrateDir, "memories"), { recursive: true });
+    await mkdirFs(resolve(migrateDir, "templates"), { recursive: true });
+    await mkdirFs(roundPath, { recursive: true });
+    await wj(resolve(migrateDir, "manifest.json"), {
+      orbitVersion: "0.1.0",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await wj(resolve(migrateDir, "memories", "index.json"), { version: 1, memories: [] });
+    await wj(resolve(roundPath, "state.json"), {
+      schemaVersion: "0.1.0",
+      round: 1,
+      status: "completed",
+      phase: "done",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await writeFile(resolve(roundPath, "requirements.md"), "# Requirements\n", "utf-8");
+    await writeFile(resolve(roundPath, "plan.md"), "# Plan\n", "utf-8");
+    await writeFile(resolve(roundPath, "execution-memo.md"), "# Execution Memo\n", "utf-8");
+    await writeFile(resolve(roundPath, "review-findings.md"), "# Review Findings\n", "utf-8");
+    await writeFile(resolve(roundPath, "summary.md"), "# Summary\n", "utf-8");
+
+    const status = await inspectOrbitMigrations(MIGRATE_ROOT4, "0.1.0");
+    assert.equal(status.updateAvailable, false);
+    assert.equal(status.migrationNeeded, true);
+    assert.equal(status.legacyRoundCount, 1);
+    assert.equal(status.legacyArtifactCount, 6);
+    assert.equal(status.guidance.status, "migration_available");
+    assert.ok(status.guidance.followUp.includes("init") || status.guidance.followUp.includes("migrate"));
+
+    await rmFs(MIGRATE_ROOT4, { recursive: true, force: true });
+  });
+
   // =========================================================================
-  console.log("\n── 8. Version Check ──");
+  console.log("\n── 9. Version Check ──");
   // =========================================================================
 
   await test("readManifest returns current version after init", async () => {
@@ -497,16 +699,11 @@ async function main() {
   });
 
   await test("version check detects no update when versions match", async () => {
-    const manifest = await readManifest(TEST_ROOT);
-    const pluginVersion = await readPluginVersion();
-    assert.equal(manifest.orbitVersion, pluginVersion);
-    // Simulate what the CLI version command does (cli.mjs uses
-    // compareSemver(localVersion, pluginVersion) < 0, which correctly
-    // reports no-update when local is ahead; a raw `!==` check would
-    // misfire in that case).
-    const updateAvailable =
-      compareSemver(manifest.orbitVersion, pluginVersion) < 0;
-    assert.equal(updateAvailable, false);
+    const { inspectOrbitMigrations } = await import("./lib/migrate.mjs");
+    const status = await inspectOrbitMigrations(TEST_ROOT);
+    assert.equal(status.updateAvailable, false);
+    assert.equal(status.migrationNeeded, false);
+    assert.equal(status.guidance.status, "up_to_date");
   });
 
   await test("version check detects update when local is behind", async () => {
@@ -516,21 +713,18 @@ async function main() {
     const original = await readJSON(mPath);
     await wj(mPath, { ...original, orbitVersion: "0.0.1" });
 
-    const manifest = await readManifest(TEST_ROOT);
-    const pluginVersion = await readPluginVersion();
-    assert.notEqual(manifest.orbitVersion, pluginVersion);
-    // Use compareSemver (same semantics as cli.mjs) rather than `!==`,
-    // so this test reflects the real "local is behind" condition.
-    const updateAvailable =
-      compareSemver(manifest.orbitVersion, pluginVersion) < 0;
-    assert.equal(updateAvailable, true);
+    const { inspectOrbitMigrations } = await import("./lib/migrate.mjs");
+    const status = await inspectOrbitMigrations(TEST_ROOT);
+    assert.equal(status.updateAvailable, true);
+    assert.equal(status.migrationNeeded, true);
+    assert.equal(status.guidance.status, "migration_available");
 
     // Restore original manifest.
     await wj(mPath, original);
   });
 
   // =========================================================================
-  console.log("\n── 9. Regex & Library Guards ──");
+  console.log("\n── 10. Regex & Library Guards ──");
   // =========================================================================
 
   await test("isValidTaskDirName requires seconds", async () => {
@@ -673,7 +867,7 @@ async function main() {
   });
 
   // =========================================================================
-  console.log("\n── 10. Project-Local CLI End-to-End ──");
+  console.log("\n── 11. Project-Local CLI End-to-End ──");
   // =========================================================================
 
   await test("project-local CLI: init → version → new-task", async () => {
@@ -725,8 +919,230 @@ async function main() {
     await rmFs(E2E_ROOT, { recursive: true, force: true });
   });
 
+  await test("project-local CLI: memory-candidate-add rejects nested existing paths and avoids phantom stores", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdir: mkdirFs, readdir: readdirFs, rm: rmFs } = await import("node:fs/promises");
+    const E2E_ROOT = resolve(__dirname, "__test_e2e_memory_invalid_root__");
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+    await mkdirFs(E2E_ROOT, { recursive: true });
+
+    const pluginCli = resolve(__dirname, "cli.mjs");
+    const initRes = spawnSync("node", [pluginCli, "init"], {
+      cwd: E2E_ROOT,
+      encoding: "utf-8",
+    });
+    assert.equal(initRes.status, 0, `init failed: ${initRes.stderr}`);
+
+    const localCli = resolve(E2E_ROOT, ".orbit", "scripts", "cli.mjs");
+    const newTaskOut = parseCliJson(
+      spawnSync("node", [localCli, "new-task"], {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      })
+    );
+    const newRoundRes = spawnSync("node", [localCli, "new-round", newTaskOut.task], {
+      cwd: E2E_ROOT,
+      encoding: "utf-8",
+    });
+    assert.equal(newRoundRes.status, 0, `new-round failed: ${newRoundRes.stderr}`);
+    const roundOut = parseCliJson(newRoundRes);
+
+    const nestedPath = resolve(roundOut.path, "nested");
+    await mkdirFs(nestedPath, { recursive: true });
+
+    const addRes = spawnSync(
+      "node",
+      [
+        localCli,
+        "memory-candidate-add",
+        nestedPath,
+        "--title",
+        "Invalid nested round root",
+        "--tags",
+        "orbit,memory",
+        "--abstract",
+        "Should reject non-round directories.",
+        "--body",
+        "Body",
+      ],
+      {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      }
+    );
+
+    assert.notEqual(addRes.status, 0, "memory-candidate-add should reject nested paths");
+    const addOut = parseCliJson(addRes);
+    assert.equal(addOut.ok, false);
+    assert.equal(
+      addOut.error,
+      "roundPath must point to an existing '<task>/round-*' directory"
+    );
+    assert.deepEqual(await readdirFs(nestedPath), []);
+
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+  });
+
+  await test("project-local CLI: memory-reconcile rejects missing canonical candidate artifacts before mutation", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdir: mkdirFs, rm: rmFs } = await import("node:fs/promises");
+    const E2E_ROOT = resolve(__dirname, "__test_e2e_memory_missing_artifact__");
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+    await mkdirFs(E2E_ROOT, { recursive: true });
+
+    const pluginCli = resolve(__dirname, "cli.mjs");
+    const initRes = spawnSync("node", [pluginCli, "init"], {
+      cwd: E2E_ROOT,
+      encoding: "utf-8",
+    });
+    assert.equal(initRes.status, 0, `init failed: ${initRes.stderr}`);
+
+    const localCli = resolve(E2E_ROOT, ".orbit", "scripts", "cli.mjs");
+    const taskOut = parseCliJson(
+      spawnSync("node", [localCli, "new-task"], {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      })
+    );
+    const roundOut = parseCliJson(
+      spawnSync("node", [localCli, "new-round", taskOut.task], {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      })
+    );
+
+    const existing = await archiveMemory(E2E_ROOT, {
+      title: "Existing long-term memory",
+      tags: ["orbit", "memory"],
+      abstract: "Should survive a rejected reconcile call.",
+      body: "# Existing\n\nThis must remain present after rejection.",
+      date: new Date("2026-04-20T12:00:00Z"),
+    });
+
+    await rmFs(candidateMemoryPath(roundOut.path), { force: true });
+
+    const reconcileRes = spawnSync(
+      "node",
+      [
+        localCli,
+        "memory-reconcile",
+        roundOut.path,
+        "--operations",
+        JSON.stringify([
+          {
+            action: "delete",
+            memoryId: existing.id,
+            reason: "This should never run.",
+          },
+        ]),
+      ],
+      {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      }
+    );
+
+    assert.notEqual(reconcileRes.status, 0, "memory-reconcile should reject missing candidate artifacts");
+    const reconcileOut = parseCliJson(reconcileRes);
+    assert.equal(reconcileOut.ok, false);
+    assert.equal(
+      reconcileOut.error,
+      `Candidate memory artifact not found: ${candidateMemoryPath(roundOut.path)}`
+    );
+
+    const index = await listMemories(E2E_ROOT);
+    assert.ok(
+      index.memories.some((entry) => entry.id === existing.id),
+      "existing memory should remain present after rejected reconcile"
+    );
+
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+  });
+
+  await test("project-local CLI: memory command results use pendingCandidates casing", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdir: mkdirFs, rm: rmFs } = await import("node:fs/promises");
+    const E2E_ROOT = resolve(__dirname, "__test_e2e_memory_contract__");
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+    await mkdirFs(E2E_ROOT, { recursive: true });
+
+    const pluginCli = resolve(__dirname, "cli.mjs");
+    const initRes = spawnSync("node", [pluginCli, "init"], {
+      cwd: E2E_ROOT,
+      encoding: "utf-8",
+    });
+    assert.equal(initRes.status, 0, `init failed: ${initRes.stderr}`);
+
+    const localCli = resolve(E2E_ROOT, ".orbit", "scripts", "cli.mjs");
+    const taskOut = parseCliJson(
+      spawnSync("node", [localCli, "new-task"], {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      })
+    );
+    const roundOut = parseCliJson(
+      spawnSync("node", [localCli, "new-round", taskOut.task], {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      })
+    );
+
+    const addRes = spawnSync(
+      "node",
+      [
+        localCli,
+        "memory-candidate-add",
+        roundOut.path,
+        "--title",
+        "Pending candidate casing",
+        "--tags",
+        "orbit,contract",
+        "--abstract",
+        "Verify CLI field naming stays consistent.",
+        "--body",
+        "# Contract\n\nUse pendingCandidates.",
+        "--phase",
+        "execute",
+      ],
+      {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      }
+    );
+    assert.equal(addRes.status, 0, `memory-candidate-add failed: ${addRes.stderr}`);
+    const addOut = parseCliJson(addRes);
+    assert.equal(addOut.pendingCandidates, 1);
+    assert.equal(Object.prototype.hasOwnProperty.call(addOut, "pending_candidates"), false);
+
+    const reconcileRes = spawnSync(
+      "node",
+      [
+        localCli,
+        "memory-reconcile",
+        roundOut.path,
+        "--operations",
+        JSON.stringify([
+          {
+            action: "archive",
+            candidateId: addOut.candidate.id,
+          },
+        ]),
+      ],
+      {
+        cwd: E2E_ROOT,
+        encoding: "utf-8",
+      }
+    );
+    assert.equal(reconcileRes.status, 0, `memory-reconcile failed: ${reconcileRes.stderr}`);
+    const reconcileOut = parseCliJson(reconcileRes);
+    assert.equal(reconcileOut.pendingCandidates, 0);
+    assert.equal(Object.prototype.hasOwnProperty.call(reconcileOut, "pending_candidates"), false);
+
+    await rmFs(E2E_ROOT, { recursive: true, force: true });
+  });
+
   // =========================================================================
-  console.log("\n── 11. Round-Trip & Robustness Regressions ──");
+  console.log("\n── 12. Round-Trip & Robustness Regressions ──");
   // =========================================================================
 
   await test("frontmatter read/write is byte-identical on round-trip", async () => {

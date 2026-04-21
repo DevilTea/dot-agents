@@ -35,9 +35,9 @@ The following settings **must** be configured for Orbit to function correctly:
 | **Orbit Planner**        | ❌             | Converts clarified requirements into atomic, verifiable execution plans.                        |
 | **Orbit Execute**        | ❌             | Performs edits and validations in isolation; writes results to round files.                     |
 | **Orbit Review**         | ❌             | Read-only reviewer; inspects work and writes findings to round files.                           |
-| **Orbit Next Advisor**   | ❌             | Analyzes completed rounds and recommends concrete next actions.                                 |
+| **Orbit Next Advisor**   | ❌             | Consumes completed round summaries and current memory state to recommend concrete next actions. |
 | **Orbit Backlog**        | ❌             | Presents backlog items to the user for selection; dispatched by Dispatcher on demand.           |
-| **Orbit Memory Manager** | ❌             | Manages long-term memory in `.orbit/memories/`.                                                 |
+| **Orbit Memory Manager** | ❌             | Manages long-term memory in `.orbit/memories/` for search and Memory Reconciliation.            |
 
 ## `.orbit` Directory Structure
 
@@ -47,16 +47,20 @@ The following settings **must** be configured for Orbit to function correctly:
 ├── scripts/          # CLI + lib (auto-copied during init)
 ├── templates/        # Task templates (*.md with YAML frontmatter)
 ├── memories/         # Long-term memory entries (index.json + *.md files)
+├── domain/           # Runtime domain artifacts kept inside .orbit
+│   ├── CONTEXT.md
+│   └── adr/
 ├── backlog/          # Backlog items (<slug>.md with value-scored frontmatter)
 └── tasks/
     └── YYYY-MM-DD_hh-mm-ss/   # One directory per task
         └── round-0001/         # One directory per round
-            ├── state.json
-            ├── requirements.md
-            ├── plan.md
-            ├── execution-memo.md
-            ├── review-findings.md
-            └── summary.md
+      ├── 0_state.json
+      ├── 1_clarify_requirements.md
+      ├── 2_planning_plan.md
+      ├── 3_execute_execution-memo.md
+      ├── 4_review_findings.md
+          ├── candidate-memories.json
+      └── 5_summary.md
 ```
 
 ## CLI
@@ -103,17 +107,57 @@ node .orbit/scripts/cli.mjs memory-archive \
   --abstract "Short summary" \
   --body "Full body text"
 
+# Round-local candidate memory capture
+node .orbit/scripts/cli.mjs memory-candidate-add <roundPath> \
+  --title "Candidate note" \
+  --tags "orbit,memory" \
+  --abstract "Why this might be worth remembering" \
+  --body-file <path> \
+  --phase execute
+
+# End-of-round Memory Reconciliation
+node .orbit/scripts/cli.mjs memory-reconcile <roundPath> --operations-file <path>
+
 # Run forward-only migrations explicitly
 node .orbit/scripts/cli.mjs migrate
+
+# Inspect version and layout drift without mutating .orbit
+node .orbit/scripts/cli.mjs version
 ```
 
 ## Migration
 
-The `init` command automatically detects whether the `.orbit` directory is behind the current plugin version and runs forward-only migrations. You can also trigger migrations explicitly with `migrate`.
+The `init` command automatically detects whether the `.orbit` directory is behind the current plugin version or still contains historical round artifacts with the legacy filenames, then runs the forward-only migration flow. You can also trigger migrations explicitly with `migrate`, or inspect drift non-destructively with `version`.
 
 - **Version tracking:** `.orbit/manifest.json` stores the `orbitVersion` that last touched the directory.
-- **Forward-only:** Migrations run sequentially from the current version to the plugin version. No rollback support.
+- **Forward-only:** Migrations run sequentially from the current version to the plugin version. Legacy round artifacts are renamed in place from `state.json`, `requirements.md`, `plan.md`, `execution-memo.md`, `review-findings.md`, and `summary.md` to the numbered layout `0_state.json` through `5_summary.md`. No rollback support.
 - **Idempotent:** Re-running `init` or `migrate` when already up-to-date is a no-op.
+- **Actionable guidance:** `init`, `migrate`, and `version` all report whether drift was detected, what changed or will change, and what follow-up action is required.
+
+Example `version` output:
+
+```json
+{
+  "ok": true,
+  "localVersion": "0.1.0",
+  "pluginVersion": "0.1.0",
+  "previousVersion": "0.1.0",
+  "currentVersion": "0.1.0",
+  "updateAvailable": false,
+  "migrationNeeded": true,
+  "legacyRoundCount": 1,
+  "legacyArtifactCount": 6,
+  "guidance": {
+    "status": "migration_available",
+    "summary": "Pending Orbit migration detected. Run the latest Orbit CLI with init or migrate to reconcile version/layout drift.",
+    "changes": [
+      "Version check is current at 0.1.0.",
+      "Historical rounds still use 6 legacy artifact file(s) across 1 round(s); they will be renamed in place to 0_state.json, 1_clarify_requirements.md, 2_planning_plan.md, 3_execute_execution-memo.md, 4_review_findings.md, 5_summary.md."
+    ],
+    "followUp": "Run the latest Orbit CLI with init or migrate to apply the pending migration steps."
+  }
+}
+```
 
 ## Round Workflow
 
@@ -124,7 +168,9 @@ Each Orbit round follows four phases:
 3. **Execute** — `Orbit Execute` performs all edits and validations in isolation.
 4. **Review** — `Orbit Review` reads the output and reports findings; critical issues are sent back for a fix loop.
 
-After a round completes, the Orbit Dispatcher may dispatch `Orbit Next Advisor` as a post-round step. Next Advisor analyzes the completed round and recommends concrete follow-up actions; the user selects a recommendation or signals done. This is a dispatcher-level operation, not a phase within Round.
+Before a round is marked complete, `Orbit Round` writes the durable `5_summary.md`, reconciles `candidate-memories.json` into `.orbit/memories/`, and advances the round to `phase: "next"`. After that handoff point, the Orbit Dispatcher may dispatch `Orbit Next Advisor` as a post-round step. Next Advisor consumes the completed round summary and current memory state, recommends concrete follow-up actions, and lets the user select a recommendation or signal done. This is a dispatcher-level operation, not a phase within Round.
+
+Runtime domain artifacts also stay inside `.orbit`: use `.orbit/domain/CONTEXT.md` for the glossary and numbered ADR files under `.orbit/domain/adr/`.
 
 ## Task Templates
 

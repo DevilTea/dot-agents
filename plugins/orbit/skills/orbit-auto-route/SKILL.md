@@ -34,11 +34,9 @@ Apply phase-aware recovery:
 
 ### Branch 2 — Completed Round → Next Advisor
 
-**Condition:** The latest round has `status == "completed"` AND `phase == "done"`.
+**Condition:** The latest round has `status == "completed"` AND `phase == "next"`.
 
-Check if `summary.md` in that round directory is empty or contains only the scaffold heading `# Summary`. If so, dispatch `Orbit Next Advisor` for that round.
-
-If `summary.md` already has substantive content, this branch does not match — fall through.
+Dispatch `Orbit Next Advisor` for that round. Round already wrote `5_summary.md` and reconciled memory before advancing to `phase: "next"`, so no summary-content probe is needed.
 
 ### Branch 3 — Backlog Available
 

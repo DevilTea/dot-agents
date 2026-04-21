@@ -65,15 +65,15 @@ Each recommendation MUST include:
 
 After `Orbit Round` completes (returns `completed`), the Dispatcher dispatches `Orbit Next Advisor` as a sibling of Round — not nested inside it.
 
-1. Dispatcher dispatches Next Advisor with all round summaries and states from the task.
+1. Dispatcher dispatches Next Advisor with all round summaries and states from the task, plus the current post-reconciliation memory state.
 2. Next Advisor analyzes history and generates recommendations following this skill's format.
 3. Next Advisor presents recommendations to the user directly via `#tool:vscode_askQuestions` with:
    - The 2–3 specific recommendations as selectable options.
    - `I have a different task` (free input).
    - `Done for now`.
-4. Next Advisor writes `summary.md` with the round recap.
-5. Next Advisor dispatches `Orbit Memory Manager` in archive mode for memory archival.
-6. Next Advisor returns a Dispatcher-facing contract (see below).
+4. Next Advisor consumes the already-written `5_summary.md` and post-reconciliation memory state as inputs only; it does not modify them.
+5. Next Advisor returns a Dispatcher-facing contract (see below).
+6. Dispatcher patches the round from `phase: "next"` to `phase: "done"` after the handoff completes.
 
 ### Dispatcher-Facing Return Contract
 

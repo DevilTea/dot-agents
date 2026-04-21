@@ -9,9 +9,12 @@ export {
   isValidTaskDirName,
   orbitRoot,
   orbitPaths,
+  domainPaths,
   taskDir,
   roundDir,
   roundFiles,
+  legacyRoundFiles,
+  candidateMemoryPath,
   memoryIndexPath,
   backlogDir,
 } from "./paths.mjs";
@@ -44,6 +47,12 @@ export {
   nextMemoryId,
   searchMemories,
   archiveMemory,
+  captureCandidateMemory,
+  listCandidateMemories,
+  updateMemory,
+  deleteMemory,
+  reconcileCandidateMemories,
+  validateMemoryIndex,
   listMemories,
 } from "./memory.mjs";
 

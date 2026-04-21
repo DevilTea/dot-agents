@@ -14,7 +14,7 @@ This skill defines the authoritative planning principles and quality criteria fo
 3. **Verification path.** Each step (or logical group of steps) must specify how to verify correctness: lint, type-check, unit test, integration test, manual inspection, or output comparison.
 4. **Impact scope.** Identify files, modules, or systems that could be affected by the changes even if not directly edited (callers, dependents, configuration).
 5. **Risk flags.** Call out destructive actions, irreversible operations, security-sensitive changes, or performance-critical paths that need extra attention.
-6. **Domain language consistency.** Use the canonical terms from `CONTEXT.md` in plan descriptions. If the requirements mention domain artifact updates (CONTEXT.md entries, ADRs), include them as explicit plan steps with the target file paths.
+6. **Domain language consistency.** Use the canonical terms from `.orbit/domain/CONTEXT.md` in plan descriptions. If the requirements mention domain artifact updates (`.orbit/domain/CONTEXT.md` entries, numbered ADRs under `.orbit/domain/adr/`), include them as explicit plan steps with the target file paths.
 
 ## Plan Step Schema
 
@@ -59,7 +59,7 @@ The `plan` object in the Planner's output contract gains an optional `checklist`
 
 Each checklist entry is a short imperative summary of the corresponding plan step, prefixed with `Step N:`.
 
-### Rendering in `plan.md`
+### Rendering in `2_planning_plan.md`
 
 The plan output MUST include a `## Checklist` section at the end, rendered as markdown checkboxes:
 
@@ -74,13 +74,13 @@ The checklist is **additive** — it supplements the detailed plan steps, it doe
 
 ### Consumption by Execute (Phase 3)
 
-- Copy the checklist from `plan.md` into `execution-memo.md` at the start of execution.
+- Copy the checklist from `2_planning_plan.md` into `3_execute_execution-memo.md` at the start of execution.
 - Check off items (`- [x]`) as each corresponding plan step is completed.
-- The final `execution-memo.md` must contain the fully updated checklist reflecting completion status.
+- The final `3_execute_execution-memo.md` must contain the fully updated checklist reflecting completion status.
 
 ### Consumption by Review (Phase 4)
 
-- Copy the checklist from `plan.md` into `review-findings.md`.
+- Copy the checklist from `2_planning_plan.md` into `4_review_findings.md`.
 - Annotate each item with a verification result: `PASS`, `FAIL`, or `SKIPPED`, plus brief evidence.
 - Example: `- [x] Step 1: Add validation to the API endpoint — PASS (unit tests cover all branches)`
 
@@ -114,7 +114,7 @@ When presenting the plan for user confirmation, verify:
 - Every step has explicit files and verification.
 - Impact scope is documented.
 - Risk flags are present where appropriate.
-- Domain language from `CONTEXT.md` is used consistently.
+- Domain language from `.orbit/domain/CONTEXT.md` is used consistently.
 
 ## Anti-Patterns
 

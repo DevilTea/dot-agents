@@ -1,6 +1,6 @@
 ---
 name: orbit-memory-ops
-description: "Memory format, operations, and index management for Orbit long-term memory. Defines the authoritative rules for search, archive, ID generation, and index maintenance."
+description: "Memory format, operations, and index management for Orbit long-term memory. Defines the authoritative rules for search, reconciliation, ID generation, and index maintenance."
 ---
 
 # Memory Operations
@@ -54,6 +54,32 @@ The `index.json` file tracks all memories for fast lookup:
 }
 ```
 
+## Candidate Memory Artifact
+
+Rounds keep a round-local candidate memory artifact at `candidate-memories.json` inside the round directory.
+
+```json
+{
+  "version": 1,
+  "candidates": [
+    {
+      "id": "CAND_001",
+      "title": "Concise candidate title",
+      "tags": ["orbit", "memory"],
+      "abstract": "1-2 sentence candidate summary.",
+      "body": "# Detailed note\n\nCandidate content.",
+      "sourcePhase": "clarify | planning | execute | review",
+      "notedAt": "2026-04-21T10:20:48.000Z",
+      "status": "pending | archived | updated",
+      "resolution": null
+    }
+  ],
+  "lastReconciledAt": null
+}
+```
+
+Any phase may append a new candidate entry immediately when something becomes worth remembering. Candidates are promoted, updated, or discarded only during end-of-round Memory Reconciliation.
+
 ## Operations
 
 ### Search
@@ -63,18 +89,18 @@ The `index.json` file tracks all memories for fast lookup:
 3. For promising matches, read the full `.md` file to confirm relevance.
 4. Return ranked results with relevance reasoning.
 
-### Archive
+### Reconcile
 
-1. Read `index.json` to determine the next ID.
-2. Analyze the round summary to extract:
-   - A concise title summarizing the key outcome.
-   - Relevant tags (technical domains, patterns, tools involved).
-   - A 1–2 sentence abstract capturing the technical value.
-   - Structured detailed content (decisions made, approaches taken, lessons learned).
-3. Check for duplicates — do not create a new memory when an existing one covers the same ground. When a duplicate is detected, the archive short-circuits with `index_updated: false` and returns the existing memory's metadata with `duplicate: true` (see Archive Result Contract below).
-4. Create the memory `.md` file with proper frontmatter.
-5. Update `index.json` to include the new entry.
-6. Return the created memory's metadata.
+1. Read `candidate-memories.json`, `index.json`, the round summary, and any related memory files needed for context.
+2. For each candidate, decide whether to:
+
+- **Archive** it as a new long-term memory.
+- **Update** an existing long-term memory when the candidate supersedes or corrects it.
+- **Leave it pending** when the round did not produce enough evidence to promote it yet.
+
+3. Delete stale superseded memories when the newer candidate or updated memory fully replaces them. This deletion is authorized only during Reconciliation.
+4. After all applied actions, validate that `index.json` still has unique IDs/files and references only files that exist on disk.
+5. Return the applied actions, pending candidate count, and index validation result.
 
 ## CLI Commands
 
@@ -94,6 +120,12 @@ node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstra
 # or quotes — shell-escaping an inline --body is fragile and can
 # truncate or mangle content.
 node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstract "..." --body-file <path>
+
+# Append a round-local candidate memory
+node .orbit/scripts/cli.mjs memory-candidate-add <roundPath> --title "..." --tags "t1,t2" --abstract "..." --body-file <path> --phase execute
+
+# Reconcile candidate memories into long-term memory
+node .orbit/scripts/cli.mjs memory-reconcile <roundPath> --operations-file <path>
 ```
 
 ## Workflow Integration
@@ -102,9 +134,9 @@ node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstra
 
 - **Phase 1 (Clarify)**: Round dispatches Memory Manager in **search mode** with keywords derived from the user's request. Surface any relevant past memories alongside terms or ADRs.
 
-### Next Advisor Dispatches Memory Manager (Archive)
+### Round Dispatches Memory Manager (Reconcile)
 
-- **Post-Round**: After writing `summary.md`, Next Advisor dispatches Memory Manager in **archive mode** with the round's summary, state, and plan.
+- **Post-Review close-out**: After writing `5_summary.md`, Round dispatches Memory Manager in **reconcile mode** with the round's candidate memory artifact, summary, state, and plan. Reconciliation must complete before the round advances to `phase: "next"`.
 
 ### Search Result Contract
 
@@ -126,36 +158,27 @@ node .orbit/scripts/cli.mjs memory-archive --title "..." --tags "t1,t2" --abstra
 }
 ```
 
-### Archive Result Contract
+### Reconcile Result Contract
 
 ```json
 {
-  "status": "archive_complete",
-  "operation": "archive",
-  "memory": {
-    "id": "MEM_YYYYMMDD_NNN",
-    "title": "...",
-    "date": "YYYY-MM-DD",
-    "tags": ["..."],
-    "abstract": "...",
-    "file": "<filename>"
-  },
-  "index_updated": true
-}
-```
-
-When a duplicate was detected (no new entry created):
-
-```json
-{
-  "status": "archive_complete",
-  "operation": "archive",
-  "memory": {
-    "id": "MEM_YYYYMMDD_NNN",
-    "file": "<filename>",
-    "duplicate": true
-  },
-  "index_updated": false
+  "status": "reconcile_complete",
+  "operation": "reconcile",
+  "applied": [
+    {
+      "action": "archive | update | delete",
+      "candidateId": "CAND_001",
+      "memoryId": "MEM_YYYYMMDD_NNN"
+    }
+  ],
+  "pendingCandidates": 0,
+  "index": {
+    "ok": true,
+    "memoryCount": 0,
+    "duplicateIds": [],
+    "duplicateFiles": [],
+    "missingFiles": []
+  }
 }
 ```
 
@@ -164,7 +187,7 @@ When a duplicate was detected (no new entry created):
 ```json
 {
   "status": "error",
-  "operation": "search | archive",
+  "operation": "search | reconcile",
   "error": "<description of what went wrong>",
   "partial_result": null
 }
@@ -175,5 +198,6 @@ When a duplicate was detected (no new entry created):
 - **Shallow summaries**: Extracting only a title without capturing decisions and lessons.
 - **Tag spam**: Using too many or too generic tags (e.g., "code", "work").
 - **Duplicate memories**: Creating a new memory when an existing one covers the same ground.
+- **Skipping stale-memory cleanup**: Leaving obsolete memories in place when a newer memory fully supersedes them.
 - **Index drift**: Forgetting to update `index.json` after creating a memory file.
 - **Scope violation**: Touching files outside `.orbit/memories/`.

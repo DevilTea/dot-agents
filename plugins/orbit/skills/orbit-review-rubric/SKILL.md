@@ -19,7 +19,7 @@ This skill defines the authoritative review criteria for the Orbit workflow. Eve
 6. **Error handling** — Failure modes at system boundaries.
 7. **Consistency** — Codebase convention adherence.
 8. **Unnecessary complexity** — Over-engineering or dead code.
-9. **Domain language consistency** — Verify against `CONTEXT.md` glossary (see the `orbit-domain-awareness` skill for full domain verification rules).
+9. **Domain language consistency** — Verify against `.orbit/domain/CONTEXT.md` and `.orbit/domain/adr/` (see the `orbit-domain-awareness` skill for full domain verification rules).
 
 ### For No-Edit Tasks
 
@@ -46,7 +46,7 @@ Findings without evidence are not valid.
 
 ## Output Format
 
-The review output is written to `review-findings.md` in the round directory:
+The review output is written to `4_review_findings.md` in the round directory:
 
 ```markdown
 ## Review Result

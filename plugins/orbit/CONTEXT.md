@@ -19,7 +19,7 @@ A named stage within a Round — one of clarify, planning, execute, review, next
 _Avoid_: step, stage
 
 **Status**:
-The lifecycle state of a Round — one of in-progress, completed, partial, or blocked.
+The lifecycle state of a Round — one of in-progress, completed, partial, blocked, or abandoned.
 _Avoid_: state (when referring to lifecycle)
 
 **Mode**:
@@ -41,8 +41,16 @@ A single observation from Review, classified as Critical, Warning, or Info.
 _Avoid_: issue, bug, defect (when referring to review output)
 
 **Summary**:
-A post-round recap written by Next Advisor — covers outcome, artifacts, and residual risk.
-_Avoid_: report, wrap-up
+A Round-owned recap written after Review and before the Round completes.
+_Avoid_: post-round summary, summary written by Next Advisor
+
+**Candidate Memory**:
+A round-local memory note captured immediately in `candidate-memories.json` for later reconciliation.
+_Avoid_: scratch note, draft archive
+
+**Memory Reconciliation**:
+The round-end process that promotes candidate memories, updates related memories, and deletes stale superseded memories before the Round completes.
+_Avoid_: archive-only step, post-round memory archival
 
 **Template**:
 A reusable task scaffold stored in `.orbit/templates/` that pre-fills Clarify branches.
@@ -53,6 +61,10 @@ _Avoid_: blueprint, boilerplate
 **Dispatcher**:
 The entry-point agent that creates Tasks, dispatches Rounds, and manages post-round flow.
 _Avoid_: router, orchestrator (Dispatcher is the canonical name)
+
+**Next Advisor**:
+The post-round agent that consumes a completed Round's summary and current memory state to recommend next work.
+_Avoid_: summary writer, memory owner
 
 **Agent**:
 A role-specialized AI participant in the Orbit workflow (e.g., Planner, Execute, Review, Round).
@@ -78,11 +90,14 @@ _Avoid_: note, log entry
 - A **Plan** is produced during the planning **Phase** and consumed by the execute **Phase**
 - An **Execution Memo** is produced during the execute **Phase** and consumed by the review **Phase**
 - A **Review Finding** is produced during the review **Phase**
-- A **Summary** is produced after the review **Phase** by Next Advisor
+- A **Summary** is produced after the review **Phase** by the **Round** before the Next Advisor handoff
+- A **Candidate Memory** may be captured during any **Phase** of a **Round**
+- **Memory Reconciliation** happens at the end of a **Round** before it advances to `phase: next`
 - The **Dispatcher** creates **Tasks** and dispatches **Rounds**
+- The **Dispatcher** dispatches **Next Advisor** after a completed **Round** reaches `phase: next`
 - An **Agent** reads one or more **Skills** before acting
 - A **Backlog** item may become a **Task** when selected for work
-- A **Memory** is archived from a completed **Round**'s **Summary**
+- A **Memory** is created, updated, or deleted during **Memory Reconciliation**
 
 ## Example dialogue
 
@@ -95,5 +110,5 @@ _Avoid_: note, log entry
 
 ## Flagged ambiguities
 
-- "state" was used to mean both **Status** (lifecycle) and **Phase** (workflow stage) — resolved: Status is the lifecycle state (in-progress/completed/partial/blocked); Phase is the workflow stage (clarify/planning/execute/review/next/done).
+- "state" was used to mean both **Status** (lifecycle) and **Phase** (workflow stage) — resolved: Status is the lifecycle state (in-progress/completed/partial/blocked/abandoned); Phase is the workflow stage (clarify/planning/execute/review/next/done).
 - "step" was used to mean both a **Plan** step (an atomic action in an execution plan) and a **Phase** (a stage in a Round) — resolved: use "step" only for Plan steps; use "Phase" for Round stages.

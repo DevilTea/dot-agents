@@ -15,6 +15,8 @@ import {
   taskDir,
   roundDir,
   roundFiles,
+  legacyRoundFiles,
+  candidateMemoryPath,
   memoryIndexPath,
 } from "./paths.mjs";
 import { readJSON, writeJSON, writeMarkdown } from "./io.mjs";
@@ -57,7 +59,7 @@ export const ALLOWED_MODES = Object.freeze(["simple", "full"]);
  * Ensure the `.orbit` directory structure exists in the given project.
  *
  * @param {string} projectRoot
- * @returns {Promise<void>}
+ * @returns {Promise<object>}
  */
 export async function initOrbit(projectRoot) {
   const paths = orbitPaths(projectRoot);
@@ -65,6 +67,7 @@ export async function initOrbit(projectRoot) {
   await mkdir(paths.memories, { recursive: true });
   await mkdir(paths.templates, { recursive: true });
   await mkdir(paths.backlog, { recursive: true });
+  await mkdir(paths.domainAdr, { recursive: true });
 
   // Seed the memory index if absent. Only ENOENT / ENOTDIR trigger a reset;
   // any other read error (permissions, corrupt JSON, I/O failure) must bubble
@@ -83,7 +86,7 @@ export async function initOrbit(projectRoot) {
   }
 
   // Run forward-only migrations and stamp the manifest.
-  await migrateOrbit(projectRoot);
+  return migrateOrbit(projectRoot);
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +227,37 @@ export async function createRound(projectRoot, taskDirName, roundNumber) {
   await writeMarkdown(files.executionMemo, "# Execution Memo\n");
   await writeMarkdown(files.reviewFindings, "# Review Findings\n");
   await writeMarkdown(files.summary, "# Summary\n");
+  await writeJSON(candidateMemoryPath(rPath), {
+    version: 1,
+    candidates: [],
+    lastReconciledAt: null,
+  });
 
   return { name, path: rPath, files };
+}
+
+async function resolveExistingRoundFiles(roundPath) {
+  const canonicalFiles = roundFiles(roundPath);
+  try {
+    await stat(canonicalFiles.state);
+    return canonicalFiles;
+  } catch (err) {
+    if (err && err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  const legacyFiles = legacyRoundFiles(roundPath);
+  try {
+    await stat(legacyFiles.state);
+    return legacyFiles;
+  } catch (err) {
+    if (err && err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  return canonicalFiles;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +271,8 @@ export async function createRound(projectRoot, taskDirName, roundNumber) {
  * @returns {Promise<object>}
  */
 export async function readRoundState(roundPath) {
-  return readJSON(roundFiles(roundPath).state);
+  const files = await resolveExistingRoundFiles(roundPath);
+  return readJSON(files.state);
 }
 
 /**
@@ -286,7 +319,7 @@ export async function updateRoundState(roundPath, patch) {
     );
   }
 
-  const files = roundFiles(roundPath);
+  const files = await resolveExistingRoundFiles(roundPath);
   const current = await readJSON(files.state);
   const updated = { ...current, ...patch, updatedAt: new Date().toISOString() };
 

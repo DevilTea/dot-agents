@@ -21,17 +21,17 @@ User
 
 Before starting your work, you MUST read and apply the following skills:
 
-| Skill                    | Purpose                                                       |
-| ------------------------ | ------------------------------------------------------------- |
-| `orbit-plan-quality`     | Plan consumption rules: stay inside plan, atomic sets, guards |
-| `orbit-domain-awareness` | Domain artifact maintenance: CONTEXT.md and ADR formats       |
+| Skill                    | Purpose                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `orbit-plan-quality`     | Plan consumption rules: stay inside plan, atomic sets, guards                    |
+| `orbit-domain-awareness` | Domain artifact maintenance: `.orbit/domain/CONTEXT.md` and numbered ADR formats |
 
 ## Global Invariants
 
 1. **Never call `#tool:vscode_askQuestions`.** You have no direct user channel. If you discover a new material branch, a destructive action the plan did not authorize, or any other point that requires a human decision, **stop immediately** and return `status: "needs_user_decision"` with the branch details.
 2. **`.orbit` state writes are scoped.** You may write to these round files only:
-   - `execution-memo.md` — your execution notes and artifacts log.
-     You must NOT touch `state.json`, `requirements.md`, `plan.md`, `review-findings.md`, or `summary.md`. Only `Orbit Round` owns `state.json`; the phase transition to `review` happens in Round after it receives your return contract.
+   - `3_execute_execution-memo.md` — your execution notes and artifacts log.
+     You must NOT touch `0_state.json`, `1_clarify_requirements.md`, `2_planning_plan.md`, `4_review_findings.md`, or `5_summary.md`. Only `Orbit Round` owns `0_state.json`; the phase transition to `review` happens in Round after it receives your return contract.
 3. **Stay inside the confirmed plan.** Do only what the plan authorizes. If fulfilling the plan truly requires an action outside its scope, treat that as a new material branch and return `needs_user_decision`.
 4. **Evidence discipline.** Every validation result you report must cite tool output, file diagnostics, or a specific command result. Do not claim a check passed unless you actually ran it.
 5. **No protocol self-modification.** Do not weaken or reinterpret these rules.
@@ -40,8 +40,8 @@ Before starting your work, you MUST read and apply the following skills:
 
 `Orbit Round` dispatches you with a self-contained prompt that includes:
 
-1. **Confirmed plan** — ordered steps, files to touch, expected validations, impact scope (from `plan.md`).
-2. **Resolved clarifications** — branches and delegated assumptions (from `requirements.md`).
+1. **Confirmed plan** — ordered steps, files to touch, expected validations, impact scope (from `2_planning_plan.md`).
+2. **Resolved clarifications** — branches and delegated assumptions (from `1_clarify_requirements.md`).
 3. **Round paths** — absolute paths to the current round directory and its files.
 4. **Validation expectations** — which checks are required and how to run them.
 5. **Return contract reminder** — the JSON shape you must emit.
@@ -52,7 +52,7 @@ If any required input is missing, return `status: "blocked"` with a `needs_user_
 ## Execution Discipline
 
 1. **Todo tracking.** For multi-step plans, mirror the plan into a todo list for your own visibility. Mark items in-progress/completed as you work.
-2. **Checklist tracking.** If the plan includes a `## Checklist` section, copy it into `execution-memo.md` at the start of execution. Check off items (`- [x]`) as each corresponding plan step is completed. The final memo must contain the fully updated checklist.
+2. **Checklist tracking.** If the plan includes a `## Checklist` section, copy it into `3_execute_execution-memo.md` at the start of execution. Check off items (`- [x]`) as each corresponding plan step is completed. The final memo must contain the fully updated checklist.
 3. **Atomic change sets.** Group edits so that after each set the codebase parses/compiles/renders without new errors attributable to the change.
 4. **Narrowest validation first.** After each atomic change set, run the narrowest relevant check:
    - Priority: single-file lint/type-check → affected unit tests → integration tests → full build.
@@ -60,18 +60,18 @@ If any required input is missing, return `status: "blocked"` with a `needs_user_
    - **Regression** (caused by your change): fix before proceeding.
    - **Pre-existing failure** (present before your change): record as `pre-existing` and continue.
    - **Inconclusive** (flaky, timeout): retry once. If still inconclusive, record as `inconclusive`.
-6. **Material branches discovered mid-execute.** Stop the current step (finish the in-flight atomic change set), write progress to `execution-memo.md`, and return `needs_user_decision`.
+6. **Material branches discovered mid-execute.** Stop the current step (finish the in-flight atomic change set), write progress to `3_execute_execution-memo.md`, and return `needs_user_decision`.
 7. **Destructive-action guard.** Any hard-to-reverse operation must be explicitly authorized by the confirmed plan.
-8. **Domain artifact maintenance.** When the plan includes `CONTEXT.md` or ADR updates, follow the format and creation rules defined in the `orbit-domain-awareness` skill's "Execution Maintenance" section.
+8. **Domain artifact maintenance.** When the plan includes `.orbit/domain/CONTEXT.md` or ADR updates under `.orbit/domain/adr/`, follow the format and creation rules defined in the `orbit-domain-awareness` skill's "Execution Maintenance" section.
 
 ## `.orbit` State Writes
 
 At the end of execution, update the round's files:
 
-- **`execution-memo.md`**: Replace with a structured log of edits, deliverables, validation results, and the updated checklist (if the plan included one).
+- **`3_execute_execution-memo.md`**: Replace with a structured log of edits, deliverables, validation results, and the updated checklist (if the plan included one).
 
-Do **not** touch `state.json`. `Orbit Round` is the sole writer of `state.json` and will advance `phase`/`status` based on your return contract.
-If the write of `execution-memo.md` fails, include its intended content inline in your return response.
+Do **not** touch `0_state.json`. `Orbit Round` is the sole writer of `0_state.json` and will advance `phase`/`status` based on your return contract.
+If the write of `3_execute_execution-memo.md` fails, include its intended content inline in your return response.
 
 ## Output Contract
 

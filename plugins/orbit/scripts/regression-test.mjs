@@ -18,12 +18,15 @@ import {
   ALLOWED_MODES,
   ALLOWED_PHASES,
   ALLOWED_STATUSES,
+  candidateMemoryPath,
   initOrbit,
   orbitPaths,
   createTask,
   createRound,
   updateRoundState,
   readRoundState,
+  roundFiles,
+  validateMemoryIndex,
   listBacklog,
   addBacklogItem,
   getBacklogItem,
@@ -73,6 +76,44 @@ async function main() {
 
   await test("ALLOWED_MODES is frozen", async () => {
     assert.ok(Object.isFrozen(ALLOWED_MODES));
+  });
+
+  await test("ALLOWED_PHASES preserves the current Round lifecycle order", async () => {
+    assert.deepEqual([...ALLOWED_PHASES], [
+      "clarify",
+      "planning",
+      "execute",
+      "review",
+      "next",
+      "done",
+    ]);
+  });
+
+  await test("ALLOWED_STATUSES preserves the current status set", async () => {
+    assert.deepEqual([...ALLOWED_STATUSES], [
+      "in-progress",
+      "completed",
+      "partial",
+      "blocked",
+      "abandoned",
+    ]);
+  });
+
+  await test("roundFiles returns numbered canonical round artifacts", async () => {
+    const files = roundFiles("/tmp/round-0001");
+    assert.equal(files.state, "/tmp/round-0001/0_state.json");
+    assert.equal(files.requirements, "/tmp/round-0001/1_clarify_requirements.md");
+    assert.equal(files.plan, "/tmp/round-0001/2_planning_plan.md");
+    assert.equal(files.executionMemo, "/tmp/round-0001/3_execute_execution-memo.md");
+    assert.equal(files.reviewFindings, "/tmp/round-0001/4_review_findings.md");
+    assert.equal(files.summary, "/tmp/round-0001/5_summary.md");
+  });
+
+  await test("candidateMemoryPath uses candidate-memories.json inside the round directory", async () => {
+    assert.equal(
+      candidateMemoryPath("/tmp/round-0001"),
+      "/tmp/round-0001/candidate-memories.json"
+    );
   });
 
   await test("updateRoundState accepts valid mode 'simple'", async () => {
@@ -155,6 +196,18 @@ async function main() {
       content.includes("checklist") || content.includes("Checklist"),
       "Execute agent must reference checklist tracking"
     );
+    assert.ok(content.includes("3_execute_execution-memo.md"));
+    assert.ok(content.includes("0_state.json"));
+    assert.ok(content.includes("1_clarify_requirements.md"));
+    assert.ok(content.includes("2_planning_plan.md"));
+    assert.ok(content.includes("4_review_findings.md"));
+    assert.ok(content.includes("5_summary.md"));
+    assert.equal(content.includes("`execution-memo.md`"), false);
+    assert.equal(content.includes("`state.json`"), false);
+    assert.equal(content.includes("`requirements.md`"), false);
+    assert.equal(content.includes("`plan.md`"), false);
+    assert.equal(content.includes("`review-findings.md`"), false);
+    assert.equal(content.includes("`summary.md`"), false);
   });
 
   await test("Review agent references checklist verification", async () => {
@@ -165,6 +218,39 @@ async function main() {
       content.includes("orbit-plan-quality") || content.includes("checklist") || content.includes("Checklist"),
       "Review agent must reference plan quality skill or checklist"
     );
+    assert.ok(content.includes("4_review_findings.md"));
+    assert.ok(content.includes("2_planning_plan.md"));
+    assert.ok(content.includes("3_execute_execution-memo.md"));
+    assert.ok(content.includes("1_clarify_requirements.md"));
+    assert.equal(content.includes("`review-findings.md`"), false);
+    assert.equal(content.includes("`plan.md`"), false);
+    assert.equal(content.includes("`execution-memo.md`"), false);
+    assert.equal(content.includes("`requirements.md`"), false);
+  });
+
+  await test("orbit-plan-quality checklist rules reference numbered canonical artifacts", async () => {
+    const skillPath = resolve(__dirname, "..", "skills", "orbit-plan-quality", "SKILL.md");
+    const content = await readFile(skillPath, "utf-8");
+    assert.ok(content.includes("2_planning_plan.md"));
+    assert.ok(content.includes("3_execute_execution-memo.md"));
+    assert.ok(content.includes("4_review_findings.md"));
+    assert.equal(content.includes("`plan.md`"), false);
+    assert.equal(content.includes("`execution-memo.md`"), false);
+    assert.equal(content.includes("`review-findings.md`"), false);
+  });
+
+  await test("orbit-review-rubric writes findings to the numbered canonical artifact", async () => {
+    const rubricPath = resolve(__dirname, "..", "skills", "orbit-review-rubric", "SKILL.md");
+    const content = await readFile(rubricPath, "utf-8");
+    assert.ok(content.includes("4_review_findings.md"));
+    assert.equal(content.includes("`review-findings.md`"), false);
+  });
+
+  await test("orbit-memory-ops reconcile contract uses pendingCandidates casing", async () => {
+    const memoryOpsPath = resolve(__dirname, "..", "skills", "orbit-memory-ops", "SKILL.md");
+    const content = await readFile(memoryOpsPath, "utf-8");
+    assert.ok(content.includes('"pendingCandidates": 0'));
+    assert.equal(content.includes('"pending_candidates": 0'), false);
   });
 
   // =========================================================================
@@ -183,7 +269,25 @@ async function main() {
     const { readdir } = await import("node:fs/promises");
     // Should not throw — directory must exist.
     await readdir(orbitPaths(freshRoot).backlog);
+    await readdir(orbitPaths(freshRoot).domainAdr);
     await rm(freshRoot, { recursive: true, force: true });
+  });
+
+  await test("createRound scaffolds an empty candidate memory store", async () => {
+    const task = await createTask(TEST_ROOT, new Date("2026-04-20T00:04:00Z"));
+    const round = await createRound(TEST_ROOT, task.name);
+    const content = await readFile(candidateMemoryPath(round.path), "utf-8");
+    assert.ok(content.includes('"version": 1'));
+    assert.ok(content.includes('"candidates": []'));
+    assert.ok(content.includes('"lastReconciledAt": null'));
+  });
+
+  await test("validateMemoryIndex returns ok for a fresh Orbit memory index", async () => {
+    const result = await validateMemoryIndex(TEST_ROOT);
+    assert.equal(result.ok, true);
+    assert.equal(result.duplicateIds.length, 0);
+    assert.equal(result.duplicateFiles.length, 0);
+    assert.equal(result.missingFiles.length, 0);
   });
 
   await test("listBacklog returns empty array for empty backlog", async () => {
@@ -341,6 +445,25 @@ async function main() {
     );
   });
 
+  await test("README documents numbered round artifacts and .orbit/domain", async () => {
+    const readmePath = resolve(__dirname, "..", "README.md");
+    const content = await readFile(readmePath, "utf-8");
+    assert.ok(content.includes("0_state.json"), "README should document numbered round files");
+    assert.ok(content.includes("5_summary.md"), "README should document numbered round files");
+    assert.ok(content.includes("domain/"), "README should document .orbit/domain runtime artifacts");
+  });
+
+  await test("orbit-init skill documents migrationNeeded guidance and numbered rename", async () => {
+    const skillPath = resolve(__dirname, "..", "skills", "orbit-init", "SKILL.md");
+    const content = await readFile(skillPath, "utf-8");
+    assert.ok(content.includes("migrationNeeded"), "orbit-init should mention migrationNeeded");
+    assert.ok(content.includes("0_state.json"), "orbit-init should mention the numbered layout");
+    assert.ok(
+      content.includes("legacyArtifactCount") || content.includes("legacy round"),
+      "orbit-init should describe legacy round layout drift"
+    );
+  });
+
   await test("Orbit Dispatcher agent lists Orbit Backlog", async () => {
     const dispatcherPath = resolve(__dirname, "..", "agents", "Orbit.agent.md");
     const content = await readFile(dispatcherPath, "utf-8");
@@ -348,6 +471,60 @@ async function main() {
       content.includes("Orbit Backlog"),
       "Dispatcher should reference Orbit Backlog"
     );
+  });
+
+  await test("Round agent makes Summary and Memory Reconciliation Round-owned", async () => {
+    const roundPath = resolve(__dirname, "..", "agents", "Orbit Round.agent.md");
+    const content = await readFile(roundPath, "utf-8");
+    assert.ok(content.includes("Round owns `5_summary.md`"), "Round should own the durable summary");
+    assert.ok(content.includes("Run Memory Reconciliation"), "Round should own Memory Reconciliation");
+    assert.ok(content.includes('phase: "next"'), "Round should advance to phase next before Next Advisor");
+    assert.ok(
+      !content.includes("`summary.md` is written by `Orbit Next Advisor`") &&
+        !content.includes("summary, memory archival"),
+      "Round agent should not describe Next Advisor as the summary or memory owner"
+    );
+  });
+
+  await test("Next Advisor agent consumes summary and memory state without writing them", async () => {
+    const advisorPath = resolve(__dirname, "..", "agents", "Orbit Next Advisor.agent.md");
+    const content = await readFile(advisorPath, "utf-8");
+    assert.ok(content.includes("No `.orbit` writes."), "Next Advisor should be read-only for .orbit state");
+    assert.ok(content.includes("Current memory state"), "Next Advisor should consume current memory state");
+    assert.ok(!content.includes("### 3. Write `summary.md`"), "Next Advisor should not write summary.md");
+    assert.ok(!content.includes("### 4. Memory Archival"), "Next Advisor should not own memory archival");
+  });
+
+  await test("Memory Manager agent describes reconcile mode", async () => {
+    const managerPath = resolve(__dirname, "..", "agents", "Orbit Memory Manager.agent.md");
+    const content = await readFile(managerPath, "utf-8");
+    assert.ok(content.includes("### Mode B: Reconcile"), "Memory Manager should expose reconcile mode");
+    assert.ok(content.includes("candidate-memories.json"), "Memory Manager should consume candidate-memories.json");
+    assert.ok(!content.includes("### Mode B: Archive"), "Memory Manager should no longer describe archive mode as the round-end contract");
+  });
+
+  await test("orbit-next-advice skill treats Next Advisor as a consumer only", async () => {
+    const skillPath = resolve(__dirname, "..", "skills", "orbit-next-advice", "SKILL.md");
+    const content = await readFile(skillPath, "utf-8");
+    assert.ok(content.includes("already-written `5_summary.md`"), "orbit-next-advice should consume the already-written summary");
+    assert.ok(content.includes("does not modify them"), "orbit-next-advice should keep Next Advisor read-only");
+    assert.ok(content.includes('patches the round from `phase: "next"` to `phase: "done"`'), "orbit-next-advice should document the next-to-done handoff");
+  });
+
+  await test("orbit-memory-ops skill documents post-review reconcile mode", async () => {
+    const skillPath = resolve(__dirname, "..", "skills", "orbit-memory-ops", "SKILL.md");
+    const content = await readFile(skillPath, "utf-8");
+    assert.ok(content.includes("candidate-memories.json"), "orbit-memory-ops should document the candidate memory artifact");
+    assert.ok(content.includes("Round dispatches Memory Manager in **reconcile mode**"), "orbit-memory-ops should document reconcile mode at round close-out");
+    assert.ok(content.includes('phase: "next"'), "orbit-memory-ops should document reconcile completion before the next-phase handoff");
+  });
+
+  await test("README documents Round-owned close-out and candidate memory artifact", async () => {
+    const readmePath = resolve(__dirname, "..", "README.md");
+    const content = await readFile(readmePath, "utf-8");
+    assert.ok(content.includes("candidate-memories.json"), "README should document candidate-memories.json");
+    assert.ok(content.includes('phase: "next"'), "README should describe the next-phase handoff");
+    assert.ok(content.includes("consumes the completed round summary and current memory state"), "README should describe Next Advisor as a consumer");
   });
 
   // =========================================================================
@@ -381,6 +558,16 @@ async function main() {
     assert.ok(content.includes("Branch 2"), "Skill must contain Branch 2");
     assert.ok(content.includes("Branch 3"), "Skill must contain Branch 3");
     assert.ok(content.includes("Branch 4"), "Skill must contain Branch 4");
+  });
+
+  await test("orbit-auto-route dispatches Next Advisor from phase next without probing empty summary", async () => {
+    const skillPath = resolve(__dirname, "..", "skills", "orbit-auto-route", "SKILL.md");
+    const content = await readFile(skillPath, "utf-8");
+    assert.ok(content.includes('phase == "next"'), "Auto-route should trigger Next Advisor from phase next");
+    assert.ok(
+      !content.includes("contains only the scaffold heading") && !content.includes("empty or contains only"),
+      "Auto-route should not probe empty summary content anymore"
+    );
   });
 
   await test("Dispatcher references orbit-auto-route skill", async () => {
@@ -424,6 +611,39 @@ async function main() {
     assert.ok(
       autoRouteIdx < newRoundIdx,
       "Auto-route must appear BEFORE new-round in Dispatch Procedure"
+    );
+  });
+
+  await test("Dispatcher hands off Next Advisor after Round-owned summary and reconciliation", async () => {
+    const dispatcherPath = resolve(__dirname, "..", "agents", "Orbit.agent.md");
+    const content = await readFile(dispatcherPath, "utf-8");
+    assert.ok(content.includes("reconciled memory"), "Dispatcher should describe Round-owned reconciliation before handoff");
+    assert.ok(content.includes('phase: "next"'), "Dispatcher should recognize the next-phase handoff");
+    assert.ok(content.includes("patch the round from `phase: \"next\"` to `phase: \"done\"`"), "Dispatcher should finish the handoff by advancing to done");
+  });
+
+  await test("Domain-aware contracts point to .orbit/domain runtime artifacts", async () => {
+    const awarenessPath = resolve(__dirname, "..", "skills", "orbit-domain-awareness", "SKILL.md");
+    const executePath = resolve(__dirname, "..", "agents", "Orbit Execute.agent.md");
+    const reviewPath = resolve(__dirname, "..", "agents", "Orbit Review.agent.md");
+    const awareness = await readFile(awarenessPath, "utf-8");
+    const execute = await readFile(executePath, "utf-8");
+    const review = await readFile(reviewPath, "utf-8");
+    assert.ok(awareness.includes(".orbit/domain/CONTEXT.md"), "Domain awareness should point to .orbit/domain/CONTEXT.md");
+    assert.ok(awareness.includes(".orbit/domain/adr/"), "Domain awareness should point to .orbit/domain/adr/");
+    assert.ok(execute.includes(".orbit/domain/CONTEXT.md"), "Execute should reference .orbit/domain/CONTEXT.md");
+    assert.ok(review.includes(".orbit/domain/CONTEXT.md"), "Review should reference .orbit/domain/CONTEXT.md");
+  });
+
+  await test("Orbit glossary defines Summary, Next Advisor, and Memory Reconciliation consistently", async () => {
+    const contextPath = resolve(__dirname, "..", "CONTEXT.md");
+    const content = await readFile(contextPath, "utf-8");
+    assert.ok(content.includes("Round-owned recap written after Review"), "Glossary should define Summary as Round-owned");
+    assert.ok(content.includes("**Next Advisor**"), "Glossary should define Next Advisor");
+    assert.ok(content.includes("**Memory Reconciliation**"), "Glossary should define Memory Reconciliation");
+    assert.ok(
+      !content.includes("A post-round recap written by Next Advisor"),
+      "Glossary should not keep the old Summary wording"
     );
   });
 

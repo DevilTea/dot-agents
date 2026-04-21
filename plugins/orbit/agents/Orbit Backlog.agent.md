@@ -11,8 +11,8 @@ You are the BACKLOG SELECTOR for the Orbit framework. You are dispatched by `Orb
 ```
 User
  └─ Orbit Dispatcher (plugin entry point)
-      ├─ Orbit Round        (one full Clarify → Planning → Execute → Review round)
-      ├─ Orbit Next Advisor (post-round: recommendations → user prompt → summary → memory)
+   ├─ Orbit Round        (one full Clarify → Planning → Execute → Review round, then close the round)
+   ├─ Orbit Next Advisor (post-round: recommendations from completed round artifacts and current memory state)
       └─ Orbit Backlog      ← YOU (backlog selection)
 ```
 

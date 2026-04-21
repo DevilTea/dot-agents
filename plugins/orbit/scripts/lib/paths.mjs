@@ -6,6 +6,30 @@
 
 import { join } from "node:path";
 
+const CANONICAL_ROUND_FILE_NAMES = Object.freeze({
+  state: "0_state.json",
+  requirements: "1_clarify_requirements.md",
+  plan: "2_planning_plan.md",
+  executionMemo: "3_execute_execution-memo.md",
+  reviewFindings: "4_review_findings.md",
+  summary: "5_summary.md",
+});
+
+const LEGACY_ROUND_FILE_NAMES = Object.freeze({
+  state: "state.json",
+  requirements: "requirements.md",
+  plan: "plan.md",
+  executionMemo: "execution-memo.md",
+  reviewFindings: "review-findings.md",
+  summary: "summary.md",
+});
+
+function mapRoundFileNames(roundPath, fileNames) {
+  return Object.fromEntries(
+    Object.entries(fileNames).map(([key, fileName]) => [key, join(roundPath, fileName)])
+  );
+}
+
 /** Pad a number to the given width with leading zeros. */
 function pad(n, width = 2) {
   return String(n).padStart(width, "0");
@@ -77,6 +101,23 @@ export function orbitPaths(projectRoot) {
     memories: join(root, "memories"),
     tasks: join(root, "tasks"),
     backlog: join(root, "backlog"),
+    domain: join(root, "domain"),
+    domainAdr: join(root, "domain", "adr"),
+  };
+}
+
+/**
+ * Resolve runtime domain artifact paths under `.orbit/domain/`.
+ *
+ * @param {string} projectRoot
+ * @returns {{ root: string, context: string, adrDir: string }}
+ */
+export function domainPaths(projectRoot) {
+  const root = orbitPaths(projectRoot).domain;
+  return {
+    root,
+    context: join(root, "CONTEXT.md"),
+    adrDir: join(root, "adr"),
   };
 }
 
@@ -110,14 +151,27 @@ export function roundDir(projectRoot, taskDirName, roundDirName) {
  * @returns {object}
  */
 export function roundFiles(roundPath) {
-  return {
-    state: join(roundPath, "state.json"),
-    requirements: join(roundPath, "requirements.md"),
-    plan: join(roundPath, "plan.md"),
-    executionMemo: join(roundPath, "execution-memo.md"),
-    reviewFindings: join(roundPath, "review-findings.md"),
-    summary: join(roundPath, "summary.md"),
-  };
+  return mapRoundFileNames(roundPath, CANONICAL_ROUND_FILE_NAMES);
+}
+
+/**
+ * Enumerate the legacy round file paths used before the numbered layout.
+ *
+ * @param {string} roundPath - Absolute path to the round directory.
+ * @returns {object}
+ */
+export function legacyRoundFiles(roundPath) {
+  return mapRoundFileNames(roundPath, LEGACY_ROUND_FILE_NAMES);
+}
+
+/**
+ * Return the path of the round-local candidate memory artifact.
+ *
+ * @param {string} roundPath - Absolute path to the round directory.
+ * @returns {string}
+ */
+export function candidateMemoryPath(roundPath) {
+  return join(roundPath, "candidate-memories.json");
 }
 
 /**

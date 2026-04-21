@@ -7,11 +7,223 @@
  * the plugin version.
  */
 
-import { readdir, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readdir, rename, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readJSON, writeJSON } from "./io.mjs";
-import { orbitRoot, orbitPaths } from "./paths.mjs";
+import { legacyRoundFiles, orbitRoot, orbitPaths, roundFiles } from "./paths.mjs";
+
+const NUMBERED_ROUND_LAYOUT = [
+  "0_state.json",
+  "1_clarify_requirements.md",
+  "2_planning_plan.md",
+  "3_execute_execution-memo.md",
+  "4_review_findings.md",
+  "5_summary.md",
+].join(", ");
+
+function toMigrationError(path, err, codeOverride) {
+  return {
+    path,
+    code: codeOverride ?? err?.code ?? "UNKNOWN",
+    message: err?.message ?? String(err),
+  };
+}
+
+async function pathExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch (err) {
+    if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function listRoundDirectories(projectRoot) {
+  const paths = orbitPaths(projectRoot);
+  const roundPaths = [];
+  const errors = [];
+
+  let taskEntries;
+  try {
+    taskEntries = await readdir(paths.tasks, { withFileTypes: true });
+  } catch (err) {
+    if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
+      return { roundPaths, errors };
+    }
+    errors.push(toMigrationError(paths.tasks, err));
+    return { roundPaths, errors };
+  }
+
+  for (const taskEntry of taskEntries) {
+    if (!taskEntry.isDirectory()) continue;
+    const taskPath = join(paths.tasks, taskEntry.name);
+    let roundEntries;
+    try {
+      roundEntries = await readdir(taskPath, { withFileTypes: true });
+    } catch (err) {
+      if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
+        continue;
+      }
+      errors.push(toMigrationError(taskPath, err));
+      continue;
+    }
+    for (const roundEntry of roundEntries) {
+      if (roundEntry.isDirectory() && /^round-\d{4}$/.test(roundEntry.name)) {
+        roundPaths.push(join(taskPath, roundEntry.name));
+      }
+    }
+  }
+
+  return { roundPaths, errors };
+}
+
+async function resolveRoundStateFile(roundPath) {
+  const canonicalState = roundFiles(roundPath).state;
+  if (await pathExists(canonicalState)) {
+    return canonicalState;
+  }
+
+  const legacyState = legacyRoundFiles(roundPath).state;
+  if (await pathExists(legacyState)) {
+    return legacyState;
+  }
+
+  return null;
+}
+
+async function scanLegacyRoundArtifacts(projectRoot) {
+  const { roundPaths, errors } = await listRoundDirectories(projectRoot);
+  const legacyRounds = [];
+
+  for (const roundPath of roundPaths) {
+    const legacyFiles = legacyRoundFiles(roundPath);
+    const canonicalFiles = roundFiles(roundPath);
+    const renamePairs = [];
+
+    for (const key of Object.keys(legacyFiles)) {
+      let legacyExists;
+      let canonicalExists;
+      try {
+        legacyExists = await pathExists(legacyFiles[key]);
+      } catch (err) {
+        errors.push(toMigrationError(legacyFiles[key], err));
+        continue;
+      }
+      try {
+        canonicalExists = await pathExists(canonicalFiles[key]);
+      } catch (err) {
+        errors.push(toMigrationError(canonicalFiles[key], err));
+        continue;
+      }
+
+      if (legacyExists && canonicalExists) {
+        errors.push({
+          path: canonicalFiles[key],
+          code: "ELEGACYCONFLICT",
+          message: `Both legacy and canonical round artifacts exist for ${key} in ${roundPath}`,
+        });
+        continue;
+      }
+
+      if (legacyExists) {
+        renamePairs.push({
+          key,
+          from: legacyFiles[key],
+          to: canonicalFiles[key],
+        });
+      }
+    }
+
+    if (renamePairs.length > 0) {
+      legacyRounds.push({ roundPath, renamePairs });
+    }
+  }
+
+  return { legacyRounds, errors };
+}
+
+function buildPendingGuidance({ previousVersion, targetVersion, versionBehind, legacyRoundCount, legacyArtifactCount }) {
+  const migrationNeeded = versionBehind || legacyArtifactCount > 0;
+  const changes = [];
+
+  if (versionBehind) {
+    changes.push(
+      `Version drift detected: local .orbit version ${previousVersion} is behind plugin version ${targetVersion}.`
+    );
+  } else {
+    changes.push(`Version check is current at ${targetVersion}.`);
+  }
+
+  if (legacyArtifactCount > 0) {
+    changes.push(
+      `Historical rounds still use ${legacyArtifactCount} legacy artifact file(s) across ${legacyRoundCount} round(s); they will be renamed in place to ${NUMBERED_ROUND_LAYOUT}.`
+    );
+  } else {
+    changes.push("Historical round artifacts already use the numbered layout.");
+  }
+
+  return {
+    status: migrationNeeded ? "migration_available" : "up_to_date",
+    summary: migrationNeeded
+      ? "Pending Orbit migration detected. Run the latest Orbit CLI with init or migrate to reconcile version/layout drift."
+      : "Orbit is up to date. No pending migrations were detected.",
+    changes,
+    followUp: migrationNeeded
+      ? "Run the latest Orbit CLI with `init` or `migrate` to apply the pending migration steps."
+      : "No follow-up action required.",
+  };
+}
+
+function buildAppliedGuidance({
+  targetVersion,
+  versionBehind,
+  migrationsRun,
+  renamedRoundCount,
+  renamedArtifactCount,
+}) {
+  const changed = versionBehind || renamedArtifactCount > 0;
+  const changes = [];
+
+  if (migrationsRun.length > 0) {
+    changes.push(`Applied versioned migrations: ${migrationsRun.join(", ")}.`);
+  } else if (versionBehind) {
+    changes.push(`No registered versioned migrations were needed; manifest was advanced to ${targetVersion}.`);
+  } else {
+    changes.push(`Version check is current at ${targetVersion}.`);
+  }
+
+  if (renamedArtifactCount > 0) {
+    changes.push(
+      `Renamed ${renamedArtifactCount} legacy round artifact file(s) across ${renamedRoundCount} round(s) to ${NUMBERED_ROUND_LAYOUT}.`
+    );
+  } else {
+    changes.push("No legacy round artifact files needed renaming.");
+  }
+
+  return {
+    status: changed ? "migration_applied" : "up_to_date",
+    summary: changed
+      ? "Orbit migration completed successfully."
+      : "Orbit is up to date. No migrations ran.",
+    changes,
+    followUp: changed
+      ? "Continue using the numbered round layout for new rounds. If `.orbit` is tracked in version control, review the renamed files before committing."
+      : "No follow-up action required.",
+  };
+}
+
+function makeMigrationFailure(aggregatedErrors) {
+  const summary = aggregatedErrors
+    .map((entry) => `${entry.migration}: ${entry.path} (${entry.code}) — ${entry.message}`)
+    .join("; ");
+  const error = new Error(`Migration failed: ${summary}`);
+  error.migrationErrors = aggregatedErrors;
+  return error;
+}
 
 // ---------------------------------------------------------------------------
 // Plugin version discovery
@@ -161,64 +373,32 @@ const MIGRATIONS = [
     from: "0.0.0",
     to: "0.1.0",
     async run(projectRoot) {
-      // 1. Add schemaVersion to existing state.json files that lack it.
-      const paths = orbitPaths(projectRoot);
       /** @type {{ path: string, code: string, message: string }[]} */
       const errors = [];
-      let taskEntries;
-      try {
-        taskEntries = await readdir(paths.tasks, { withFileTypes: true });
-      } catch (err) {
-        if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
-          // No tasks directory yet — nothing to migrate.
-          return { errors };
-        }
-        errors.push({
-          path: paths.tasks,
-          code: err?.code ?? "UNKNOWN",
-          message: err?.message ?? String(err),
-        });
-        return { errors };
-      }
+      const roundDirectoryResult = await listRoundDirectories(projectRoot);
+      errors.push(...roundDirectoryResult.errors);
 
-      for (const taskEntry of taskEntries) {
-        if (!taskEntry.isDirectory()) continue;
-        const taskPath = join(paths.tasks, taskEntry.name);
-        let roundEntries;
+      for (const roundPath of roundDirectoryResult.roundPaths) {
+        let stateFile;
         try {
-          roundEntries = await readdir(taskPath, { withFileTypes: true });
+          stateFile = await resolveRoundStateFile(roundPath);
         } catch (err) {
-          if (err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
-            continue;
-          }
-          errors.push({
-            path: taskPath,
-            code: err?.code ?? "UNKNOWN",
-            message: err?.message ?? String(err),
-          });
+          errors.push(toMigrationError(roundPath, err));
           continue;
         }
-        for (const roundEntry of roundEntries) {
-          if (!roundEntry.isDirectory() || !/^round-\d{4}$/.test(roundEntry.name))
-            continue;
-          const stateFile = join(taskPath, roundEntry.name, "state.json");
-          try {
-            const state = await readJSON(stateFile);
-            if (!state.schemaVersion) {
-              state.schemaVersion = "0.1.0";
-              await writeJSON(stateFile, state);
-            }
-          } catch (err) {
-            if (err && err.code === "ENOENT") {
-              // state.json missing — skip.
-              continue;
-            }
-            errors.push({
-              path: stateFile,
-              code: err?.code ?? "UNKNOWN",
-              message: err?.message ?? String(err),
-            });
+
+        if (!stateFile) {
+          continue;
+        }
+
+        try {
+          const state = await readJSON(stateFile);
+          if (!state.schemaVersion) {
+            state.schemaVersion = "0.1.0";
+            await writeJSON(stateFile, state);
           }
+        } catch (err) {
+          errors.push(toMigrationError(stateFile, err));
         }
       }
 
@@ -232,6 +412,104 @@ const MIGRATIONS = [
 // ---------------------------------------------------------------------------
 // Migration runner
 // ---------------------------------------------------------------------------
+
+/**
+ * Inspect the current `.orbit` tree for pending version or layout drift.
+ *
+ * @param {string} projectRoot
+ * @param {string} [targetVersion]
+ * @returns {Promise<{
+ *   localVersion: string | null,
+ *   pluginVersion: string,
+ *   previousVersion: string,
+ *   currentVersion: string,
+ *   updateAvailable: boolean,
+ *   migrationNeeded: boolean,
+ *   legacyRoundCount: number,
+ *   legacyArtifactCount: number,
+ *   guidance: { status: string, summary: string, changes: string[], followUp: string }
+ * }>} 
+ */
+export async function inspectOrbitMigrations(projectRoot, targetVersion) {
+  if (!targetVersion) {
+    targetVersion = await readPluginVersion();
+  }
+
+  const manifest = await readManifest(projectRoot);
+  const localVersion = manifest?.orbitVersion ?? null;
+  const previousVersion = localVersion ?? "0.0.0";
+  const updateAvailable = compareSemver(previousVersion, targetVersion) < 0;
+
+  const legacyResult = await scanLegacyRoundArtifacts(projectRoot);
+  if (legacyResult.errors.length > 0) {
+    throw makeMigrationFailure(
+      legacyResult.errors.map((entry) => ({ migration: "layout drift inspection", ...entry }))
+    );
+  }
+
+  const legacyRoundCount = legacyResult.legacyRounds.length;
+  const legacyArtifactCount = legacyResult.legacyRounds.reduce(
+    (total, round) => total + round.renamePairs.length,
+    0
+  );
+  const migrationNeeded = updateAvailable || legacyArtifactCount > 0;
+
+  return {
+    localVersion,
+    pluginVersion: targetVersion,
+    previousVersion,
+    currentVersion: targetVersion,
+    updateAvailable,
+    migrationNeeded,
+    legacyRoundCount,
+    legacyArtifactCount,
+    guidance: buildPendingGuidance({
+      previousVersion,
+      targetVersion,
+      versionBehind: updateAvailable,
+      legacyRoundCount,
+      legacyArtifactCount,
+    }),
+  };
+}
+
+async function renameLegacyRoundArtifacts(projectRoot) {
+  const legacyResult = await scanLegacyRoundArtifacts(projectRoot);
+  const errors = [...legacyResult.errors];
+  const renamedRounds = [];
+
+  for (const legacyRound of legacyResult.legacyRounds) {
+    const renamedFiles = [];
+    for (const renamePair of legacyRound.renamePairs) {
+      try {
+        await rename(renamePair.from, renamePair.to);
+        renamedFiles.push({
+          key: renamePair.key,
+          from: basename(renamePair.from),
+          to: basename(renamePair.to),
+        });
+      } catch (err) {
+        errors.push(toMigrationError(renamePair.from, err));
+      }
+    }
+    if (renamedFiles.length > 0) {
+      renamedRounds.push({
+        roundPath: legacyRound.roundPath,
+        files: renamedFiles,
+      });
+    }
+  }
+
+  return {
+    errors,
+    renamedRounds,
+    renamedRoundCount: renamedRounds.length,
+    renamedArtifactCount: renamedRounds.reduce(
+      (total, round) => total + round.files.length,
+      0
+    ),
+  };
+}
 
 /**
  * Run all applicable migrations for a project's `.orbit` directory.
@@ -253,17 +531,8 @@ export async function migrateOrbit(projectRoot, targetVersion) {
     targetVersion = await readPluginVersion();
   }
 
-  const manifest = await readManifest(projectRoot);
-  const currentVersion = manifest?.orbitVersion ?? "0.0.0";
-
-  // Nothing to do if already at or ahead of the target.
-  if (compareSemver(currentVersion, targetVersion) >= 0) {
-    return {
-      previousVersion: currentVersion,
-      currentVersion,
-      migrationsRun: [],
-    };
-  }
+  const inspection = await inspectOrbitMigrations(projectRoot, targetVersion);
+  const currentVersion = inspection.previousVersion;
 
   // Select every migration whose `to` advances past `currentVersion` and
   // does not overshoot `targetVersion`. Sort ascending so they run in order.
@@ -290,27 +559,51 @@ export async function migrateOrbit(projectRoot, targetVersion) {
     migrationsRun.push(`${migration.from} → ${migration.to}`);
   }
 
+  let renameResult = {
+    errors: [],
+    renamedRounds: [],
+    renamedRoundCount: 0,
+    renamedArtifactCount: 0,
+  };
+  if (inspection.legacyArtifactCount > 0) {
+    renameResult = await renameLegacyRoundArtifacts(projectRoot);
+    for (const err of renameResult.errors) {
+      aggregatedErrors.push({
+        migration: "legacy round artifact rename",
+        path: err.path,
+        code: err.code,
+        message: err.message,
+      });
+    }
+  }
+
   // Fail loudly BEFORE stamping the manifest if any migration step reported
   // non-fatal errors while scanning task/round trees. A failed migration must
   // not leave `.orbit/manifest.json` pointing at the target version.
   if (aggregatedErrors.length > 0) {
-    const summary = aggregatedErrors
-      .map((e) => `${e.migration}: ${e.path} (${e.code}) — ${e.message}`)
-      .join("; ");
-    const error = new Error(`Migration failed: ${summary}`);
-    error.migrationErrors = aggregatedErrors;
-    throw error;
+    throw makeMigrationFailure(aggregatedErrors);
   }
 
   // Stamp the manifest with the target version whenever we are behind it,
-  // regardless of whether any migration matched. An empty `migrationsRun`
-  // indicates the schema was already compatible, but the manifest still needs
-  // to advance so update detection converges.
-  await writeManifest(projectRoot, targetVersion);
+  // or when layout drift was reconciled under the same plugin version.
+  if (inspection.updateAvailable || renameResult.renamedArtifactCount > 0) {
+    await writeManifest(projectRoot, targetVersion);
+  }
 
   return {
     previousVersion: currentVersion,
     currentVersion: targetVersion,
     migrationsRun,
+    renamedRoundCount: renameResult.renamedRoundCount,
+    renamedArtifactCount: renameResult.renamedArtifactCount,
+    renamedRounds: renameResult.renamedRounds,
+    migrationNeeded: inspection.migrationNeeded,
+    guidance: buildAppliedGuidance({
+      targetVersion,
+      versionBehind: inspection.updateAvailable,
+      migrationsRun,
+      renamedRoundCount: renameResult.renamedRoundCount,
+      renamedArtifactCount: renameResult.renamedArtifactCount,
+    }),
   };
 }

@@ -24,6 +24,11 @@
  *   memory-archive --title "..." --tags "t1,t2" --abstract "..." \
  *                  (--body "..." | --body-file <path>)
  *                            Create a new memory entry.
+ *   memory-candidate-add <roundPath> --title "..." --tags "t1,t2" --abstract "..." \
+ *                  (--body "..." | --body-file <path>) [--phase <phase>]
+ *                            Append a round-local candidate memory entry.
+ *   memory-reconcile <roundPath> (--operations '<json>' | --operations-file <path>)
+ *                            Reconcile candidate memories into long-term memory.
  *   memory-list              List all memories in the index.
  *   migrate                  Run forward-only migrations on an existing .orbit directory.
  *   version                  Show local .orbit version vs plugin version.
@@ -38,15 +43,13 @@
 
 import { resolve, isAbsolute, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, cp, copyFile, mkdir, realpath } from "node:fs/promises";
+import { readFile, cp, copyFile, mkdir, realpath, stat } from "node:fs/promises";
 import {
   initOrbit,
   createTask,
   createRound,
   readRoundState,
   updateRoundState,
-  roundFiles,
-  orbitRoot,
   orbitPaths,
   isValidTaskDirName,
   listTemplates,
@@ -54,16 +57,16 @@ import {
   readTemplate,
   searchMemories,
   archiveMemory,
+  captureCandidateMemory,
+  reconcileCandidateMemories,
   listMemories,
   migrateOrbit,
-  readManifest,
-  readPluginVersion,
-  compareSemver,
   listBacklog,
   addBacklogItem,
   getBacklogItem,
   removeBacklogItem,
 } from "./lib/index.mjs";
+import { inspectOrbitMigrations } from "./lib/migrate.mjs";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -111,13 +114,226 @@ async function copyScriptsToOrbit(projectRoot) {
   await copyFile(pluginJsonSource, pluginJsonDest);
 }
 
+async function canonicalizeAllowingMissing(target) {
+  let current = target;
+  const suffix = [];
+  while (true) {
+    try {
+      const resolved = await realpath(current);
+      return suffix.length ? resolve(resolved, ...suffix) : resolved;
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+      const parent = dirname(current);
+      if (parent === current) {
+        return target;
+      }
+      suffix.unshift(current.slice(parent.length + 1));
+      current = parent;
+    }
+  }
+}
+
+async function resolveRoundPathArg(roundPath) {
+  const absPath = isAbsolute(roundPath)
+    ? resolve(roundPath)
+    : resolve(projectRoot, roundPath);
+  const tasksRoot = orbitPaths(projectRoot).tasks;
+
+  let canonicalTasksRoot;
+  try {
+    canonicalTasksRoot = await realpath(tasksRoot);
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: "tasks root not found",
+        detail: err.message,
+      })
+    );
+    process.exit(1);
+  }
+
+  let canonicalAbsPath;
+  try {
+    canonicalAbsPath = await canonicalizeAllowingMissing(absPath);
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: "Failed to resolve roundPath",
+        detail: err.message,
+      })
+    );
+    process.exit(1);
+  }
+
+  const tasksRootWithSep = canonicalTasksRoot + pathSep;
+  if (
+    canonicalAbsPath !== canonicalTasksRoot &&
+    !canonicalAbsPath.startsWith(tasksRootWithSep)
+  ) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: `roundPath must be located under ${canonicalTasksRoot}; got ${canonicalAbsPath}`,
+      })
+    );
+    process.exit(1);
+  }
+
+  const relFromTasks = canonicalAbsPath.slice(tasksRootWithSep.length);
+  const segments = relFromTasks.split(pathSep).filter(Boolean);
+  if (segments.length < 2 || !segments[1].startsWith("round-")) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: "roundPath must reside inside a '<task>/round-*' directory",
+      })
+    );
+    process.exit(1);
+  }
+
+  return canonicalAbsPath;
+}
+
+async function resolveExistingRoundRootArg(roundPath) {
+  const absPath = isAbsolute(roundPath)
+    ? resolve(roundPath)
+    : resolve(projectRoot, roundPath);
+  const tasksRoot = orbitPaths(projectRoot).tasks;
+
+  let canonicalTasksRoot;
+  try {
+    canonicalTasksRoot = await realpath(tasksRoot);
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: "tasks root not found",
+        detail: err.message,
+      })
+    );
+    process.exit(1);
+  }
+
+  let canonicalAbsPath;
+  try {
+    canonicalAbsPath = await realpath(absPath);
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: err?.code === "ENOENT" ? "roundPath not found" : "Failed to resolve roundPath",
+        detail: err.message,
+      })
+    );
+    process.exit(1);
+  }
+
+  let roundStats;
+  try {
+    roundStats = await stat(canonicalAbsPath);
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: "Failed to stat roundPath",
+        detail: err.message,
+      })
+    );
+    process.exit(1);
+  }
+
+  if (!roundStats.isDirectory()) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: "roundPath must point to an existing round directory",
+        detail: canonicalAbsPath,
+      })
+    );
+    process.exit(1);
+  }
+
+  const tasksRootWithSep = canonicalTasksRoot + pathSep;
+  if (
+    canonicalAbsPath === canonicalTasksRoot ||
+    !canonicalAbsPath.startsWith(tasksRootWithSep)
+  ) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: `roundPath must be located under ${canonicalTasksRoot}; got ${canonicalAbsPath}`,
+      })
+    );
+    process.exit(1);
+  }
+
+  const relFromTasks = canonicalAbsPath.slice(tasksRootWithSep.length);
+  const segments = relFromTasks.split(pathSep).filter(Boolean);
+  if (
+    segments.length !== 2 ||
+    !isValidTaskDirName(segments[0]) ||
+    !segments[1].startsWith("round-")
+  ) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: "roundPath must point to an existing '<task>/round-*' directory",
+        detail: canonicalAbsPath,
+      })
+    );
+    process.exit(1);
+  }
+
+  return canonicalAbsPath;
+}
+
+async function readProjectTextFile(filePath, missingError) {
+  const resolvedFile = resolve(projectRoot, filePath);
+  const projectRootAbs = resolve(projectRoot);
+  let canonicalFile;
+  let canonicalProjectRoot;
+  try {
+    canonicalFile = await realpath(resolvedFile);
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        error: err?.code === "ENOENT" ? missingError : "Failed to resolve file path",
+        detail: err.message,
+      })
+    );
+    process.exit(1);
+  }
+  try {
+    canonicalProjectRoot = await realpath(projectRootAbs);
+  } catch {
+    canonicalProjectRoot = projectRootAbs;
+  }
+  if (
+    canonicalFile !== canonicalProjectRoot &&
+    !canonicalFile.startsWith(canonicalProjectRoot + pathSep)
+  ) {
+    console.log(JSON.stringify({ ok: false, error: "file outside project root" }));
+    process.exit(1);
+  }
+  return readFile(canonicalFile, "utf-8");
+}
+
 async function main() {
   switch (command) {
     // -----------------------------------------------------------------
     case "init": {
-      await initOrbit(projectRoot);
+      const migration = await initOrbit(projectRoot);
       await copyScriptsToOrbit(projectRoot);
-      console.log(JSON.stringify({ ok: true, orbitRoot: resolve(projectRoot, ".orbit") }));
+      console.log(
+        JSON.stringify({
+          ok: true,
+          orbitRoot: resolve(projectRoot, ".orbit"),
+          migration,
+        })
+      );
       break;
     }
 
@@ -157,90 +373,7 @@ async function main() {
         console.error("Usage: round-state <roundPath> [--patch '{...}']");
         process.exit(1);
       }
-      const absPath = isAbsolute(roundPath)
-        ? resolve(roundPath)
-        : resolve(projectRoot, roundPath);
-      const tasksRoot = orbitPaths(projectRoot).tasks;
-
-      // Canonicalize both the target path and the tasks root so symlinks
-      // cannot escape the tasks tree. The target path may not exist yet
-      // (e.g. a round created earlier in the same turn has already been
-      // removed, or the caller typoed it); in that case canonicalize the
-      // deepest existing ancestor and append the remaining segments.
-      let canonicalTasksRoot;
-      try {
-        canonicalTasksRoot = await realpath(tasksRoot);
-      } catch (err) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            error: "tasks root not found",
-            detail: err.message,
-          })
-        );
-        process.exit(1);
-      }
-
-      async function canonicalizeAllowingMissing(target) {
-        let current = target;
-        const suffix = [];
-        while (true) {
-          try {
-            const resolved = await realpath(current);
-            return suffix.length ? resolve(resolved, ...suffix) : resolved;
-          } catch (err) {
-            if (err?.code !== "ENOENT") throw err;
-            const parent = dirname(current);
-            if (parent === current) {
-              // Reached filesystem root without finding an existing ancestor.
-              return target;
-            }
-            suffix.unshift(current.slice(parent.length + 1));
-            current = parent;
-          }
-        }
-      }
-
-      let canonicalAbsPath;
-      try {
-        canonicalAbsPath = await canonicalizeAllowingMissing(absPath);
-      } catch (err) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            error: "Failed to resolve roundPath",
-            detail: err.message,
-          })
-        );
-        process.exit(1);
-      }
-
-      const tasksRootWithSep = canonicalTasksRoot + pathSep;
-      if (
-        canonicalAbsPath !== canonicalTasksRoot &&
-        !canonicalAbsPath.startsWith(tasksRootWithSep)
-      ) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            error: `roundPath must be located under ${canonicalTasksRoot}; got ${canonicalAbsPath}`,
-          })
-        );
-        process.exit(1);
-      }
-
-      // Require the path to live inside a `<task>/round-*` directory.
-      const relFromTasks = canonicalAbsPath.slice(tasksRootWithSep.length);
-      const segments = relFromTasks.split(pathSep).filter(Boolean);
-      if (segments.length < 2 || !segments[1].startsWith("round-")) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            error: "roundPath must reside inside a '<task>/round-*' directory",
-          })
-        );
-        process.exit(1);
-      }
+      const canonicalAbsPath = await resolveRoundPathArg(roundPath);
 
       const patchIdx = args.indexOf("--patch");
       try {
@@ -439,6 +572,113 @@ async function main() {
     }
 
     // -----------------------------------------------------------------
+    case "memory-candidate-add": {
+      const roundPath = args[1];
+      const getArg = (flag) => {
+        const idx = args.indexOf(flag);
+        return idx !== -1 && args[idx + 1] ? args[idx + 1] : null;
+      };
+      const title = getArg("--title");
+      const tagsRaw = getArg("--tags");
+      const abstract = getArg("--abstract");
+      const bodyInline = getArg("--body");
+      const bodyFile = getArg("--body-file");
+      const phase = getArg("--phase") || "clarify";
+
+      if (!roundPath || !title || !abstract || (!bodyInline && !bodyFile)) {
+        console.error(
+          'Usage: memory-candidate-add <roundPath> --title "..." --tags "t1,t2" --abstract "..." (--body "..." | --body-file <path>) [--phase <phase>]'
+        );
+        process.exit(1);
+      }
+
+      const canonicalRoundPath = await resolveExistingRoundRootArg(roundPath);
+      const body = bodyFile
+        ? await readProjectTextFile(bodyFile, "body-file not found")
+        : bodyInline;
+      const tags = tagsRaw ? tagsRaw.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
+      const result = await captureCandidateMemory(canonicalRoundPath, {
+        title,
+        tags,
+        abstract,
+        body,
+        sourcePhase: phase,
+      });
+      console.log(
+        JSON.stringify({
+          ok: true,
+          status: "candidate_captured",
+          operation: "candidate_add",
+          candidate: result.candidate,
+          pendingCandidates: result.pendingCandidates,
+          candidateFile: result.candidateFile,
+        })
+      );
+      break;
+    }
+
+    // -----------------------------------------------------------------
+    case "memory-reconcile": {
+      const roundPath = args[1];
+      const getArg = (flag) => {
+        const idx = args.indexOf(flag);
+        return idx !== -1 && args[idx + 1] ? args[idx + 1] : null;
+      };
+      const operationsInline = getArg("--operations");
+      const operationsFile = getArg("--operations-file");
+
+      if (!roundPath || (!operationsInline && !operationsFile) || (operationsInline && operationsFile)) {
+        console.error(
+          "Usage: memory-reconcile <roundPath> (--operations '<json>' | --operations-file <path>)"
+        );
+        process.exit(1);
+      }
+
+      const canonicalRoundPath = await resolveExistingRoundRootArg(roundPath);
+      const rawOperations = operationsFile
+        ? await readProjectTextFile(operationsFile, "operations-file not found")
+        : operationsInline;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(rawOperations);
+      } catch (err) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            error: "Invalid reconcile operations JSON",
+            detail: err.message,
+          })
+        );
+        process.exit(1);
+      }
+
+      const operations = Array.isArray(parsed) ? parsed : parsed?.operations;
+      if (!Array.isArray(operations) || operations.length === 0) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            error: "Reconcile operations must be a non-empty array or an object with an operations array",
+          })
+        );
+        process.exit(1);
+      }
+
+      const result = await reconcileCandidateMemories(projectRoot, canonicalRoundPath, operations);
+      console.log(
+        JSON.stringify({
+          ok: true,
+          status: "reconcile_complete",
+          operation: "reconcile",
+          applied: result.applied,
+          pendingCandidates: result.pendingCandidates,
+          index: result.index,
+        })
+      );
+      break;
+    }
+
+    // -----------------------------------------------------------------
     case "memory-list": {
       const index = await listMemories(projectRoot);
       console.log(JSON.stringify({ ok: true, ...index }));
@@ -454,22 +694,8 @@ async function main() {
 
     // -----------------------------------------------------------------
     case "version": {
-      const manifest = await readManifest(projectRoot);
-      const pluginVersion = await readPluginVersion();
-      const localVersion = manifest?.orbitVersion ?? null;
-      // Treat a missing manifest as "0.0.0" for update detection so a
-      // pre-migration .orbit tree is reported as `updateAvailable: true`.
-      // The JSON still exposes `localVersion: null` to signal "no manifest".
-      const updateAvailable =
-        compareSemver(localVersion ?? "0.0.0", pluginVersion) < 0;
-      console.log(
-        JSON.stringify({
-          ok: true,
-          localVersion,
-          pluginVersion,
-          updateAvailable,
-        })
-      );
+      const status = await inspectOrbitMigrations(projectRoot);
+      console.log(JSON.stringify({ ok: true, ...status }));
       break;
     }
 
@@ -592,7 +818,7 @@ async function main() {
     // -----------------------------------------------------------------
     default:
       console.error(
-        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, read-template, memory-search, memory-archive, memory-list, migrate, version, backlog-list, backlog-add, backlog-get, backlog-remove`
+        `Unknown command: ${command}\nAvailable: init, new-task, new-round, round-state, templates, match-template, read-template, memory-search, memory-archive, memory-candidate-add, memory-reconcile, memory-list, migrate, version, backlog-list, backlog-add, backlog-get, backlog-remove`
       );
       process.exit(1);
   }
