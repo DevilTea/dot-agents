@@ -1,0 +1,10 @@
+{
+  "name": "parhelion",
+  "description": "",
+  "version": "0.0.1",
+  "author": {
+    "name": "deviltea"
+  },
+  "agents": "agents/",
+  "skills": "skills/"
+}
