@@ -4,19 +4,19 @@
     "name": "DevilTea"
   },
   "metadata": {
-    "description": "Personal collection of agents, skills, and plugins for Claude Code."
+    "description": "Personal collection of Copilot Chat agents, skills, and plugins."
   },
   "plugins": [
     {
-      "name": "orbit",
-      "source": "./plugins/orbit",
-      "description": "Task-oriented persistent agent framework. Manages .orbit state folder with round-based workflow, long-term memory, and template system.",
-      "version": "0.1.0",
+      "name": "parhelion",
+      "source": "./plugins/parhelion",
+      "description": "Workflow-governed Copilot Chat plugin for project cognition, approval-gated execution, and curated project memory.",
+      "version": "0.0.1",
       "author": {
         "name": "DevilTea"
       },
       "license": "MIT",
-      "keywords": ["agent", "workflow", "persistent", "task-management"],
+      "keywords": ["agent", "workflow", "memory", "approval", "copilot-chat"],
       "category": "productivity"
     }
   ]

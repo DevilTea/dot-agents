@@ -1,0 +1,13 @@
+{
+  "name": "@deviltea/parhelion-scripts",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "release-check": "node scripts/release-check.mjs",
+    "smoke": "node scripts/smoke-test.mjs"
+  }
+}

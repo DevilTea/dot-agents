@@ -14,20 +14,27 @@ ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
 
 ## Plugins
 
-### [Orbit](plugins/orbit/README.md)
+### [Parhelion](plugins/parhelion/README.md)
 
-Task-oriented persistent agent framework. Manages a `.orbit` state folder with round-based workflow (Clarify → Planning → Execute → Review → Next), long-term memory, and a template system.
+Marketplace-first orchestration plugin for Copilot Chat. Builds a `.parhelion`
+state root for project cognition, approval artifacts, verification profiles, and
+curated memory.
 
 **Required VS Code settings:**
 
 ```jsonc
 {
   "chat.plugins.enabled": true,
-  "chat.pluginLocations": {
-    "~/.agents/plugins/orbit": true,
-  },
+  "chat.plugins.marketplaces": ["DevilTea/dot-agents"],
   "chat.subagents.allowInvocationsFromSubagents": true,
 }
+```
+
+**Release checks:**
+
+```bash
+npm --prefix plugins/parhelion run release-check
+npm --prefix plugins/parhelion run smoke
 ```
 
 ## Skills

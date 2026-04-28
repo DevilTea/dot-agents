@@ -1,10 +1,12 @@
 {
   "name": "parhelion",
-  "description": "",
+  "description": "Workflow-governed Copilot Chat plugin for project cognition, approval-gated execution, and curated project memory.",
   "version": "0.0.1",
   "author": {
-    "name": "deviltea"
+    "name": "DevilTea"
   },
-  "agents": "agents/",
+  "agents": {
+    "paths": ["agents/internal"]
+  },
   "skills": "skills/"
 }
