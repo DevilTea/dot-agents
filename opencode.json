@@ -42,6 +42,9 @@
       }
     }
   },
+  "instructions": [
+    "~/.agents/instructions/lmstudio-runtime.md"
+  ],
   "permission": {
   }
 }

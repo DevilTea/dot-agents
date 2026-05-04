@@ -1,17 +1,37 @@
 # dot-agents
 
-My personal `.agents` directory, which contains agents, skills.
+My personal `.agents` directory, which contains agents, skills, and instructions for AI coding tools.
 
-## AGENTS.md
+## Setup
 
-Create a symbolic link from the repository's `AGENTS.md` file to the Claude directory so the same instructions are available at `~/.claude/CLAUDE.md`.
+### AGENTS.md
 
-Run this command to create the link:
+Symlink so the same personal instructions are available to both Claude and opencode:
 
 ```bash
 ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
+```
+
+### opencode
+
+Symlink the opencode config so `~/.agents/opencode.json` is used as the global config:
+
+```bash
 ln -s ~/.agents/opencode.json ~/.config/opencode/opencode.json
 ```
+
+opencode natively discovers skills from `~/.agents/skills/` — no extra setup needed.
+
+For agents, opencode only scans `~/.config/opencode/agents/`. Symlink the agents directory so custom agents in `~/.agents/agents/` are picked up globally:
+
+```bash
+mkdir -p ~/.agents/agents
+ln -s ~/.agents/agents ~/.config/opencode
+```
+
+### Runtime instructions
+
+`instructions/lmstudio-runtime.md` is loaded at startup via `opencode.json` and injects the active runtime flags into context. When using online providers (Codex, Copilot), remove or comment out the `instructions` key in `opencode.json` to avoid injecting the LM Studio constraint flags.
 
 ## Skills
 
