@@ -16,28 +16,28 @@
       },
       "models": {
         "gpt-oss-20b": {
-          "name": "GPT-OSS [20B] [128K] [UD_Q8_K_XL]"
+          "name": "GPT-OSS [128K] [20B] [UD_Q8_K_XL]"
         },
         "granite-4.1-8b": {
-          "name": "Granite 4.1 [8B] [128K] [UD_Q8_K_XL]"
+          "name": "Granite 4.1 [128K] [8B] [UD_Q8_K_XL]"
         },
         "nvidia-nemotron-3-nano-omni-30b-a3b-reasoning": {
-          "name": "NVIDIA NeMo-TRON 3 Nano Omni [30B] [400K] [UD_Q4_K_M]"
+          "name": "NVIDIA NeMo-TRON 3 Nano Omni [400K] [30B] [UD_Q4_K_M]"
         },
         "qwen3.6-35b-a3b@q4_k_xl": {
-          "name": "Qwen3.6 [35B_A3B] [256K] [UD_Q4_K_XL]",
+          "name": "Qwen3.6 [256K] [35B_A3B] [UD_Q4_K_XL]",
         },
         "qwen3.6-35b-a3b@q5_k_m": {
-          "name": "Qwen3.6 [35B_A3B] [160K] [UD_Q5_K_M]"
+          "name": "Qwen3.6 [160K] [35B_A3B] [UD_Q5_K_M]"
         },
         "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf": {
-          "name": "Qwen3.6 [35B_A3B] [192K] [APEX_I_BALANCED]"
+          "name": "Qwen3.6 [192K] [35B_A3B] [APEX_I_BALANCED]"
         },
         "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf": {
-          "name": "Qwen3.6 [35B_A3B] [256K] [APEX_I_QUALITY]"
+          "name": "Qwen3.6 [256K] [35B_A3B] [APEX_I_QUALITY]"
         },
         "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-compact.gguf": {
-          "name": "Qwen3.6 [35B_A3B] [128K] [APEX_I_COMPACT]"
+          "name": "Qwen3.6 [256K] [35B_A3B] [APEX_I_COMPACT]"
         },
       }
     }
