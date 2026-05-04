@@ -1,0 +1,47 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+  ],
+  "provider": {
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio (Local)",
+      "options": {
+        "baseURL": "https://llm.deviltea.me/v1",
+        "apiKey": "{env:LM_STUDIO_API_KEY}",
+        "headers": {
+          "CF-Access-Client-Id": "{env:CF_ACCESS_CLIENT_ID}",
+          "CF-Access-Client-Secret": "{env:CF_ACCESS_CLIENT_SECRET}"
+        }
+      },
+      "models": {
+        "gpt-oss-20b": {
+          "name": "GPT-OSS [20B] [128K] [UD_Q8_K_XL]"
+        },
+        "granite-4.1-8b": {
+          "name": "Granite 4.1 [8B] [128K] [UD_Q8_K_XL]"
+        },
+        "nvidia-nemotron-3-nano-omni-30b-a3b-reasoning": {
+          "name": "NVIDIA NeMo-TRON 3 Nano Omni [30B] [400K] [UD_Q4_K_M]"
+        },
+        "qwen3.6-35b-a3b@q4_k_xl": {
+          "name": "Qwen3.6 [35B_A3B] [256K] [UD_Q4_K_XL]",
+        },
+        "qwen3.6-35b-a3b@q5_k_m": {
+          "name": "Qwen3.6 [35B_A3B] [160K] [UD_Q5_K_M]"
+        },
+        "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf": {
+          "name": "Qwen3.6 [35B_A3B] [192K] [APEX_I_BALANCED]"
+        },
+        "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf": {
+          "name": "Qwen3.6 [35B_A3B] [256K] [APEX_I_QUALITY]"
+        },
+        "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-compact.gguf": {
+          "name": "Qwen3.6 [35B_A3B] [128K] [APEX_I_COMPACT]"
+        },
+      }
+    }
+  },
+  "permission": {
+  }
+}
