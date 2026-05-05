@@ -1,0 +1,6 @@
+node_modules/
+settings.json
+antigravity-accounts.json
+antigravity-signature-cache.json
+antigravity-logs/
+antigravity-accounts.json.*.tmp

@@ -14,19 +14,20 @@ ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
 
 ### opencode
 
-Symlink the opencode config so `~/.agents/opencode.json` is used as the global config:
+The `opencode/` directory is the opencode config directory. Symlink it so opencode picks up all config, agents, and plugins from this repo:
 
 ```bash
-ln -s ~/.agents/opencode.json ~/.config/opencode/opencode.json
+ln -s ~/.agents/opencode ~/.config/opencode
 ```
+
+`opencode/agents` is a symlink to `../agents`, so custom agents are automatically available to opencode.
 
 opencode natively discovers skills from `~/.agents/skills/` — no extra setup needed.
 
-For agents, opencode only scans `~/.config/opencode/agents/`. Symlink the agents directory so custom agents in `~/.agents/agents/` are picked up globally:
+After symlinking, install plugin dependencies:
 
 ```bash
-mkdir -p ~/.agents/agents
-ln -s ~/.agents/agents ~/.config/opencode
+cd ~/.agents/opencode && npm install
 ```
 
 ### Runtime instructions
