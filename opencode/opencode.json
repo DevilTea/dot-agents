@@ -30,13 +30,13 @@
         "qwen3.6-35b-a3b@q5_k_m": {
           "name": "Qwen3.6 [160K] [35B_A3B] [UD_Q5_K_M]"
         },
-        "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf": {
+        "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf": {
           "name": "Qwen3.6 [192K] [35B_A3B] [APEX_I_BALANCED]"
         },
-        "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf": {
+        "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf": {
           "name": "Qwen3.6 [256K] [35B_A3B] [APEX_I_QUALITY]"
         },
-        "mudler/qwen3.6—-35ba3buncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-compact.gguf": {
+        "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-compact.gguf": {
           "name": "Qwen3.6 [256K] [35B_A3B] [APEX_I_COMPACT]"
         },
       }
