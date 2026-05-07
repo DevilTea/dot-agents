@@ -1,0 +1,9 @@
+{
+  "lastChangelogVersion": "0.73.0",
+  "packages": [],
+  "defaultProvider": "lmstudio",
+  "defaultModel": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf",
+  "doubleEscapeAction": "tree",
+  "defaultThinkingLevel": "high",
+  "theme": "dark"
+}
