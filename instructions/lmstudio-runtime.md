@@ -1,10 +1,13 @@
-AGENT_RUNTIME=opencode-remote-lmstudio
-AGENT_MODEL_SWITCHING=disabled
-AGENT_MAX_CONCURRENT_SUBAGENTS=2
+# LM Studio Runtime Constraints
 
-For LM Studio stability:
+## Runtime
 
-- Avoid subagents unless necessary.
-- Keep responses concise.
-- Do not expose reasoning traces.
-- Use valid opencode tool-call XML only when calling tools.
+- **Runtime:** lmstudio (single model loaded at a time)
+- **Model switching:** disabled during task execution — do not load or switch models while working on a task
+- **Max concurrent subagents:** 2 (hard limit) — subagents run sequentially, not in parallel
+
+## Subagent Strategy
+
+- **Rough search:** use grep, glob, or ls directly — no subagent needed.
+- **File reading for answers:** delegate to a readonly subagent when the file is large or requires research-style extraction.
+- **Workflow steps:** only split into separate subagents when individual steps are truly independent and benefit from context isolation.

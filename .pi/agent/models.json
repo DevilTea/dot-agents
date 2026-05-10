@@ -14,64 +14,56 @@
           "name": "Qwen3.6 [192K] [35B_A3B] [APEX_I_BALANCED]",
           "reasoning": true,
           "input": ["text", "image"],
-          "contextWindow": 192000,
-          "maxTokens": 32000
+          "contextWindow": 196608
         },
         {
           "id": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf",
           "name": "Qwen3.6 [256K] [35B_A3B] [APEX_I_QUALITY]",
           "reasoning": true,
           "input": ["text", "image"],
-          "contextWindow": 256000,
-          "maxTokens": 32000
+          "contextWindow": 262144
         },
         {
           "id": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-compact.gguf",
           "name": "Qwen3.6 [256K] [35B_A3B] [APEX_I_COMPACT]",
           "reasoning": true,
           "input": ["text", "image"],
-          "contextWindow": 256000,
-          "maxTokens": 32000
+          "contextWindow": 262144
         },
         {
           "id": "qwen3.6-35b-a3b@q5_k_m",
           "name": "Qwen3.6 [160K] [35B_A3B] [UD_Q5_K_M]",
           "reasoning": true,
           "input": ["text", "image"],
-          "contextWindow": 160000,
-          "maxTokens": 32000
+          "contextWindow": 163840
         },
         {
           "id": "qwen3.6-35b-a3b@q4_k_xl",
           "name": "Qwen3.6 [256K] [35B_A3B] [UD_Q4_K_XL]",
           "reasoning": true,
           "input": ["text", "image"],
-          "contextWindow": 256000,
-          "maxTokens": 32000
+          "contextWindow": 262144
         },
         {
           "id": "nvidia-nemotron-3-nano-omni-30b-a3b-reasoning",
           "name": "NVIDIA NeMo-TRON 3 Nano Omni [400K] [30B] [UD_Q4_K_M]",
           "reasoning": true,
           "input": ["text", "image"],
-          "contextWindow": 400000,
-          "maxTokens": 16384
+          "contextWindow": 409600
         },
         {
           "id": "gpt-oss-20b",
           "name": "GPT-OSS [128K] [20B] [UD_Q8_K_XL]",
           "reasoning": false,
           "input": ["text"],
-          "contextWindow": 128000,
-          "maxTokens": 8192
+          "contextWindow": 131072
         },
         {
           "id": "granite-4.1-8b",
           "name": "Granite 4.1 [128K] [8B] [UD_Q8_K_XL]",
           "reasoning": false,
           "input": ["text"],
-          "contextWindow": 128000,
-          "maxTokens": 8192
+          "contextWindow": 131072
         }
       ]
     }

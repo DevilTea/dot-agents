@@ -67,5 +67,6 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
-pi/agent/bin
-pi/agent/sessions
+.pi/sessions
+.pi/agent/bin
+.pi/agent/sessions
