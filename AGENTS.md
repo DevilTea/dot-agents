@@ -64,6 +64,13 @@
 - At closeout for code changes, suggest a commit message based on the current diff and the repository's existing commit style.
 - Prefer Conventional Commits when the repository history supports it, using types such as `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, and `chore:` with optional scopes.
 
+## Reasoning Loop Recovery
+
+- If you detect that your reasoning is repeating the same considerations without making progress, stop immediately — do not continue the loop.
+- Instead, output a structured break: list the key directions considered so far, then list the specific contradictions or blockers preventing a decision.
+- End with a clear handoff: state what information or decision is needed from the user to proceed, and wait for their input before continuing.
+- Do not attempt to resolve the deadlock unilaterally. Surfacing the conflict is more useful than spinning.
+
 ## Documentation Workflow
 
 - For multilingual documentation or translation work, update the English source documentation first, then synchronize the zh-TW translation.
