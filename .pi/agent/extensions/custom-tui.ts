@@ -1,12 +1,23 @@
 /**
- * Custom Info Footer Extension
+ * Custom TUI Extension - Immersive Mode
  *
- * Layout: <dirname> (<branch>) [padding] <usage> <model_name>
- * Colorful theme-aware styling using built-in theme colors.
+ * Layout:
+ * - Header: hidden (invisible component)
+ * - Footer: custom info bar with cwd, branch, usage, model
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+
+const CLEAR_SEQUENCE = "\x1b[2J\x1b[H\x1b[3J";
+
+/** Empty header component - renders nothing to hide the header */
+function invisibleHeader() {
+	return {
+		render(_width: number): string[] { return []; },
+		invalidate() {},
+	};
+}
 
 export default function (pi: ExtensionAPI) {
 	let extCtx: ExtensionContext | undefined;
@@ -64,7 +75,10 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, c) => {
 		extCtx = c;
-		c.ui.notify("Custom info footer enabled", "info");
+		if (c.hasUI) {
+			process.stdout.write(CLEAR_SEQUENCE);
+			c.ui.setHeader(invisibleHeader);
+		}
 		applyFooter();
 	});
 

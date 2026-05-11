@@ -1,9 +1,13 @@
 {
   "lastChangelogVersion": "0.74.0",
-  "packages": [],
+  "packages": [
+    "npm:@spences10/pi-themes",
+    "npm:pi-simplify",
+    "npm:pi-ask-user"
+  ],
   "defaultProvider": "lmstudio",
   "defaultModel": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf",
   "doubleEscapeAction": "tree",
   "defaultThinkingLevel": "high",
-  "theme": "dark"
+  "theme": "gruvbox-dark"
 }
