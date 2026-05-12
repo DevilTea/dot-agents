@@ -2,9 +2,20 @@
   "lastChangelogVersion": "0.74.0",
   "packages": [
     "npm:@spences10/pi-themes",
-    "npm:pi-simplify",
     "npm:pi-ask-user",
-    "npm:pi-mermaid"
+    "npm:pi-mermaid",
+    "npm:pi-mcp-adapter",
+    "npm:pi-btw",
+    "npm:pi-rtk-optimizer",
+    "npm:@marckrenn/pi-sub-core",
+    "npm:pi-caveman",
+    "git:github.com/fluxgear/pi-thinking-steps",
+    "npm:@geminixiang/pi-simplify",
+    "npm:pi-execution-time",
+    "npm:pi-subagents",
+    "npm:pi-fff",
+    "npm:pi-mono-multi-edit",
+    "npm:pi-context"
   ],
   "defaultProvider": "lmstudio",
   "defaultModel": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf",

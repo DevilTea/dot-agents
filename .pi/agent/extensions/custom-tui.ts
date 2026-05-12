@@ -6,6 +6,8 @@
  * - Footer: custom info bar with cwd, branch, usage, model
  */
 
+import path from "node:path";
+
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -14,7 +16,12 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const CLEAR_SEQUENCE = "\x1b[2J\x1b[H\x1b[3J";
 
-/** Empty header component - renders nothing to hide the header */
+/** Track last branch-change unsubscribe for cleanup on session shutdown */
+let lastBranchChangeUnsubscribe: (() => void) | undefined;
+
+/** Empty header component - renders nothing to hide the header.
+ * Returns [] (0 lines) instead of [""] — TUI layout engine positions footer
+ * from terminal bottom independently of header height, so empty array is safe. */
 function InvisibleHeader() {
   return {
     render(_width: number): string[] {
@@ -26,6 +33,9 @@ function InvisibleHeader() {
 
 function createFooterComponent(extCtx) {
   return function CustomFooter(tui, theme, footerData) {
+    lastBranchChangeUnsubscribe?.();
+    const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
+    lastBranchChangeUnsubscribe = unsubscribe;
     return {
       render(width: number): string[] {
         if (!theme || !extCtx) return [""];
@@ -33,20 +43,20 @@ function createFooterComponent(extCtx) {
         // Context usage
         const ctxUsage = extCtx.getContextUsage?.();
         let usageStr = "";
-        if (
-          ctxUsage &&
-          ctxUsage.tokens !== null &&
-          ctxUsage.contextWindow > 0
-        ) {
-          const pct = (
-            (ctxUsage.tokens / ctxUsage.contextWindow) *
-            100
-          ).toFixed(1);
-          usageStr = `${ctxUsage.tokens.toLocaleString()}/${ctxUsage.contextWindow.toLocaleString()} (${pct}%)`;
+        if (ctxUsage && ctxUsage.contextWindow > 0) {
+          const tokensStr =
+            ctxUsage.tokens !== null
+              ? ctxUsage.tokens.toLocaleString()
+              : "N/A";
+          const pctStr =
+            ctxUsage.tokens !== null
+              ? ` (${((ctxUsage.tokens / ctxUsage.contextWindow) * 100).toFixed(1)}%)`
+              : "";
+          usageStr = `${tokensStr}/${ctxUsage.contextWindow.toLocaleString()}${pctStr}`;
         }
 
-        // Working directory - last path component
-        const cwd = extCtx.cwd.split("/").filter(Boolean).pop() || ".";
+        // Working directory - last path component (cross-platform)
+        const cwd = path.basename(extCtx.cwd) || ".";
 
         const branch = footerData.getGitBranch();
         const modelName = extCtx.model?.name ?? extCtx.model?.id ?? "?";
@@ -83,21 +93,26 @@ function createFooterComponent(extCtx) {
         return [truncateToWidth(leftPart + " ".repeat(pad) + rightPart, width)];
       },
       invalidate() {},
-      dispose: footerData.onBranchChange(() => tui.requestRender()),
     };
   };
 }
 
 export default function (pi: ExtensionAPI) {
-  let applyFooter;
+  let footerApplied = false;
+  let applyFooter: (() => void) | undefined;
 
-  pi.on("session_start", async (_event, c) => {
+  pi.on("session_start", async (event, c) => {
     if (c.hasUI) {
-      process.stdout.write(CLEAR_SEQUENCE);
+      // Only clear screen on fresh session; reload/fork/resume keep existing view
+      if (event.reason === "startup" || event.reason === "new") {
+        process.stdout.write(CLEAR_SEQUENCE);
+      }
       c.ui.setHeader(InvisibleHeader);
       const footerComponent = createFooterComponent(c);
+      footerApplied = false;
       applyFooter = () => {
-        if (!footerComponent) return;
+        if (!footerComponent || footerApplied) return;
+        footerApplied = true;
         c.ui.setFooter(footerComponent);
       };
       applyFooter();
@@ -106,5 +121,12 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("model_select", () => {
     applyFooter?.();
+  });
+
+  pi.on("session_shutdown", async (_event, _c) => {
+    footerApplied = false;
+    applyFooter = undefined;
+    lastBranchChangeUnsubscribe?.();
+    lastBranchChangeUnsubscribe = undefined;
   });
 }
