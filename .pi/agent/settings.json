@@ -10,5 +10,5 @@
   "defaultModel": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf",
   "doubleEscapeAction": "tree",
   "defaultThinkingLevel": "high",
-  "theme": "gruvbox-dark"
+  "theme": "tokyo-night"
 }
