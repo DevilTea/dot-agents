@@ -2,7 +2,6 @@
   "lastChangelogVersion": "0.74.0",
   "packages": [
     "npm:@spences10/pi-themes",
-    "npm:pi-ask-user",
     "npm:pi-mermaid",
     "npm:pi-mcp-adapter",
     "npm:pi-btw",
@@ -15,7 +14,8 @@
     "npm:pi-subagents",
     "npm:pi-fff",
     "npm:pi-mono-multi-edit",
-    "npm:pi-context"
+    "npm:pi-context",
+    "npm:@eko24ive/pi-ask"
   ],
   "defaultProvider": "lmstudio",
   "defaultModel": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf",
