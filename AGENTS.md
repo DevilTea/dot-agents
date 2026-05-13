@@ -29,9 +29,30 @@ Before implementing:
 - State assumptions explicitly when they affect the solution.
 - If multiple plausible interpretations exist, present them instead of silently choosing.
 - If a simpler approach exists, say so. Push back when the requested path is likely overbuilt or brittle.
-- If something is unclear enough to change the outcome, stop and ask. Bundle all unresolved questions together and include your recommended answer for each.
-- Use structured question tools when available. For design, planning, or ambiguous requirements, use the grill-me pattern or skill to force decisions instead of drifting.
-- For high-risk work, present the plan and wait for confirmation. High-risk work includes destructive operations, dependency installation, external network access, permission changes, public API or data-flow changes, and broad architectural edits.
+
+### Ambiguous Prompt Detection
+
+A prompt is ambiguous when any of these apply:
+
+- **Missing scope**: "fix this", "improve performance", "refactor X" — no target file/module, no success criteria
+- **Multiple valid approaches**: no constraint on tech stack, architecture style, or tradeoff preference
+- **Unclear priority**: multiple goals stated without ranking (speed vs. readability vs. maintainability)
+- **Implicit context assumed**: refers to "the issue", "that feature", "my app" without pointing to specific code/logs
+
+When ambiguity is detected:
+
+1. Stop before implementing.
+2. Use `ask_user` tool — never ask clarification questions in plain text.
+3. Bundle all unresolved decisions into a single structured question. Include your recommended answer for each option.
+4. Wait for my explicit response before proceeding.
+
+### Tool Priority
+
+- **`ask_user`** → Design choices, scope decisions, tradeoff preferences (single-select / multi-select)
+- **grill-me skill** → Deep-dive on a plan or design you both need to stress-test
+- **Plain text** → Only for single factual confirmations that don't affect implementation direction
+
+For high-risk work, present the plan and wait for confirmation. High-risk work includes destructive operations, dependency installation, external network access, permission changes, public API or data-flow changes, and broad architectural edits.
 
 ## 3. Simplicity First
 

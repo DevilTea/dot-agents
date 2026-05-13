@@ -67,6 +67,8 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+node_modules
+
 # ── Pi runtime state (session-local, not config) ────────────────────────
 
 # Caveman mode session toggle — regenerated per-session if missing
