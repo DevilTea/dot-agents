@@ -2,103 +2,19 @@
 
 Personal `.agents` directory containing agents, skills, and instructions for AI coding tools (pi, Claude, Crush CLI).
 
-## Setup
+## Tool Setup
 
-### Symlinks
+| Tool | Config | Details |
+|------|--------|---------|
+| [Pi Agent](./pi.md) | `~/.pi/agent/` | Prerequisites, packages, extensions, runtime constraints |
+| [Crush CLI](./crush.md) | `~/.agents/crush/` | Provider config, context paths, skills paths |
+
+## Shared Symlinks
 
 ```bash
 # Claude integration — shared AGENTS.md across all tools
 ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
-
-# Crush CLI config
-ln -s ~/.agents/crush ~/.config/crush
 ```
-
-Crush loads context files and skills from `~/.agents/instructions/` and `~/.agents/skills/` automatically.
-
----
-
-## Pi Agent (`~/.pi/agent/`)
-
-### Prerequisites
-
-| Requirement | Detail |
-|-------------|--------|
-| Node.js ≥ 18 | Required for npm packages |
-| pnpm or npm | For package installation |
-| LM Studio (remote API) | Base URL: `https://llm.deviltea.me/v1` |
-| Environment variables | `LM_STUDIO_API_KEY`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` |
-
-### Configuration Files
-
-**`settings.json`** — Runtime settings:
-
-```jsonc
-{
-  "defaultProvider": "lmstudio",
-  "defaultModel": "mudler/qwen3.6-35b-a3b-...", // APEX_I_QUALITY (256K context)
-  "theme": "nord",
-  "defaultThinkingLevel": "high",
-  "doubleEscapeAction": "tree"
-}
-```
-
-**`models.json`** — Model registry via LM Studio remote API. Currently configured with 8 models:
-
-| Model | Context | Reasoning | Multimodal |
-|-------|---------|-----------|------------|
-| Qwen3.6 APEX I_QUALITY | 256K | ✅ | text + image |
-| Qwen3.6 APEX I_BALANCED | 192K | ✅ | text + image |
-| Qwen3.6 APEX I_COMPACT | 256K | ✅ | text + image |
-| Qwen3.6 UD_Q4_K_XL | 256K | ✅ | text + image |
-| Qwen3.6 UD_Q5_K_M | 160K | ✅ | text + image |
-| NVIDIA NeMo-TRON Nano Omni | 400K | ✅ | text + image |
-| GPT-OSS 20B | 128K | ❌ | text only |
-| Granite 4.1 | 128K | ❌ | text only |
-
-**`pi-sub-core-settings.json`** — Provider status tracking (anthropic, copilot, gemini, antigravity, codex, kiro, zai).
-
-### Installed Packages (14)
-
-```
-npm: @spences10/pi-themes          # Theme pack (nord active)
-npm: pi-ask-user                   # Structured question tool for user decisions
-npm: pi-mermaid                    # Mermaid diagram support
-npm: pi-mcp-adapter                # MCP server integration
-npm: pi-btw                        # Between-turn utilities
-npm: pi-rtk-optimizer              # RTK (reducer tracking) output compaction
-npm: @marckrenn/pi-sub-core        # Subagent core — usage/status for all providers
-npm: pi-caveman                    # Ultra-compressed communication mode
-npm: git:fluxgear/pi-thinking-steps# Thinking step visualization extension
-npm: @geminixiang/pi-simplify      # Output simplification
-npm: pi-execution-time             # Execution timing tracking
-npm: pi-subagents                  # Subagent delegation (chain/parallel/fork)
-npm: pi-fff                        # Fuzzy file finder integration
-npm: pi-mono-multi-edit            # Multi-file mono edit support
-npm: pi-context                    # Context management (tags, checkout, log)
-```
-
-### Extensions (`~/.pi/agent/extensions/`)
-
-| Extension | Purpose |
-|-----------|---------|
-| `custom-tui.ts` | Immersive TUI — hides header, shows custom footer with cwd/git-branch/context-usage/model-name. Clears screen on new session. |
-| `pi-rtk-optimizer/config.json` | Output compaction: strip ANSI, truncate 12KB reads, aggregate test/linter/git output, track savings. Mode: rewrite. |
-| `pi-fff.json` | Fuzzy file finder features: autocomplete, built-in tool enhancements, agent tools |
-
-### Runtime Constraints (`~/.agents/instructions/lmstudio-runtime.md`)
-
-- **Single model** loaded at a time — no model switching during task execution
-- **Max 2 concurrent subagents** — hard limit to avoid OOM on remote LM Studio
-- Subagent strategy: grep/rg for rough search, readonly subagent for large file reads, only split into separate subagents when truly independent
-
-### Caveman Mode (`~/.pi/agent/caveman.json`)
-
-```jsonc
-{ "defaultLevel": "ultra", "showStatus": false }
-```
-
-Ultra-compressed communication. Drops articles, filler, pleasantries. ~75% token reduction. Persists until user says "stop caveman" or "normal mode".
 
 ---
 
@@ -134,7 +50,6 @@ Ultra-compressed communication. Drops articles, filler, pleasantries. ~75% token
 | File | Purpose |
 |------|---------|
 | `lmstudio-runtime.md` | Runtime constraints for LM Studio (single model, no switching, max 2 subagents) |
-| `crush.json` | Crush CLI configuration — provider setup, context paths, skills paths, TypeScript LSP |
 
 ---
 

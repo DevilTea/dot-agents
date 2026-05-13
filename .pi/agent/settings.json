@@ -4,7 +4,6 @@
     "npm:@spences10/pi-themes",
     "npm:pi-mermaid",
     "npm:pi-mcp-adapter",
-    "npm:pi-btw",
     "npm:pi-rtk-optimizer",
     "npm:@marckrenn/pi-sub-core",
     "npm:pi-caveman",
@@ -15,12 +14,15 @@
     "npm:pi-fff",
     "npm:pi-mono-multi-edit",
     "npm:pi-context",
-    "npm:@eko24ive/pi-ask"
+    "npm:@eko24ive/pi-ask",
+    "npm:@juicesharp/rpiv-todo"
   ],
   "defaultProvider": "lmstudio",
   "defaultModel": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf",
   "doubleEscapeAction": "tree",
   "defaultThinkingLevel": "high",
   "theme": "nord",
-  "npmCommand": ["pnpm"]
+  "npmCommand": [
+    "pnpm"
+  ]
 }
