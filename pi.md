@@ -10,4 +10,4 @@ ln -sfn ~/.agents/.pi ~/.pi
 
 - Node.js >= v22
 - PNPM
-- RTK: `brew install rtk`
+- System Deps: `brew install rtk ddgr pandoc`
