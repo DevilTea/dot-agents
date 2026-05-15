@@ -19,18 +19,6 @@ const CLEAR_SEQUENCE = "\x1b[2J\x1b[H\x1b[3J";
 /** Track last branch-change unsubscribe for cleanup on session shutdown */
 let lastBranchChangeUnsubscribe: (() => void) | undefined;
 
-/** Empty header component - renders nothing to hide the header.
- * Returns [] (0 lines) instead of [""] — TUI layout engine positions footer
- * from terminal bottom independently of header height, so empty array is safe. */
-function InvisibleHeader() {
-  return {
-    render(_width: number): string[] {
-      return [];
-    },
-    invalidate() {},
-  };
-}
-
 function createFooterComponent(extCtx) {
   return function CustomFooter(tui, theme, footerData) {
     lastBranchChangeUnsubscribe?.();
@@ -107,7 +95,6 @@ export default function (pi: ExtensionAPI) {
       if (event.reason === "startup" || event.reason === "new") {
         process.stdout.write(CLEAR_SEQUENCE);
       }
-      c.ui.setHeader(InvisibleHeader);
       const footerComponent = createFooterComponent(c);
       footerApplied = false;
       applyFooter = () => {
