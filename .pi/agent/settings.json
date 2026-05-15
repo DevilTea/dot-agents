@@ -1,27 +1,9 @@
 {
   "lastChangelogVersion": "0.74.0",
-  "packages": [
-    "npm:@spences10/pi-themes",
-    "npm:pi-mermaid",
-    "npm:pi-mcp-adapter",
-    "npm:pi-rtk-optimizer",
-    "npm:@marckrenn/pi-sub-core",
-    "npm:@geminixiang/pi-simplify",
-    "npm:pi-execution-time",
-    "npm:pi-fff",
-    "npm:pi-mono-multi-edit",
-    "npm:pi-context",
-    "npm:@eko24ive/pi-ask",
-    "npm:@juicesharp/rpiv-todo",
-    "npm:@bitcraft-apps/pi-web-tools",
-    "npm:pi-thinking-steps"
-  ],
+  "packages": [],
   "defaultProvider": "lmstudio",
   "defaultModel": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-quality.gguf",
   "doubleEscapeAction": "tree",
   "defaultThinkingLevel": "high",
-  "theme": "nord",
-  "npmCommand": [
-    "pnpm"
-  ]
+  "theme": "nord"
 }
