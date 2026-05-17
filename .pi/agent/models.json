@@ -29,13 +29,6 @@
           "reasoning": false,
           "input": ["text"],
           "contextWindow": 131072
-        },
-        {
-          "id": "granite-4.1-8b",
-          "name": "Granite 4.1 [128K] [8B] [UD_Q8_K_XL]",
-          "reasoning": false,
-          "input": ["text"],
-          "contextWindow": 131072
         }
       ]
     }
