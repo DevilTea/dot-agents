@@ -1,0 +1,12 @@
+{
+  "name": "pi-model-switcher",
+  "version": "0.0.1",
+  "description": "pi extension: runtime model and thinking selector with explicit default update command",
+  "type": "module",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.74.0"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

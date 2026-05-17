@@ -14,7 +14,7 @@
 
 ## Questioning Tools
 
-- In this environment, the questioning tool name is `ask_user`.
+- In this environment, the questioning tool name is `ask_questions`.
 - Use questioning tools for all questions that require user input when a suitable questioning tool is already exposed in the current turn context or current tool list.
 - A questioning tool counts as available only if it is already exposed in the current turn context or current tool list. Deferred tools, activation tools, discoverable tools, installable extensions, and tools not already exposed do not count.
 - Do not search for, activate, enable, install, request, or otherwise obtain another tool or extension solely to ask a user-facing question.

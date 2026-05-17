@@ -1,0 +1,13 @@
+{
+  "name": "pi-mouse-tracking",
+  "version": "0.0.1",
+  "description": "Shared mouse tracking and region dispatch for pi extensions",
+  "type": "module",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "@earendil-works/pi-tui": ">=0.74.0"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
