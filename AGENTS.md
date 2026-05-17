@@ -49,7 +49,8 @@ Tradeoff: these rules bias toward confirmed intent over speed. Task-oriented req
      - Before any task-oriented action, the agent must present its current understanding of the user's full intent and request explicit confirmation.
      - The initial user request cannot count as its own confirmation. Confirmation must arrive in a later, separate user turn.
      - The agent's own confidence, the request's apparent clarity, low risk, or small scope is never sufficient evidence that the user's intent is understood correctly.
-     - The agent must not plan, search, read files, inspect errors, run tools, edit files, execute terminal commands, invoke subagents, or otherwise act on the task before intent confirmation, except for using an available questioning tool to request confirmation.
+     - Before intent confirmation, the agent may perform bounded read-only context gathering when it is needed to understand the user's intent or avoid a likely misunderstanding. Allowed actions include listing directories, searching, reading files, reading existing diagnostics or logs, and read-only git history inspection.
+     - Before intent confirmation, the agent must not make or propose an implementation plan, edit files, execute state-changing terminal commands, invoke subagents, validate changes, or otherwise act beyond bounded read-only context gathering and using an available questioning tool to request confirmation.
      - Intent confirmation is mandatory user collaboration and must not be treated as an unnecessary question.
 
    - Intent summary requirements
@@ -70,7 +71,7 @@ Tradeoff: these rules bias toward confirmed intent over speed. Task-oriented req
      - Choose the next question by dependency, ambiguity, risk, and blast radius.
      - For each clarification question, provide the agent's recommended answer and brief reasoning.
      - Clearly separate recommendations from assumptions. Do not act on either until the user confirms or edits them.
-     - Before intent confirmation, use only user-provided context and already-loaded context. After intent and plan confirmation, investigate objective repo facts instead of asking the user to restate what the codebase can answer.
+     - Before intent confirmation, use user-provided context, already-loaded context, and bounded read-only context gathering when repo facts are needed to understand the request. After intent confirmation, investigate objective repo facts with read-only actions before proposing a plan instead of asking the user to restate what the codebase can answer.
      - Stop asking when all open questions are answered, explicitly deferred, or irrelevant to current scope.
      - Do not ask another question if the answer cannot change goal, scope, constraints, plan, validation, or user-visible outcome.
      - If two clarification rounds do not narrow the decision tree, stop and summarize the blocker, best current interpretation, and next required user decision.
@@ -78,7 +79,8 @@ Tradeoff: these rules bias toward confirmed intent over speed. Task-oriented req
    - Planning gate
      - After intent confirmation, the agent may propose a brief stage plan with validation targets.
      - Any stage plan, implementation plan, investigation plan, or validation plan must be explicitly confirmed by the user in a later, separate user turn before execution.
-     - The agent must not execute the plan, run tools, read files, edit files, execute terminal commands, invoke subagents, or validate changes until the plan is confirmed.
+     - Before plan confirmation, the agent may perform bounded read-only context gathering needed to make the plan concrete, including listing directories, searching, reading files, reading existing diagnostics or logs, and read-only git history inspection.
+     - Before plan confirmation, the agent must not execute the plan, edit files, execute state-changing terminal commands, invoke subagents, validate changes, or otherwise act beyond bounded read-only context gathering and requesting plan confirmation.
 
    - Reconfirmation on feasibility changes
      - If investigation or implementation reveals that the user-confirmed approach, assumptions, or constraints are infeasible, materially incomplete, or materially different from what was presented, the agent must stop and report that change before continuing.
