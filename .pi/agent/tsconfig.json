@@ -1,0 +1,18 @@
+{
+	"extends": "@deviltea/tsconfig/node",
+	"compilerOptions": {
+		"paths": {
+			"@bitcraft-apps/pi-web-tools": ["./types/pi-web-tools.d.ts"],
+			"pi-rtk-optimizer": ["./types/pi-rtk-optimizer.d.ts"]
+		},
+		"types": ["node"],
+		"noImplicitOverride": false,
+		"noUncheckedIndexedAccess": false,
+		"noUnusedLocals": false,
+		"noUnusedParameters": false,
+		"noEmit": true,
+		"skipLibCheck": true
+	},
+	"include": ["extensions/**/*.ts", "types/**/*.d.ts"],
+	"exclude": ["node_modules"]
+}
