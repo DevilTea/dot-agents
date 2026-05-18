@@ -3,4 +3,4 @@ run-history.jsonl
 agent/sessions/
 agent/bin/
 agent/git/
-
+agent/pi-crash.log
