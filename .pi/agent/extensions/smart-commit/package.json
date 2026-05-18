@@ -1,0 +1,16 @@
+{
+	"name": "smart-commit",
+	"type": "module",
+	"version": "0.0.1",
+	"description": "pi extension: AI-assisted commit planning with interactive confirmation",
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@earendil-works/pi-tui": "catalog:"
+	},
+	"dependencies": {
+		"typebox": "catalog:"
+	},
+	"pi": {
+		"extensions": ["./index.ts"]
+	}
+}
