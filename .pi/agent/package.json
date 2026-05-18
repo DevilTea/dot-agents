@@ -1,32 +1,28 @@
 {
-  "private": true,
-  "name": "dot-agents",
-  "version": "1.0.0",
-  "description": "",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "MIT",
-  "packageManager": "pnpm@10.28.2",
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.74.0",
-    "@earendil-works/pi-tui": "^0.74.0",
-    "typebox": "^1.1.38",
-    "yaml": "^2.9.0"
-  },
-  "dependencies": {
-    "@bitcraft-apps/pi-web-tools": "^1.3.1",
-    "@eko24ive/pi-ask": "^0.9.0",
-    "@marckrenn/pi-sub-core": "^1.5.0",
-    "@spences10/pi-themes": "^0.0.4",
-    "pi-context": "^1.1.4",
-    "pi-fff": "^0.1.10",
-    "pi-mcp-adapter": "^2.6.1",
-    "pi-mermaid": "^0.3.0",
-    "pi-mono-multi-edit": "^1.7.3",
-    "pi-rtk-optimizer": "^0.7.1",
-    "pi-thinking-steps": "^1.0.11"
-  }
+	"name": "my-pi-mono",
+	"version": "0.0.0",
+	"private": true,
+	"packageManager": "pnpm@10.28.2",
+	"scripts": {
+		"new-extension": "node scripts/new-extension.mjs",
+		"typecheck": "tsc --project tsconfig.json --noEmit",
+		"lint": "eslint .",
+		"check": "pnpm typecheck && pnpm lint"
+	},
+	"dependencies": {
+		"@bitcraft-apps/pi-web-tools": "catalog:",
+		"@spences10/pi-themes": "catalog:",
+		"pi-rtk-optimizer": "catalog:"
+	},
+	"devDependencies": {
+		"@deviltea/eslint-config": "catalog:",
+		"@deviltea/tsconfig": "catalog:",
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@earendil-works/pi-tui": "catalog:",
+		"@types/node": "catalog:",
+		"eslint": "catalog:",
+		"typebox": "catalog:",
+		"typescript": "catalog:",
+		"yaml": "catalog:"
+	}
 }
