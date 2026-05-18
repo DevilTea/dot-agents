@@ -1,4 +1,4 @@
-export type QuestionType = "single" | "multi" | "text";
+export type QuestionType = "single" | "multi" | "text" | "free text" | "free_text" | "freeText" | "free";
 
 export interface QuestionOption {
 	value: string;
@@ -14,7 +14,6 @@ export interface Question {
 	options: QuestionOption[];
 	/** Recommended/default answer value */
 	recommendedValue?: string;
-	allowOther?: boolean;
 }
 
 export interface Answer {

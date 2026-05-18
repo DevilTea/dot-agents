@@ -15,6 +15,10 @@ export const QuestionSchema = Type.Object({
 			Type.Literal("single"),
 			Type.Literal("multi"),
 			Type.Literal("text"),
+			Type.Literal("free text"),
+			Type.Literal("free_text"),
+			Type.Literal("freeText"),
+			Type.Literal("free"),
 		], { description: "Question type: single choice, multi choice, or free text (default: single)" }),
 	),
 	prompt: Type.String({ description: "Full question text to display" }),
@@ -23,9 +27,6 @@ export const QuestionSchema = Type.Object({
 	),
 	recommendedValue: Type.Optional(
 		Type.String({ description: "Recommended/default answer value" }),
-	),
-	allowOther: Type.Optional(
-		Type.Boolean({ description: "Allow custom input option (default: true)" }),
 	),
 });
 
@@ -46,12 +47,17 @@ export function errorResult(message: string, questions: Question[] = []): {
 	};
 }
 
+function normalizeQuestionType(type: Question["type"] | undefined): "single" | "multi" | "text" {
+	if (!type) return "single";
+	if (type === "free text" || type === "free_text" || type === "freeText" || type === "free") return "text";
+	return type;
+}
+
 export function normalizeQuestions(raw: Question[]): Question[] {
 	return raw.map((q, i) => ({
 		...q,
 		label: q.label || q.id || `Q${i + 1}`,
-		type: q.type || "single",
-		allowOther: q.allowOther !== false,
+		type: normalizeQuestionType(q.type),
 		options: q.options || [],
 	}));
 }

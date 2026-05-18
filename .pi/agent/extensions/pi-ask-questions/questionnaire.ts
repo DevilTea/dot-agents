@@ -132,7 +132,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					return;
 				}
 				const buffer = inputBuffers.get(q.id);
-				if (buffer?.text.trim() && q.allowOther && q.type !== "text") {
+				if (buffer?.text.trim() && q.type !== "text") {
 					optionIdx = q.options.length;
 					return;
 				}
@@ -178,7 +178,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 
 			function totalOptionCount(q: Question | undefined): number {
 				if (!q || q.type === "text") return 0;
-				return q.allowOther && q.options.length > 0 ? q.options.length + 1 : q.options.length;
+				return q.options.length + 1;
 			}
 
 			function ensureOptionVisible(): void {
@@ -304,7 +304,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				const q = currentQuestion();
 				const opts = q?.options || [];
 				const totalTabs = questions.length + 1;
-				const totalOptions = q && q.allowOther && q.type !== "text" && opts.length > 0
+				const totalOptions = q && q.type !== "text"
 					? opts.length + 1
 					: opts.length;
 
@@ -475,7 +475,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					setOptionIdx(q, (optionIdx - 1 + totalOptions) % totalOptions);
 					ensureOptionVisible();
 					// Auto-enter input mode when navigating to "Type something."
-					if (optionIdx !== prevOptionIdx && optionIdx === opts.length && q && q.allowOther && q.type !== "text") {
+					if (optionIdx !== prevOptionIdx && optionIdx === opts.length && q && q.type !== "text") {
 						inputMode = true;
 						inputQuestionId = q.id;
 						restoreInputBuffer(q.id, answers.get(q.id)?.wasCustom ? answers.get(q.id)?.label || "" : "");
@@ -489,7 +489,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					setOptionIdx(q, (optionIdx + 1) % totalOptions);
 					ensureOptionVisible();
 					// Auto-enter input mode when navigating to "Type something."
-					if (optionIdx !== prevOptionIdx && optionIdx === opts.length && q && q.allowOther && q.type !== "text") {
+					if (optionIdx !== prevOptionIdx && optionIdx === opts.length && q && q.type !== "text") {
 						inputMode = true;
 						inputQuestionId = q.id;
 						restoreInputBuffer(q.id, answers.get(q.id)?.wasCustom ? answers.get(q.id)?.label || "" : "");
@@ -509,7 +509,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					}
 
 					// Single/multi select
-					if (inputMode && optionIdx === opts.length && q.allowOther) {
+					if (inputMode && optionIdx === opts.length) {
 						submitInput();
 						return;
 					}
@@ -584,7 +584,6 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				if (
 					qRender &&
 					qRender.type !== "text" &&
-					qRender.allowOther &&
 					optionIdx === qRender.options.length &&
 					!inputMode
 				) {
@@ -664,7 +663,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					add(theme.fg(hasCurrentAnswer(q) ? "success" : "dim", ` Current answer: ${previewCurrentAnswer(q)}`));
 					lines.push("");
 
-					if (q.type !== "text" && opts.length > 0) {
+					if (q.type !== "text") {
 						const optionRows: string[] = [];
 						const pushOption = (text: string) => optionRows.push(...wrapTextWithAnsi(text, width));
 						for (let i = 0; i < opts.length; i++) {
@@ -679,12 +678,10 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 							pushOption(selected ? prefix + theme.fg("accent", `${i + 1}. ${safeOptLabel}`) + checkMark : `  ${theme.fg("text", `${i + 1}. ${safeOptLabel}`)}` + checkMark);
 							if (safeOptDescription) pushOption(`     ${theme.fg("muted", safeOptDescription)}`);
 						}
-						if (q.allowOther) {
-							const otherIdx = opts.length;
-							const otherSelected = optionIdx === otherIdx;
-							const prefix = otherSelected ? theme.fg("accent", "> ") : "  ";
-							pushOption(otherSelected ? prefix + theme.fg("accent", `${otherIdx + 1}. Type something.`) : `  ${theme.fg("text", `${otherIdx + 1}. Type something.`)}`);
-						}
+						const otherIdx = opts.length;
+						const otherSelected = optionIdx === otherIdx;
+						const prefix = otherSelected ? theme.fg("accent", "> ") : "  ";
+						pushOption(otherSelected ? prefix + theme.fg("accent", `${otherIdx + 1}. Type something.`) : `  ${theme.fg("text", `${otherIdx + 1}. Type something.`)}`);
 						ensureOptionVisible();
 						const optionHeight = Math.min(optionMaxRows(), optionRows.length);
 						optionsLocalY = lines.length + 1;
@@ -705,7 +702,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 						add(theme.fg("dim", " Esc to cancel question"));
 					}
 
-					if (q.allowOther && q.type !== "text" && opts.length > 0 && optionIdx === opts.length && inputMode) {
+					if (q.type !== "text" && optionIdx === opts.length && inputMode) {
 						lines.push("");
 						add(theme.fg("muted", " Your answer:"));
 						for (const line of editor.render(width - 2)) lines.push(` ${line}`);
@@ -713,7 +710,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					}
 
 					if (q.type === "text") add(theme.fg("dim", " Shift+Enter newline • Enter next • Esc cancel"));
-					else if (inputMode && optionIdx === opts.length && q.allowOther) add(theme.fg("dim", " Shift+Enter newline • Enter next • Esc go back"));
+					else if (inputMode && optionIdx === opts.length) add(theme.fg("dim", " Shift+Enter newline • Enter next • Esc go back"));
 					else if (q.type === "multi") add(theme.fg("dim", " ↑↓ navigate • wheel over options • Space toggle • Enter next • Esc cancel"));
 					else add(theme.fg("dim", " ↑↓ navigate • wheel over options • Enter select • Esc cancel"));
 				}

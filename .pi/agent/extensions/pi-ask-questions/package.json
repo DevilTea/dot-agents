@@ -1,15 +1,16 @@
 {
-  "name": "pi-ask-questions",
-  "version": "0.0.1",
-  "description": "Interactive Q&A tool with single choice, multi choice, and free text questions",
-  "type": "module",
-  "dependencies": {
-    "typebox": "^1.1.24"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.74.0"
-  },
-  "pi": {
-    "extensions": ["./index.ts"]
-  }
+	"name": "pi-ask-questions",
+	"type": "module",
+	"version": "0.0.1",
+	"description": "Interactive Q&A tool with single choice, multi choice, and free text questions",
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@earendil-works/pi-tui": "catalog:"
+	},
+	"dependencies": {
+		"typebox": "catalog:"
+	},
+	"pi": {
+		"extensions": ["./index.ts"]
+	}
 }
