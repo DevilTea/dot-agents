@@ -1,0 +1,12 @@
+{
+	"name": "pi-web-tools-wrapper",
+	"type": "module",
+	"version": "0.0.1",
+	"description": "pi extension wrapper for @bitcraft-apps/pi-web-tools",
+	"dependencies": {
+		"@bitcraft-apps/pi-web-tools": "catalog:"
+	},
+	"pi": {
+		"extensions": ["./index.ts"]
+	}
+}
