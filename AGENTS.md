@@ -60,6 +60,9 @@ Tradeoff: these rules bias toward confirmed intent over speed. Task-oriented req
 
    - Questioning workflow
      - The confirmation prompt must show the agent's interpreted intent in full and give the user a clear way to confirm, revise, discuss, or choose between interpretations.
+     - If an appropriate questioning tool is available in current turn context, the agent must use that tool for every user-facing confirmation, clarification, revision request, option choice, feasibility re-confirmation, and plan confirmation. Freeform prose must not be used as substitute for these interactions.
+     - The agent must not ask the user to reply with plain-text confirmations such as "確認計畫", "確認需求", "yes/no", or "修正：..." when the questioning tool can capture the same decision.
+     - When using a questioning tool for a closed-choice prompt, the agent must preserve a direct path for the user to revise or supply custom text in same interaction or in an immediately following tool question. Do not trap the user in fixed options without an explicit revision path.
      - If the user revises any part, the agent must restate the updated full intent and ask for confirmation again before proceeding.
      - If multiple plausible interpretations exist, the agent must surface them explicitly and ask the user to choose.
      - The agent must not replace confirmation with a rhetorical summary, a soft assumption, or a statement that it is proceeding.
@@ -177,4 +180,4 @@ Tradeoff: these rules bias toward confirmed intent over speed. Task-oriented req
     - Tool or validation retries are capped at two attempts for the same failure mode unless new evidence changes the approach.
     - Search and reading must stay bounded: after the minimum local context is enough to name a hypothesis and cheap check, stop searching and proceed to the next confirmed step.
     - Do not create meta-plans for plans. After intent confirmation, propose one actionable plan; after plan confirmation, execute it.
-    - Anti-patterns: repeating the same summary, rereading the same file without a new question, running the same failed command without changing input, reopening broad search after a local hypothesis exists, asking the user to confirm an unchanged intent or unchanged plan, or performing another self-audit because the previous self-audit was uncertain.
+    - Anti-patterns: repeating the same summary, rereading the same file without a new question, running the same failed command without changing input, reopening broad search after a local hypothesis exists, asking the user to confirm an unchanged intent or unchanged plan, performing another self-audit because the previous self-audit was uncertain, or switching from an available questioning tool to freeform prose for equivalent user-facing questions.
