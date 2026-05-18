@@ -1,20 +1,13 @@
 {
-  "name": "pi-context-manager",
-  "version": "0.0.1",
-  "description": "pi extension: interactive context manager with usage overview and pruning",
-  "type": "module",
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "file:/Users/deviltea/Library/pnpm/global/5/.pnpm/@earendil-works+pi-coding-agent@0.74.0_@modelcontextprotocol+sdk@1.29.0_zod@4.4.3__ws@8.20.1_zod@4.4.3/node_modules/@earendil-works/pi-coding-agent",
-    "@earendil-works/pi-tui": "file:/Users/deviltea/Library/pnpm/global/5/.pnpm/@earendil-works+pi-tui@0.74.0/node_modules/@earendil-works/pi-tui"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.3"
-  },
-  "pi": {
-    "extensions": ["./index.ts"]
-  },
-  "scripts": {
-    "build": "tsc --project tsconfig.json",
-    "prepublishOnly": "npm run build"
-  }
+	"name": "pi-context-manager",
+	"type": "module",
+	"version": "0.0.1",
+	"description": "pi extension: interactive context manager with usage overview and pruning",
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@earendil-works/pi-tui": "catalog:"
+	},
+	"pi": {
+		"extensions": ["./index.ts"]
+	}
 }
