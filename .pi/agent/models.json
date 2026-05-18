@@ -26,7 +26,7 @@
         {
           "id": "gpt-oss-20b",
           "name": "GPT-OSS [128K] [20B] [UD_Q8_K_XL]",
-          "reasoning": false,
+          "reasoning": true,
           "input": ["text"],
           "contextWindow": 131072
         }

@@ -1,1 +1,1 @@
-export { default } from "../../node_modules/pi-rtk-optimizer"
+export { default } from 'pi-rtk-optimizer'
