@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { Key, matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { getMouseHandler, handleMouseTrackingInput, type MouseBounds } from "../../shared/mouse-tracking.js";
+import { isCancelKey, renderModal, renderMouseRegionBox, type ModalFrame } from "../../shared/modal.js";
+import { expandTabs, fitToWidth, padToWidth, trimToWidth } from "../../shared/ui.js";
 
 const EXTENSION_NAME = "smart-commit";
 const APPLY_PLAN_TOOL = "smart_commit_apply_plan";
@@ -78,20 +81,6 @@ type GitRunOptions = {
 };
 
 const pendingRequests = new Map<string, PendingSmartCommitRequest>();
-
-const TAB_WIDTH = 4;
-
-const expandTabs = (text: string): string => text.replace(/\t/g, " ".repeat(TAB_WIDTH));
-
-const padToWidth = (text: string, width: number): string => {
-        const expanded = expandTabs(text);
-        const visible = visibleWidth(expanded);
-        return expanded + " ".repeat(Math.max(0, width - visible));
-};
-
-const trimToWidth = (text: string, width: number): string => truncateToWidth(expandTabs(text), Math.max(0, width), "...");
-
-const fitToWidth = (text: string, width: number): string => padToWidth(trimToWidth(text, width), width);
 
 const splitNul = (value: string): string[] => value.split("\0").filter((item) => item.length > 0);
 
@@ -315,46 +304,63 @@ const buildPrompt = (request: PendingSmartCommitRequest, recentMessages: string)
 class SmartCommitConfirmView implements Component {
         private selectedCommit = 0;
         private contentScroll = 0;
+        private confirmArmed = false;
+        private lastFrame?: ModalFrame;
+        private sidebarWidth = 38;
+        private contentWidth = 91;
+        private readonly removeMouseListeners: Array<() => void> = [];
 
         constructor(
+                private readonly pi: ExtensionAPI,
+                private readonly ctx: ExtensionContext,
                 private readonly request: PendingSmartCommitRequest,
                 private readonly commits: PlannedCommit[],
                 private readonly tui: TUI,
                 private readonly theme: Theme,
                 private readonly done: (approved: boolean) => void,
-        ) {}
+        ) {
+                const mouseHandler = getMouseHandler(pi);
+                this.removeMouseListeners.push(
+                        mouseHandler.onWheel((direction) => this.moveCommit(direction), { id: "smart-commit.sidebar", bounds: () => this.sidebarBounds() }),
+                        mouseHandler.onWheel((direction) => this.scrollContent(direction * this.bodyHeight()), { id: "smart-commit.content", bounds: () => this.contentBounds() }),
+                );
+        }
 
         invalidate(): void {}
 
+        dispose(): void {
+                for (const remove of this.removeMouseListeners.splice(0)) remove();
+        }
+
         handleInput(data: string): void {
-                if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") {
+                if (handleMouseTrackingInput(this.pi, this.ctx, data)) return;
+                if (isCancelKey(data)) {
                         this.done(false);
                         return;
                 }
                 if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-                        this.done(true);
+                        if (this.confirmArmed) this.done(true);
+                        else {
+                                this.confirmArmed = true;
+                                this.tui.requestRender();
+                        }
                         return;
                 }
-                if (matchesKey(data, Key.up) || data === "k") {
-                        this.selectedCommit = Math.max(0, this.selectedCommit - 1);
-                        this.contentScroll = 0;
-                        this.tui.requestRender();
+                this.confirmArmed = false;
+                if (matchesKey(data, Key.up)) {
+                        this.moveCommit(-1);
                         return;
                 }
-                if (matchesKey(data, Key.down) || data === "j") {
-                        this.selectedCommit = Math.min(this.commits.length - 1, this.selectedCommit + 1);
-                        this.contentScroll = 0;
-                        this.tui.requestRender();
+                if (matchesKey(data, Key.down)) {
+                        this.moveCommit(1);
                         return;
                 }
                 if (matchesKey(data, Key.pageUp)) {
-                        this.contentScroll = Math.max(0, this.contentScroll - this.bodyHeight());
-                        this.tui.requestRender();
+                        this.scrollContent(-this.bodyHeight());
                         return;
                 }
                 if (matchesKey(data, Key.pageDown)) {
-                        this.contentScroll += this.bodyHeight();
-                        this.tui.requestRender();
+                        this.scrollContent(this.bodyHeight());
                         return;
                 }
                 if (matchesKey(data, Key.home)) {
@@ -369,38 +375,78 @@ class SmartCommitConfirmView implements Component {
         }
 
         render(width: number): string[] {
-                const terminalWidth = Math.max(50, width);
-                const terminalHeight = Math.max(12, this.tui.terminal.rows);
-                const sidebarWidth = Math.min(44, Math.max(26, Math.floor(terminalWidth * 0.34)));
-                const contentWidth = Math.max(20, terminalWidth - sidebarWidth - 3);
-                const bodyHeight = Math.max(4, terminalHeight - 4);
-                const header = this.renderHeader(terminalWidth);
-                const hint = this.theme.fg("dim", "Up/Down choose commit | PgUp/PgDn scroll diff | Enter apply | Esc cancel");
-                const sidebarLines = this.renderSidebar(sidebarWidth, bodyHeight);
-                const contentLines = this.renderContent(contentWidth);
+                const bodyWidth = 132;
+                const bodyHeight = this.bodyHeight();
+                const sidebarWidth = 38;
+                const contentWidth = bodyWidth - sidebarWidth - 3;
+                this.sidebarWidth = sidebarWidth;
+                this.contentWidth = contentWidth;
+                const trackingEnabled = getMouseHandler(this.pi).isTrackingEnabled();
+                const sidebarLines = renderMouseRegionBox(this.theme, trackingEnabled, "Commits", sidebarWidth, this.renderSidebar(sidebarWidth, bodyHeight - 2), bodyHeight);
+                const contentLines = this.renderContent(contentWidth - 4);
                 const maxScroll = Math.max(0, contentLines.length - bodyHeight);
                 this.contentScroll = Math.max(0, Math.min(this.contentScroll, maxScroll));
                 const visibleContent = contentLines.slice(this.contentScroll, this.contentScroll + bodyHeight);
-
-                const lines = [padToWidth(header, terminalWidth), padToWidth(trimToWidth(hint, terminalWidth), terminalWidth), "".padEnd(terminalWidth)];
+                const body: string[] = [];
+                const contentBox = renderMouseRegionBox(this.theme, trackingEnabled, "Diff", contentWidth, visibleContent, bodyHeight);
                 for (let index = 0; index < bodyHeight; index++) {
                         const left = sidebarLines[index] ?? "";
-                        const right = visibleContent[index] ?? "";
-                        lines.push(`${padToWidth(left, sidebarWidth)} ${this.theme.fg("dim", "|")} ${padToWidth(trimToWidth(right, contentWidth), contentWidth)}`);
+                        const right = contentBox[index] ?? "";
+                        body.push(`${padToWidth(left, sidebarWidth)} ${this.theme.fg("border", "│")} ${padToWidth(trimToWidth(right, contentWidth), contentWidth)}`);
                 }
-
-                while (lines.length < terminalHeight) lines.push("".padEnd(terminalWidth));
-                return lines.slice(0, terminalHeight).map((line) => fitToWidth(line, terminalWidth));
+                if (this.confirmArmed) body.unshift(this.theme.fg("warning", "Press Enter again to create commits. Esc cancels."), "");
+                this.lastFrame = renderModal({
+                        theme: this.theme,
+                        terminalRows: this.tui.terminal.rows,
+                        width,
+                        size: "wide",
+                        title: "Smart Commit Plan",
+                        meta: `${this.request.mode} changes • ${this.commits.length} commit${this.commits.length === 1 ? "" : "s"}`,
+                        body,
+                        hints: [
+                                { key: "↑↓", label: "move" },
+                                { key: "PgUp/PgDn", label: "scroll" },
+                                { key: "Enter", label: this.confirmArmed ? "confirm apply" : "apply" },
+                                { key: "Esc", label: "cancel" },
+                        ],
+                        mouseHint: getMouseHandler(this.pi).isTrackingEnabled() ? "Wheel scroll" : "Ctrl+Shift+M mouse",
+                });
+                return this.lastFrame.lines;
         }
 
         private bodyHeight(): number {
-                return Math.max(4, this.tui.terminal.rows - 4);
+                return Math.max(4, Math.min(30, this.tui.terminal.rows - 10));
         }
 
-        private renderHeader(width: number): string {
-                const title = this.theme.fg("toolTitle", this.theme.bold("Smart Commit Plan"));
-                const meta = this.theme.fg("dim", ` ${this.request.mode} changes | ${this.commits.length} commit${this.commits.length === 1 ? "" : "s"}`);
-                return trimToWidth(`${title}${meta}`, width);
+        private moveCommit(direction: 1 | -1): void {
+                this.selectedCommit = Math.max(0, Math.min(this.commits.length - 1, this.selectedCommit + direction));
+                this.contentScroll = 0;
+                this.tui.requestRender();
+        }
+
+        private scrollContent(delta: number): void {
+                this.contentScroll = Math.max(0, this.contentScroll + delta);
+                this.tui.requestRender();
+        }
+
+        private sidebarBounds(): MouseBounds | undefined {
+                if (!this.lastFrame) return undefined;
+                return {
+                        x: this.lastFrame.bodyX,
+                        y: this.lastFrame.bodyY + (this.confirmArmed ? 2 : 0),
+                        width: this.sidebarWidth,
+                        height: this.bodyHeight(),
+                };
+        }
+
+        private contentBounds(): MouseBounds | undefined {
+                if (!this.lastFrame) return undefined;
+                return {
+                        x: this.lastFrame.bodyX + this.sidebarWidth + 3,
+                        y: this.lastFrame.bodyY + (this.confirmArmed ? 2 : 0),
+                        width: this.contentWidth,
+                        height: this.bodyHeight(),
+                };
         }
 
         private renderSidebar(width: number, height: number): string[] {
@@ -413,7 +459,7 @@ class SmartCommitConfirmView implements Component {
                         const title = firstLine(commit.message);
                         const statText = this.theme.fg("dim", ` +${stats.additions}/-${stats.removals}`);
                         const available = width - visibleWidth(marker) - visibleWidth(statText) - 2;
-                        const line = `${marker} ${selected ? this.theme.bold(trimToWidth(title, available)) : trimToWidth(title, available)}${statText}`;
+                        const line = `${marker} ${selected ? this.theme.fg("accent", trimToWidth(title, available)) : trimToWidth(title, available)}${statText}`;
                         lines.push(line);
                 }
                 while (lines.length < height) lines.push("");
@@ -454,9 +500,9 @@ class SmartCommitConfirmView implements Component {
         }
 }
 
-const showConfirmView = async (ctx: ExtensionContext, request: PendingSmartCommitRequest, commits: PlannedCommit[]): Promise<boolean> => {
+const showConfirmView = async (pi: ExtensionAPI, ctx: ExtensionContext, request: PendingSmartCommitRequest, commits: PlannedCommit[]): Promise<boolean> => {
         if (!ctx.hasUI) return false;
-        return await ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => new SmartCommitConfirmView(request, commits, tui, theme, done), {
+        return await ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => new SmartCommitConfirmView(pi, ctx, request, commits, tui, theme, done), {
                 overlay: true,
                 overlayOptions: {
                         width: "100%",
@@ -675,7 +721,7 @@ const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
                 }
 
                 try {
-                        const approved = await showConfirmView(ctx, request, commits);
+                        const approved = await showConfirmView(pi, ctx, request, commits);
                         if (!approved) {
                                 pendingRequests.delete(params.requestId);
                                 return {
