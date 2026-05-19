@@ -1,0 +1,11 @@
+.utils
+dev_data
+index
+sessions
+types
+.env
+config.ts
+package.json
+tsconfig.json
+.continueignore
+.continuerc.json

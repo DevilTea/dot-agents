@@ -1,0 +1,60 @@
+name: Local Config
+version: 1.0.0
+schema: v1
+models:
+  # Auto Complete
+  - name: Granite4.1 8B [Q6]
+    provider: lmstudio
+    model: granite-4.1-8b@q6_k_xl
+    roles:
+      - autocomplete
+    apiBase: https://llm.deviltea.me/v1/
+    apiKey: ${{ secrets.LM_STUDIO_API_KEY }}
+    requestOptions:
+      headers:
+        Cf-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+        Cf-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+  - name: Granite4.1 8B [Q5]
+    provider: lmstudio
+    model: granite-4.1-8b@q5_k_xl
+    roles:
+      - autocomplete
+    apiBase: https://llm.deviltea.me/v1/
+    apiKey: ${{ secrets.LM_STUDIO_API_KEY }}
+    requestOptions:
+      headers:
+        Cf-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+        Cf-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+  - name: Codegemma 7B [Q6]
+    provider: lmstudio
+    model: codegemma-7b@q6_k
+    roles:
+      - autocomplete
+    apiBase: https://llm.deviltea.me/v1/
+    apiKey: ${{ secrets.LM_STUDIO_API_KEY }}
+    requestOptions:
+      headers:
+        Cf-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+        Cf-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+  - name: Codegemma 7B [Q5]
+    provider: lmstudio
+    model: codegemma-7b@q5_k_xl
+    roles:
+      - autocomplete
+    apiBase: https://llm.deviltea.me/v1/
+    apiKey: ${{ secrets.LM_STUDIO_API_KEY }}
+    requestOptions:
+      headers:
+        Cf-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+        Cf-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+
+  # Chat
+  - name: Qwen3.6 [128K] [35B_A3B] [APEX_I_BALANCED]
+    provider: lmstudio
+    model: mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf
+    apiBase: https://llm.deviltea.me/v1/
+    apiKey: ${{ secrets.LM_STUDIO_API_KEY }}
+    requestOptions:
+      headers:
+        Cf-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+        Cf-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
