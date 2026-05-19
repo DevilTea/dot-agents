@@ -69,6 +69,7 @@ export type MouseHandler = {
 	onWheel(listener: WheelListener, region?: MouseListenerOptions): () => void;
 	onMouse(listener: MouseListener, region?: MouseListenerOptions): () => void;
 	registerRegion(region: MouseRegion): () => void;
+	hasRegions(): boolean;
 	handleInput(data: string): boolean;
 	parseMouseEvent(data: string): MouseEvent | undefined;
 	parseWheelDirection(data: string): WheelDirection | undefined;
@@ -144,6 +145,16 @@ function mouseButtonFromCode(buttonCode: number): MouseButton {
 	return "unknown";
 }
 
+function hasCurrentMouseHandlerApi(mouseHandler: MouseHandler | undefined): mouseHandler is MouseHandler {
+	const candidate = mouseHandler as Partial<MouseHandler & InternalMouseHandler> | undefined;
+	return typeof candidate?.onWheel === "function"
+		&& typeof candidate.onMouse === "function"
+		&& typeof candidate.registerRegion === "function"
+		&& typeof candidate.hasRegions === "function"
+		&& typeof candidate.handleInput === "function"
+		&& typeof candidate.setTrackingEnabled === "function";
+}
+
 function createMouseHandler(): MouseHandler {
 	const mouseListeners = new Set<RegisteredMouseListener>();
 	const regions = new Set<MouseRegion>();
@@ -185,8 +196,14 @@ function createMouseHandler(): MouseHandler {
 	function addMouseListener(listener: MouseListener, region?: MouseListenerOptions, filter?: MouseRegionMatcher): () => void {
 		const registered: RegisteredMouseListener = { listener, region, filter, order: listenerOrder++ };
 		mouseListeners.add(registered);
+		if (region) regions.add(region);
 		return () => {
 			mouseListeners.delete(registered);
+			if (region) regions.delete(region);
+			if (regions.size === 0 && trackingEnabled) {
+				trackingEnabled = false;
+				process.stdout.write("\x1b[?1000l\x1b[?1006l");
+			}
 		};
 	}
 
@@ -203,12 +220,15 @@ function createMouseHandler(): MouseHandler {
 				regions.delete(region);
 			};
 		},
+		hasRegions(): boolean {
+			return regions.size > 0;
+		},
 		handleInput(data: string): boolean {
-			if (!trackingEnabled) return false;
+			if (!trackingEnabled || regions.size === 0) return false;
 			const event = parseMouseEvent(data);
 			if (!event) return false;
 
-			const matchedRegion = regions.size === 0 || [...regions].some((region) => matchesRegion(event, region));
+			const matchedRegion = [...regions].some((region) => matchesRegion(event, region));
 			if (!matchedRegion) return false;
 
 			let handled = false;
@@ -237,7 +257,7 @@ function setMouseTrackingEnabled(mouseHandler: MouseHandler, enabled: boolean, w
 
 export function getMouseHandler(_pi: ExtensionAPI): MouseHandler {
 	const state = globals();
-	if (!state.mouseHandler) state.mouseHandler = createMouseHandler();
+	if (!hasCurrentMouseHandlerApi(state.mouseHandler)) state.mouseHandler = createMouseHandler();
 	return state.mouseHandler;
 }
 
@@ -254,9 +274,19 @@ function setStatus(ctx: ExtensionContext, enabled: boolean): void {
 export function setSharedMouseTracking(pi: ExtensionAPI, ctx: ExtensionContext, enabled: boolean): void {
 	if (!ctx.hasUI) return;
 	const state = getMouseTrackingState(pi);
+	const mouseHandler = getMouseHandler(pi);
+	if (enabled && !mouseHandler.hasRegions()) {
+		if (state.enabled) {
+			state.enabled = false;
+			setMouseTrackingEnabled(mouseHandler, false, process.stdout);
+			setStatus(ctx, false);
+		}
+		ctx.ui.notify("Mouse tracking unavailable: no mouse regions.", "warning");
+		return;
+	}
 	if (state.enabled === enabled) return;
 	state.enabled = enabled;
-	setMouseTrackingEnabled(getMouseHandler(pi), enabled, process.stdout);
+	setMouseTrackingEnabled(mouseHandler, enabled, process.stdout);
 	setStatus(ctx, enabled);
 	ctx.ui.notify(`Mouse tracking ${enabled ? "enabled" : "disabled"}`, "info");
 }
@@ -270,15 +300,17 @@ export function matchesMouseTrackingToggle(data: string): boolean {
 }
 
 export function handleMouseTrackingInput(pi: ExtensionAPI, ctx: ExtensionContext, data: string): boolean {
+	const mouseHandler = getMouseHandler(pi);
+	if (!mouseHandler.hasRegions() && getMouseTrackingState(pi).enabled) setSharedMouseTracking(pi, ctx, false);
 	if (matchesMouseTrackingToggle(data)) {
 		toggleSharedMouseTracking(pi, ctx);
+		(ctx.ui as { requestRender?: () => void }).requestRender?.();
 		return true;
 	}
-	return getMouseHandler(pi).handleInput(data);
+	return mouseHandler.handleInput(data);
 }
 
 export default function mouseTrackingExtension(pi: ExtensionAPI) {
-	const mouseHandler = getMouseHandler(pi);
 	const state = getMouseTrackingState(pi);
 
 	pi.registerCommand("mouse", {
@@ -295,7 +327,7 @@ export default function mouseTrackingExtension(pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 		state.removeInputListener?.();
 		state.removeInputListener = ctx.ui.onTerminalInput((data) => {
-			return mouseHandler.handleInput(data) ? { consume: true } : undefined;
+			return getMouseHandler(pi).handleInput(data) ? { consume: true } : undefined;
 		});
 		setStatus(ctx, state.enabled);
 	});
@@ -304,7 +336,7 @@ export default function mouseTrackingExtension(pi: ExtensionAPI) {
 		state.removeInputListener?.();
 		state.removeInputListener = undefined;
 		if (state.enabled && ctx.hasUI) {
-			setMouseTrackingEnabled(mouseHandler, false, process.stdout);
+			setMouseTrackingEnabled(getMouseHandler(pi), false, process.stdout);
 			state.enabled = false;
 			setStatus(ctx, false);
 		}

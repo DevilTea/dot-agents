@@ -8,8 +8,10 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { getMouseHandler, handleMouseTrackingInput, type MouseBounds, type MouseHandler } from "../pi-mouse-tracking/index.js";
+import { Key, Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { getMouseHandler, handleMouseTrackingInput, type MouseBounds, type MouseHandler } from "../../shared/mouse-tracking.js";
+import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderMouseRegionBox, type ModalFrame } from "../../shared/modal.js";
+import { padToWidth } from "../../shared/ui.js";
 
 const PRUNE_CUSTOM_TYPE = "pi-context-manager.prune";
 const PRUNE_MARKER_VERSION = 1;
@@ -66,11 +68,6 @@ type ContextMessage = ReturnType<typeof buildSessionContext>["messages"][number]
 type MessageEntryMapping = {
 	messages: ContextMessage[];
 	entryIds: string[];
-};
-
-const padToWidth = (text: string, width: number): string => {
-	const visible = visibleWidth(text);
-	return text + " ".repeat(Math.max(0, width - visible));
 };
 
 const safeStringify = (value: unknown): string => {
@@ -370,6 +367,8 @@ class ContextManagerView implements Component {
 	private cachedMarkdownLines?: string[];
 	private readonly removeMouseListeners: Array<() => void> = [];
 	private cleanedUp = false;
+	private lastFrame?: ModalFrame;
+	private armedAction: "save" | "disable" | undefined;
 
 	constructor(
 		private readonly pi: ExtensionAPI,
@@ -396,19 +395,19 @@ class ContextManagerView implements Component {
 
 	handleInput(data: string): void {
 		if (handleMouseTrackingInput(this.pi, this.ctx, data)) return;
-		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") {
+		if (isCancelKey(data)) {
 			this.cleanup();
 			this.done();
 			return;
 		}
-		if (matchesKey(data, Key.tab)) {
+		if (isTabForward(data)) {
 			this.activeTab = this.activeTab === "usage" ? "prune" : "usage";
 			this.contentScroll = 0;
 			this.invalidate();
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, Key.shift("tab"))) {
+		if (isTabBackward(data)) {
 			this.activeTab = this.activeTab === "usage" ? "prune" : "usage";
 			this.contentScroll = 0;
 			this.invalidate();
@@ -435,26 +434,47 @@ class ContextManagerView implements Component {
 			return;
 		}
 
+		if (!matchesKey(data, Key.enter)) this.armedAction = undefined;
 		if (this.activeTab === "usage") this.handleUsageInput(data);
 		else this.handlePruneInput(data);
 	}
 
 	render(width: number): string[] {
-		const fullWidth = Math.max(40, width);
-		const innerWidth = Math.max(20, fullWidth - VIEWER_MARGIN_LEFT - VIEWER_MARGIN_RIGHT);
-		const fullBlank = " ".repeat(fullWidth);
-		const paddedRow = (content: string) => " ".repeat(VIEWER_MARGIN_LEFT) + padToWidth(truncateToWidth(content, innerWidth, "…", true), innerWidth) + " ".repeat(VIEWER_MARGIN_RIGHT);
-		const lines: string[] = [];
-		for (let i = 0; i < VIEWER_MARGIN_TOP; i++) lines.push(fullBlank);
-		lines.push(paddedRow(this.renderTabs(innerWidth)));
-		lines.push(paddedRow(this.theme.fg("border", "─".repeat(innerWidth))));
-		if (this.activeTab === "usage") lines.push(...this.renderUsage(innerWidth).map(paddedRow));
-		else lines.push(...this.renderPrune(innerWidth).map(paddedRow));
-		lines.push(paddedRow(this.theme.fg("border", "─".repeat(innerWidth))));
-		lines.push(paddedRow(this.helpText()));
-		while (lines.length < this.tui.terminal.rows - VIEWER_MARGIN_BOTTOM) lines.push(fullBlank);
-		for (let i = 0; i < VIEWER_MARGIN_BOTTOM; i++) lines.push(fullBlank);
-		return lines.slice(0, this.tui.terminal.rows);
+		const rows = this.tui.terminal.rows;
+		const bodySize = getModalBodySize("wide", width, rows, true);
+		const body = this.activeTab === "usage" ? this.renderUsage(bodySize.width, bodySize.height) : this.renderPrune(bodySize.width, bodySize.height);
+		const frame = renderModal({
+			theme: this.theme,
+			terminalRows: rows,
+			width,
+			size: "wide",
+			title: "Context Manager",
+			meta: this.activeTab === "usage" ? "usage overview" : "pruning markers",
+			tabs: [
+				{ id: "usage", label: "Usage", complete: true },
+				{ id: "prune", label: "Prune", warning: this.armedAction !== undefined },
+			],
+			activeTabId: this.activeTab,
+			body,
+			hints: this.activeTab === "usage"
+				? [
+					{ key: "↑↓", label: "choose type" },
+					{ key: "PgUp/PgDn", label: "scroll" },
+					{ key: "Tab", label: "next tab" },
+					{ key: "Esc", label: "close" },
+				]
+				: [
+					{ key: "↑↓", label: "choose entry" },
+					{ key: "Space", label: "toggle" },
+					{ key: "A", label: "auto-select" },
+					{ key: "S/U", label: "arm save/disable" },
+					{ key: "Enter", label: "confirm armed" },
+					{ key: "Esc", label: "close" },
+				],
+			mouseHint: this.mouseHandler.isTrackingEnabled() ? "Wheel over list/detail" : "Ctrl+Shift+M mouse",
+		});
+		this.lastFrame = frame;
+		return frame.lines;
 	}
 
 	invalidate(): void {
@@ -472,8 +492,8 @@ class ContextManagerView implements Component {
 
 	private handleUsageInput(data: string): void {
 		const categories = this.snapshot().categories;
-		if (matchesKey(data, Key.up) || data === "k") this.selectedCategory = Math.max(0, this.selectedCategory - 1);
-		else if (matchesKey(data, Key.down) || data === "j") this.selectedCategory = Math.min(categories.length - 1, this.selectedCategory + 1);
+		if (matchesKey(data, Key.up)) this.selectedCategory = Math.max(0, this.selectedCategory - 1);
+		else if (matchesKey(data, Key.down)) this.selectedCategory = Math.min(categories.length - 1, this.selectedCategory + 1);
 		else return;
 		this.contentScroll = 0;
 		this.invalidate();
@@ -482,9 +502,9 @@ class ContextManagerView implements Component {
 
 	private handlePruneInput(data: string): void {
 		const candidates = this.snapshot().pruneCandidates;
-		if (matchesKey(data, Key.up) || data === "k") {
+		if (matchesKey(data, Key.up)) {
 			this.selectedCandidate = Math.max(0, this.selectedCandidate - 1);
-		} else if (matchesKey(data, Key.down) || data === "j") {
+		} else if (matchesKey(data, Key.down)) {
 			this.selectedCandidate = Math.min(candidates.length - 1, this.selectedCandidate + 1);
 		} else if (matchesKey(data, Key.space)) {
 			const candidate = candidates[this.selectedCandidate];
@@ -496,15 +516,39 @@ class ContextManagerView implements Component {
 			this.applyQuickPruneStrategy(candidates);
 			this.ctx.ui.notify("Auto-selected old tool/bash/custom entries. Review, then press s to save.", "info");
 		} else if (data === "s") {
+			if (this.armedAction !== "save") {
+				this.armedAction = "save";
+				this.lastPruneAction = "Press Enter to confirm saving the pruning marker.";
+			} else {
+				const stats = this.pruneStats(candidates, this.localPrunedEntryIds);
+				this.pi.appendEntry(PRUNE_CUSTOM_TYPE, makeMarker(this.localPrunedEntryIds));
+				this.lastPruneAction = `Saved active marker: ${stats.count} entries, ~${stats.estimatedTokens.toLocaleString()} estimated tokens will be replaced.`;
+				this.ctx.ui.notify(this.lastPruneAction, "info");
+				this.armedAction = undefined;
+			}
+		} else if (data === "u") {
+			if (this.armedAction !== "disable") {
+				this.armedAction = "disable";
+				this.lastPruneAction = "Press Enter to confirm disabling pruning.";
+			} else {
+				this.localPrunedEntryIds.clear();
+				this.pi.appendEntry(PRUNE_CUSTOM_TYPE, makeMarker([], true));
+				this.lastPruneAction = "Saved disabled marker: pruning is inactive.";
+				this.ctx.ui.notify("Context pruning disabled", "info");
+				this.armedAction = undefined;
+			}
+		} else if (matchesKey(data, Key.enter) && this.armedAction === "save") {
 			const stats = this.pruneStats(candidates, this.localPrunedEntryIds);
 			this.pi.appendEntry(PRUNE_CUSTOM_TYPE, makeMarker(this.localPrunedEntryIds));
 			this.lastPruneAction = `Saved active marker: ${stats.count} entries, ~${stats.estimatedTokens.toLocaleString()} estimated tokens will be replaced.`;
 			this.ctx.ui.notify(this.lastPruneAction, "info");
-		} else if (data === "u") {
+			this.armedAction = undefined;
+		} else if (matchesKey(data, Key.enter) && this.armedAction === "disable") {
 			this.localPrunedEntryIds.clear();
 			this.pi.appendEntry(PRUNE_CUSTOM_TYPE, makeMarker([], true));
 			this.lastPruneAction = "Saved disabled marker: pruning is inactive.";
 			this.ctx.ui.notify("Context pruning disabled", "info");
+			this.armedAction = undefined;
 		} else {
 			return;
 		}
@@ -539,44 +583,49 @@ class ContextManagerView implements Component {
 		return truncateToWidth(`${this.theme.fg("accent", this.theme.bold("Context Manager"))}  ${tab("usage", "Usage")} ${tab("prune", "Prune")}`, width, "…", true);
 	}
 
-	private renderUsage(width: number): string[] {
+	private renderUsage(width: number, availableHeight: number): string[] {
 		const snapshot = this.snapshot();
 		const categories = snapshot.categories;
 		this.selectedCategory = Math.max(0, Math.min(this.selectedCategory, Math.max(0, categories.length - 1)));
 		const sidebarWidth = Math.min(34, Math.max(22, Math.floor(width * 0.35)));
 		const contentWidth = Math.max(10, width - sidebarWidth - 3);
-		const bodyHeight = this.bodyHeight() - 4;
+		const bodyHeight = Math.max(3, availableHeight - 4);
+		const paneRows = Math.max(1, bodyHeight - 2);
 		const selected = categories[this.selectedCategory];
 		const left = categories.map((category, index) => {
 			const prefix = index === this.selectedCategory ? this.theme.fg("accent", "> ") : "  ";
 			const marker = this.theme.fg(category.color, "■");
 			return truncateToWidth(`${prefix}${marker} ${category.label} ${this.theme.fg("dim", `~${category.estimatedTokens.toLocaleString()}`)}`, sidebarWidth, "…", true);
 		});
-		while (left.length < bodyHeight) left.push("");
+		while (left.length < paneRows) left.push("");
 
 		const rightContent = selected?.content ?? "(no context)";
-		const right = this.markdownLines(rightContent, contentWidth, bodyHeight);
+		const right = this.markdownLines(rightContent, contentWidth - 4, paneRows);
 		const rows = [
 			this.theme.fg("muted", "Context usage (estimated split)"),
 			`${this.theme.fg("border", "[")}${stackedBar(categories, snapshot.usage, Math.max(10, width - 2), this.theme)}${this.theme.fg("border", "]")}`,
 			this.theme.fg("dim", `${formatUsage(snapshot.usage)} · category split estimated by chars/4`),
 			this.theme.fg("border", "─".repeat(width)),
 		];
+		const trackingEnabled = this.mouseHandler.isTrackingEnabled();
+		const leftBox = renderMouseRegionBox(this.theme, trackingEnabled, "Categories", sidebarWidth, left.slice(0, paneRows), bodyHeight);
+		const rightBox = renderMouseRegionBox(this.theme, trackingEnabled, "Content", contentWidth, right, bodyHeight);
 		for (let i = 0; i < bodyHeight; i++) {
-			rows.push(`${padToWidth(left[i] ?? "", sidebarWidth)} ${this.theme.fg("border", "│")} ${right[i] ?? ""}`);
+			rows.push(`${padToWidth(leftBox[i] ?? "", sidebarWidth)} ${this.theme.fg("border", "│")} ${rightBox[i] ?? ""}`);
 		}
 		return rows;
 	}
 
-	private renderPrune(width: number): string[] {
+	private renderPrune(width: number, availableHeight: number): string[] {
 		const candidates = this.snapshot().pruneCandidates;
 		this.selectedCandidate = Math.max(0, Math.min(this.selectedCandidate, Math.max(0, candidates.length - 1)));
 		const sidebarWidth = Math.min(42, Math.max(26, Math.floor(width * 0.42)));
 		const contentWidth = Math.max(10, width - sidebarWidth - 3);
-		const bodyHeight = this.bodyHeight() - 4;
+		const bodyHeight = Math.max(3, availableHeight - 4);
+		const paneRows = Math.max(1, bodyHeight - 2);
 		const selected = candidates[this.selectedCandidate];
-		this.ensurePruneSelectionVisible(bodyHeight);
-		const visibleCandidates = candidates.slice(this.pruneListScroll, this.pruneListScroll + bodyHeight);
+		this.ensurePruneSelectionVisible(paneRows);
+		const visibleCandidates = candidates.slice(this.pruneListScroll, this.pruneListScroll + paneRows);
 		const left = visibleCandidates.map((candidate, offset) => {
 			const index = this.pruneListScroll + offset;
 			const prefix = index === this.selectedCandidate ? this.theme.fg("accent", "> ") : "  ";
@@ -584,10 +633,10 @@ class ContextManagerView implements Component {
 			const auto = candidate.quickPruneEligible ? this.theme.fg("dim", " ⚙") : "";
 			return truncateToWidth(`${prefix}${checked} ${candidate.label}${auto} ${this.theme.fg("dim", `~${candidate.estimatedTokens.toLocaleString()}`)}`, sidebarWidth, "…", true);
 		});
-		while (left.length < bodyHeight) left.push("");
+		while (left.length < paneRows) left.push("");
 
 		const rightContent = selected?.content ?? "(no prunable entries)";
-		const right = this.markdownLines(rightContent, contentWidth, bodyHeight);
+		const right = this.markdownLines(rightContent, contentWidth - 4, paneRows);
 		const activeStats = this.pruneStats(candidates, this.snapshot().prunedEntryIds);
 		const localStats = this.pruneStats(candidates, this.localPrunedEntryIds);
 		const rows = [
@@ -596,8 +645,11 @@ class ContextManagerView implements Component {
 			this.theme.fg("dim", this.lastPruneAction),
 			this.theme.fg("border", "─".repeat(width)),
 		];
+		const trackingEnabled = this.mouseHandler.isTrackingEnabled();
+		const leftBox = renderMouseRegionBox(this.theme, trackingEnabled, "Entries", sidebarWidth, left.slice(0, paneRows), bodyHeight);
+		const rightBox = renderMouseRegionBox(this.theme, trackingEnabled, "Content", contentWidth, right, bodyHeight);
 		for (let i = 0; i < bodyHeight; i++) {
-			rows.push(`${padToWidth(left[i] ?? "", sidebarWidth)} ${this.theme.fg("border", "│")} ${right[i] ?? ""}`);
+			rows.push(`${padToWidth(leftBox[i] ?? "", sidebarWidth)} ${this.theme.fg("border", "│")} ${rightBox[i] ?? ""}`);
 		}
 		return rows;
 	}
@@ -624,35 +676,36 @@ class ContextManagerView implements Component {
 	}
 
 	private bodyHeight(): number {
-		const fixedLines = 5 + VIEWER_MARGIN_TOP + VIEWER_MARGIN_BOTTOM;
-		return Math.max(MIN_BODY_HEIGHT, this.tui.terminal.rows - fixedLines);
+		return Math.max(MIN_BODY_HEIGHT, this.lastFrame?.bodyHeight ?? Math.min(30, this.tui.terminal.rows - 10));
 	}
 
-	private layoutMetrics(): { innerWidth: number; sidebarWidth: number; contentWidth: number; bodyHeight: number } {
-		const fullWidth = Math.max(40, this.tui.terminal.columns);
-		const innerWidth = Math.max(20, fullWidth - VIEWER_MARGIN_LEFT - VIEWER_MARGIN_RIGHT);
+	private layoutMetrics(): { innerWidth: number; sidebarWidth: number; contentWidth: number; bodyHeight: number; headerRows: number } {
+		const innerWidth = this.lastFrame?.bodyWidth ?? 132;
 		const sidebarWidth = this.activeTab === "usage"
 			? Math.min(34, Math.max(22, Math.floor(innerWidth * 0.35)))
 			: Math.min(42, Math.max(26, Math.floor(innerWidth * 0.42)));
 		const contentWidth = Math.max(10, innerWidth - sidebarWidth - 3);
-		return { innerWidth, sidebarWidth, contentWidth, bodyHeight: this.bodyHeight() - 4 };
+		const headerRows = 4;
+		return { innerWidth, sidebarWidth, contentWidth, bodyHeight: Math.max(1, this.bodyHeight() - headerRows), headerRows };
 	}
 
-	private sidebarBounds(): MouseBounds {
-		const { sidebarWidth, bodyHeight } = this.layoutMetrics();
+	private sidebarBounds(): MouseBounds | undefined {
+		if (!this.lastFrame) return undefined;
+		const { sidebarWidth, bodyHeight, headerRows } = this.layoutMetrics();
 		return {
-			x: VIEWER_MARGIN_LEFT + 1,
-			y: VIEWER_MARGIN_TOP + 7,
+			x: this.lastFrame.bodyX,
+			y: this.lastFrame.bodyY + headerRows,
 			width: sidebarWidth,
 			height: bodyHeight,
 		};
 	}
 
-	private scrollContentBounds(): MouseBounds {
-		const { sidebarWidth, contentWidth, bodyHeight } = this.layoutMetrics();
+	private scrollContentBounds(): MouseBounds | undefined {
+		if (!this.lastFrame) return undefined;
+		const { sidebarWidth, contentWidth, bodyHeight, headerRows } = this.layoutMetrics();
 		return {
-			x: VIEWER_MARGIN_LEFT + sidebarWidth + 4,
-			y: VIEWER_MARGIN_TOP + 7,
+			x: this.lastFrame.bodyX + sidebarWidth + 3,
+			y: this.lastFrame.bodyY + headerRows,
 			width: contentWidth,
 			height: bodyHeight,
 		};
@@ -666,7 +719,7 @@ class ContextManagerView implements Component {
 		} else {
 			const candidates = this.snapshot().pruneCandidates;
 			this.selectedCandidate = Math.max(0, Math.min(candidates.length - 1, this.selectedCandidate + direction));
-			this.ensurePruneSelectionVisible(this.bodyHeight() - 4);
+			this.ensurePruneSelectionVisible(this.layoutMetrics().bodyHeight);
 			this.contentScroll = 0;
 		}
 		this.invalidate();

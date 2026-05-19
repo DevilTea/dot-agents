@@ -1,9 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Editor, type EditorTheme, Key, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { getMouseHandler, handleMouseTrackingInput, type MouseBounds } from "../pi-mouse-tracking/index.js";
+import { getMouseHandler, handleMouseTrackingInput, type MouseBounds } from "../../shared/mouse-tracking.js";
+import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderMouseRegionBox } from "../../shared/modal.js";
+import { fitToWidth } from "../../shared/ui.js";
 import { currentAnswer as getCurrentAnswer, hasCurrentAnswer as getHasCurrentAnswer, previewCurrentAnswer as getPreviewCurrentAnswer } from "./answers.js";
 import { sanitizeDisplayText } from "./sanitize.js";
-import { renderReview } from "./review.js";
 import type { Answer, InputBuffer, Question, QuestionnaireResult } from "./types.js";
 
 export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question[]): Promise<QuestionnaireResult> {
@@ -16,9 +17,17 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 			let reviewIdx = 0;
 			let promptScrollOffset = 0;
 			let optionScrollOffset = 0;
+			let answerScrollOffset = 0;
+			let answerMaxScroll = 0;
+			let reviewDetailsScrollOffset = 0;
+			let reviewDetailsMaxScroll = 0;
 			let cachedLines: string[] | undefined;
+			let cachedWidth: number | undefined;
+			let cachedRows: number | undefined;
 			let questionPromptBounds: MouseBounds | undefined;
 			let optionListBounds: MouseBounds | undefined;
+			let reviewListBounds: MouseBounds | undefined;
+			let reviewDetailsBounds: MouseBounds | undefined;
 			const answers = new Map<string, Answer>();
 
 			// ── Editor for multi-line text input ───────────────
@@ -145,21 +154,30 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				tui.requestRender();
 			}
 
-			function maxVisibleRows(): number {
+			function modalBodySize(width?: number): { width: number; height: number } {
 				const rows = typeof tui?.terminal?.rows === "number" ? tui.terminal.rows : 24;
-				return Math.max(8, rows - 6);
+				const columns = typeof width === "number" ? width : typeof tui?.terminal?.columns === "number" ? tui.terminal.columns : 80;
+				return getModalBodySize("comfortable", columns, rows, true, 0.8);
 			}
 
-			function promptMaxRows(): number {
-				return Math.max(3, Math.min(20, maxVisibleRows() - 6));
+			function promptMaxRows(width?: number): number {
+				const body = modalBodySize(width);
+				const available = Math.max(8, body.height - 3);
+				return Math.max(4, Math.floor(available * 0.7));
 			}
 
-			function optionMaxRows(): number {
-				return Math.max(4, Math.min(10, maxVisibleRows() - promptMaxRows() - 5));
+			function answerMaxRows(width?: number): number {
+				const body = modalBodySize(width);
+				const available = Math.max(8, body.height - 3);
+				return Math.max(4, available - promptMaxRows(width));
 			}
 
-			function clampPromptScroll(totalLines: number): void {
-				const maxScroll = Math.max(0, totalLines - promptMaxRows());
+			function optionMaxRows(width?: number): number {
+				return Math.max(3, answerMaxRows(width) - 2);
+			}
+
+			function clampPromptScroll(totalLines: number, width?: number): void {
+				const maxScroll = Math.max(0, totalLines - promptMaxRows(width));
 				promptScrollOffset = Math.max(0, Math.min(promptScrollOffset, maxScroll));
 			}
 
@@ -176,16 +194,33 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				scrollPromptBy(direction * 3);
 			}
 
+			function scrollAnswerBy(delta: number): void {
+				answerScrollOffset = Math.max(0, Math.min(answerMaxScroll, answerScrollOffset + delta));
+				refresh();
+			}
+
+			function scrollReviewDetailsBy(delta: number): void {
+				reviewDetailsScrollOffset = Math.max(0, Math.min(reviewDetailsMaxScroll, reviewDetailsScrollOffset + delta));
+				refresh();
+			}
+
+			function moveReview(direction: 1 | -1): void {
+				reviewIdx = (reviewIdx + direction + questions.length) % questions.length;
+				reviewDetailsScrollOffset = 0;
+				refresh();
+			}
+
 			function totalOptionCount(q: Question | undefined): number {
 				if (!q || q.type === "text") return 0;
 				return q.options.length + 1;
 			}
 
-			function ensureOptionVisible(): void {
-				const height = optionMaxRows();
+			function ensureOptionVisible(width?: number): void {
+				const height = optionMaxRows(width);
 				if (optionIdx < optionScrollOffset) optionScrollOffset = optionIdx;
 				if (optionIdx >= optionScrollOffset + height) optionScrollOffset = optionIdx - height + 1;
 				optionScrollOffset = Math.max(0, optionScrollOffset);
+				answerScrollOffset = Math.max(answerScrollOffset, optionScrollOffset);
 			}
 
 			function moveOption(direction: 1 | -1): void {
@@ -199,7 +234,9 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 
 			const removeMouseListeners = [
 				mouseHandler.onWheel((direction) => scrollPromptLine(direction), { id: "ask-questions.prompt", bounds: () => questionPromptBounds }),
-				mouseHandler.onWheel((direction) => moveOption(direction), { id: "ask-questions.options", bounds: () => optionListBounds }),
+				mouseHandler.onWheel((direction) => scrollAnswerBy(direction * 3), { id: "ask-questions.answer", bounds: () => optionListBounds }),
+				mouseHandler.onWheel((direction) => moveReview(direction), { id: "ask-questions.review-list", bounds: () => reviewListBounds }),
+				mouseHandler.onWheel((direction) => scrollReviewDetailsBy(direction * 3), { id: "ask-questions.review-details", bounds: () => reviewDetailsBounds }),
 			];
 			let cleanedUp = false;
 
@@ -212,6 +249,10 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 			function resetScroll(): void {
 				promptScrollOffset = 0;
 				optionScrollOffset = 0;
+				answerScrollOffset = 0;
+				answerMaxScroll = 0;
+				reviewDetailsScrollOffset = 0;
+				reviewDetailsMaxScroll = 0;
 			}
 
 			function submit(cancelled: boolean) {
@@ -283,11 +324,13 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					return;
 				}
 				if (matchesKey(data, Key.pageUp)) {
-					scrollPromptPage(-1);
+					if (currentQ === questions.length) scrollReviewDetailsBy(-5);
+					else scrollPromptPage(-1);
 					return;
 				}
 				if (matchesKey(data, Key.pageDown)) {
-					scrollPromptPage(1);
+					if (currentQ === questions.length) scrollReviewDetailsBy(5);
+					else scrollPromptPage(1);
 					return;
 				}
 				if (matchesKey(data, Key.home)) {
@@ -317,7 +360,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 
 				// ── Navigation (allowed during input mode) ─────────
 				// Tab navigation
-				if (matchesKey(data, Key.tab)) {
+				if (isTabForward(data)) {
 					saveCurrentInput();
 					inputMode = false;
 					inputQuestionId = null;
@@ -327,7 +370,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					refresh();
 					return;
 				}
-				if (matchesKey(data, Key.shift("tab"))) {
+				if (isTabBackward(data)) {
 					saveCurrentInput();
 					inputMode = false;
 					inputQuestionId = null;
@@ -340,18 +383,12 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 
 				// ── Text input mode ────────────────────────────────
 				if (inputMode) {
-					if (matchesKey(data, Key.escape)) {
-						saveInputBuffer(inputQuestionId!);
-						inputMode = false;
-						inputQuestionId = null;
-						editor.setText("");
-						refresh();
+					if (isCancelKey(data)) {
+						submit(true);
 						return;
 					}
 
-					// ── Enter key: submit and advance ──────────────
-					if (matchesKey(data, Key.enter) && inputQuestionId) {
-						submitInput();
+					if (matchesKey(data, Key.enter)) {
 						return;
 					}
 
@@ -361,34 +398,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					const isAutocompleteOpen = editor.isShowingAutocomplete();
 					const cursor = editor.getCursor();
 					const editorLines = editor.getLines();
-					const isAtEditorStart = cursor.line === 0 && cursor.col === 0;
-					const isAtEditorEnd = cursor.line === editorLines.length - 1 && cursor.col === (editorLines[cursor.line] || "").length;
-					if (!isAutocompleteOpen && matchesKey(data, Key.left)) {
-						if (isAtEditorStart) {
-							saveCurrentInput();
-							inputMode = false;
-							inputQuestionId = null;
-							currentQ = (currentQ - 1 + totalTabs) % totalTabs;
-							restoreQuestionState(currentQ);
-							resetScroll();
-							refresh();
-							return;
-						}
-						editor.handleInput(data);
-						refresh();
-						return;
-					}
-					if (!isAutocompleteOpen && matchesKey(data, Key.right)) {
-						if (isAtEditorEnd) {
-							saveCurrentInput();
-							inputMode = false;
-							inputQuestionId = null;
-							currentQ = (currentQ + 1) % totalTabs;
-							restoreQuestionState(currentQ);
-							resetScroll();
-							refresh();
-							return;
-						}
+					if (!isAutocompleteOpen && (matchesKey(data, Key.left) || matchesKey(data, Key.right))) {
 						editor.handleInput(data);
 						refresh();
 						return;
@@ -432,40 +442,13 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				if (currentQ === questions.length) {
 					if (matchesKey(data, Key.enter)) {
 						submit(false);
-					} else if (matchesKey(data, Key.escape)) {
+					} else if (isCancelKey(data)) {
 						submit(true);
 					} else if (matchesKey(data, Key.up)) {
-						reviewIdx = (reviewIdx - 1 + questions.length) % questions.length;
-						refresh();
+						moveReview(-1);
 					} else if (matchesKey(data, Key.down)) {
-						reviewIdx = (reviewIdx + 1) % questions.length;
-						refresh();
-					} else if (matchesKey(data, Key.left)) {
-						currentQ = (currentQ - 1 + totalTabs) % totalTabs;
-						restoreQuestionState(currentQ);
-						resetScroll();
-						refresh();
-					} else if (matchesKey(data, Key.right)) {
-						currentQ = (currentQ + 1) % totalTabs;
-						restoreQuestionState(currentQ);
-						resetScroll();
-						refresh();
+						moveReview(1);
 					}
-					return;
-				}
-
-				if (matchesKey(data, Key.right)) {
-					currentQ = (currentQ + 1) % totalTabs;
-					restoreQuestionState(currentQ);
-					resetScroll();
-					refresh();
-					return;
-				}
-				if (matchesKey(data, Key.left)) {
-					currentQ = (currentQ - 1 + totalTabs) % totalTabs;
-					restoreQuestionState(currentQ);
-					resetScroll();
-					refresh();
 					return;
 				}
 
@@ -500,69 +483,28 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					return;
 				}
 
-				// Enter key handling
-				if (matchesKey(data, Key.enter) && q) {
-					// Text question
-					if (q.type === "text") {
-						submitInput();
-						return;
-					}
+				if (matchesKey(data, Key.enter)) return;
 
-					// Single/multi select
-					if (inputMode && optionIdx === opts.length) {
-						submitInput();
-						return;
-					}
-
-					// Regular option selection
+				// Spacebar for single/multi select
+				if (matchesKey(data, Key.space) && q && (q.type === "multi" || q.type === "single")) {
 					const opt = opts[optionIdx];
-					if (opt) {
-						if (q.type === "single") {
-							saveAnswer(q.id, opt.value, opt.label, false, optionIdx + 1);
-							advanceToNextQuestion();
-						} else if (q.type === "multi") {
-							advanceToNextQuestion();
-						}
-					}
-					return;
-				}
-
-				// Spacebar for multi-toggle
-				if (matchesKey(data, Key.space) && q && q.type === "multi") {
-					const opt = opts[optionIdx];
-					if (opt) {
+					if (opt && q.type === "single") {
+						saveAnswer(q.id, opt.value, opt.label, false, optionIdx + 1);
+					} else if (opt) {
 						const existing = answers.get(q.id);
-						const isAlreadySelected =
-							existing?.multiValues?.includes(opt.value);
+						const isAlreadySelected = existing?.multiValues?.includes(opt.value);
 						const values = existing?.multiValues || [];
-						const newValues = isAlreadySelected
-							? values.filter((v) => v !== opt.value)
-							: [...values, opt.value];
-						const labels = newValues
-							.map((v) => {
-								const found = opts.find((o) => o.value === v);
-								return found?.label || v;
-							})
-							.join(", ");
-						if (newValues.length > 0) {
-							saveAnswer(
-								q.id,
-								newValues.join(","),
-								labels,
-								false,
-								undefined,
-								newValues,
-							);
-						} else {
-							answers.delete(q.id);
-						}
+						const newValues = isAlreadySelected ? values.filter((v) => v !== opt.value) : [...values, opt.value];
+						const labels = newValues.map((v) => opts.find((o) => o.value === v)?.label || v).join(", ");
+						if (newValues.length > 0) saveAnswer(q.id, newValues.join(","), labels, false, undefined, newValues);
+						else answers.delete(q.id);
 					}
 					refresh();
 					return;
 				}
 
 				// Cancel
-				if (matchesKey(data, Key.escape)) {
+				if (isCancelKey(data)) {
 					submit(true);
 				}
 			}
@@ -570,7 +512,10 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 			// ── Render ─────────────────────────────────────────────
 			function render(width: number): string[] {
 				editor.focused = inputMode;
-				if (cachedLines) return cachedLines;
+				const rows = typeof tui?.terminal?.rows === "number" ? tui.terminal.rows : 24;
+				if (cachedLines && cachedWidth === width && cachedRows === rows) return cachedLines;
+				const bodySize = modalBodySize(width);
+				const bodyWidth = bodySize.width;
 
 				// Auto-enter input mode for text questions (initial render).
 				const qRender = currentQuestion();
@@ -596,7 +541,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 
 				const lines: string[] = [];
 				const add = (s: string) => {
-					for (const line of wrapTextWithAnsi(s, width)) {
+					for (const line of wrapTextWithAnsi(s, bodyWidth)) {
 						lines.push(line);
 					}
 				};
@@ -610,12 +555,13 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				let promptRenderedHeight = 0;
 				let optionsLocalY: number | undefined;
 				let optionsRenderedHeight = 0;
-
-				// Top border
-				add(theme.fg("accent", "─".repeat(width)));
+				let reviewLocalY: number | undefined;
+				let reviewListWidth = 0;
+				let reviewDetailWidth = 0;
+				let reviewRenderedHeight = 0;
 
 				// Tab bar
-				const tabs: string[] = ["← "];
+				const tabs: string[] = [];
 				for (let i = 0; i < questions.length; i++) {
 					const isActive = i === currentQ;
 					const isAnswered = hasCurrentAnswer(questions[i]);
@@ -629,113 +575,163 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					tabs.push(`${styled} `);
 				}
 				const isSubmitTab = currentQ === questions.length;
-				const submitText = " ✓ Submit ";
+				const submitText = " ● Review ";
 				const submitStyled = isSubmitTab
 					? theme.bg("selectedBg", theme.fg("text", submitText))
 					: theme.fg("success", submitText);
-				tabs.push(`${submitStyled} →`);
-				add(` ${tabs.join("")}`);
+				tabs.push(`${submitStyled}`);
 				lines.push("");
 
 				// Confirmation tab
 				if (isConfirmTab) {
 					reviewIdx = Math.max(0, Math.min(reviewIdx, questions.length - 1));
-					renderReview({ width, theme, questions, reviewIdx, answers, inputBuffers, add, lines });
+					const trackingEnabled = mouseHandler.isTrackingEnabled();
+					const listWidth = Math.min(34, Math.max(22, Math.floor(bodyWidth * 0.34)));
+					const detailWidth = Math.max(20, bodyWidth - listWidth - 3);
+					const reviewHeight = Math.max(6, bodySize.height - 2);
+					const listRows = questions.map((question, i) => {
+						const selected = i === reviewIdx;
+						const marker = hasCurrentAnswer(question) ? "■" : "□";
+						const prefix = selected ? theme.fg("accent", "> ") : "  ";
+						return `${prefix}${theme.fg(hasCurrentAnswer(question) ? "success" : "muted", marker)} ${sanitizeDisplayText(question.label || question.id)}`;
+					});
+					const selectedQuestion = questions[reviewIdx];
+					const detailRows: string[] = [];
+					const pushDetail = (text: string) => detailRows.push(...wrapTextWithAnsi(text, Math.max(1, detailWidth - 4)));
+					pushDetail(theme.fg("muted", "Question:"));
+					pushDetail(theme.fg("text", sanitizeDisplayText(selectedQuestion.prompt)));
+					detailRows.push("");
+					pushDetail(theme.fg("muted", "Answer:"));
+					pushDetail(theme.fg(hasCurrentAnswer(selectedQuestion) ? "success" : "dim", sanitizeDisplayText(previewCurrentAnswer(selectedQuestion))));
+					const detailContentHeight = Math.max(1, reviewHeight - 2);
+					reviewDetailsMaxScroll = Math.max(0, detailRows.length - detailContentHeight);
+					reviewDetailsScrollOffset = Math.max(0, Math.min(reviewDetailsScrollOffset, reviewDetailsMaxScroll));
+					const visibleDetails = detailRows.slice(reviewDetailsScrollOffset, reviewDetailsScrollOffset + detailContentHeight);
+					if (reviewDetailsScrollOffset > 0 && visibleDetails.length > 0) visibleDetails[0] = theme.fg("dim", fitToWidth(`↑ ${reviewDetailsScrollOffset} more`, Math.max(1, detailWidth - 4)));
+					const hiddenDetails = detailRows.length - reviewDetailsScrollOffset - visibleDetails.length;
+					if (hiddenDetails > 0 && visibleDetails.length > 1) visibleDetails[visibleDetails.length - 1] = theme.fg("dim", fitToWidth(`↓ ${hiddenDetails} more`, Math.max(1, detailWidth - 4)));
+					reviewLocalY = lines.length + 1;
+					reviewListWidth = listWidth;
+					reviewDetailWidth = detailWidth;
+					reviewRenderedHeight = reviewHeight;
+					const leftBox = renderMouseRegionBox(theme, trackingEnabled, "Questions", listWidth, listRows, reviewHeight);
+					const rightBox = renderMouseRegionBox(theme, trackingEnabled, "Details", detailWidth, visibleDetails, reviewHeight);
+					for (let i = 0; i < reviewHeight; i++) lines.push(`${fitToWidth(leftBox[i] ?? "", listWidth)} ${theme.fg("border", "│")} ${rightBox[i] ?? ""}`);
+					lines.push("");
+					add(theme.fg("dim", "↑↓ choose question • PgUp/PgDn scroll details • Enter submit • Esc cancel"));
 				} else if (q) {
-					const promptLines = wrapTextWithAnsi(theme.fg("text", ` ${safePrompt}`), width);
-					clampPromptScroll(promptLines.length);
-					const promptHeight = Math.min(promptMaxRows(), promptLines.length);
-					promptLocalY = lines.length + 1;
-					promptRenderedHeight = promptHeight;
+					const regionWidth = bodyWidth;
+					const regionInnerWidth = Math.max(1, regionWidth - 4);
+					const trackingEnabled = mouseHandler.isTrackingEnabled();
+					const promptLines = wrapTextWithAnsi(theme.fg("text", safePrompt), regionInnerWidth);
+					clampPromptScroll(promptLines.length, width);
+					const promptContentHeight = Math.max(1, promptMaxRows(width) - 2);
+					const promptHeight = Math.min(promptContentHeight, promptLines.length);
 					const visiblePrompt = promptLines.slice(promptScrollOffset, promptScrollOffset + promptHeight);
-					if (promptScrollOffset > 0 && visiblePrompt.length > 0) visiblePrompt[0] = theme.fg("dim", ` ↑ ${promptScrollOffset} more `.padEnd(width, " ").slice(0, width));
+					if (promptScrollOffset > 0 && visiblePrompt.length > 0) visiblePrompt[0] = theme.fg("dim", `↑ ${promptScrollOffset} more`.padEnd(regionInnerWidth, " ").slice(0, regionInnerWidth));
 					const hiddenPromptLines = promptLines.length - promptScrollOffset - visiblePrompt.length;
-					if (hiddenPromptLines > 0 && visiblePrompt.length > 1) visiblePrompt[visiblePrompt.length - 1] = theme.fg("dim", ` ↓ ${hiddenPromptLines} more `.padEnd(width, " ").slice(0, width));
-					lines.push(...visiblePrompt);
+					if (hiddenPromptLines > 0 && visiblePrompt.length > 1) visiblePrompt[visiblePrompt.length - 1] = theme.fg("dim", `↓ ${hiddenPromptLines} more`.padEnd(regionInnerWidth, " ").slice(0, regionInnerWidth));
+					promptLocalY = lines.length + 1;
+					const promptBox = renderMouseRegionBox(theme, trackingEnabled, "Question", regionWidth, visiblePrompt, promptMaxRows(width));
+					promptRenderedHeight = promptBox.length;
+					lines.push(...promptBox);
 					lines.push("");
 
-					if (safeRecommendedValue) {
-						const hint = `Recommended: ${safeRecommendedValue}`;
-						add(theme.fg("muted", `  ${hint}`));
-						lines.push("");
-					}
-
-					add(theme.fg(hasCurrentAnswer(q) ? "success" : "dim", ` Current answer: ${previewCurrentAnswer(q)}`));
-					lines.push("");
-
+					const answerRows: string[] = [];
+					const pushAnswer = (text: string) => answerRows.push(...wrapTextWithAnsi(text, regionInnerWidth));
+					if (safeRecommendedValue) pushAnswer(theme.fg("muted", `Recommended: ${safeRecommendedValue}`));
+					pushAnswer(theme.fg(hasCurrentAnswer(q) ? "success" : "dim", `Current answer: ${previewCurrentAnswer(q)}`));
+					answerRows.push("");
 					if (q.type !== "text") {
-						const optionRows: string[] = [];
-						const pushOption = (text: string) => optionRows.push(...wrapTextWithAnsi(text, width));
 						for (let i = 0; i < opts.length; i++) {
 							const opt = opts[i];
 							const selected = i === optionIdx;
-							const prefix = selected ? theme.fg("accent", "> ") : "  ";
 							const answer = answers.get(q.id);
-							const isChecked = q.type === "multi" && answer?.multiValues?.includes(opt.value);
-							const checkMark = q.type === "multi" && isChecked ? theme.fg("success", " ✓") : "";
-							const safeOptLabel = sanitizeDisplayText(opt.label);
-							const safeOptDescription = opt.description ? sanitizeDisplayText(opt.description) : undefined;
-							pushOption(selected ? prefix + theme.fg("accent", `${i + 1}. ${safeOptLabel}`) + checkMark : `  ${theme.fg("text", `${i + 1}. ${safeOptLabel}`)}` + checkMark);
-							if (safeOptDescription) pushOption(`     ${theme.fg("muted", safeOptDescription)}`);
+							const isChecked = q.type === "multi" ? answer?.multiValues?.includes(opt.value) : answer?.value === opt.value;
+							const marker = q.type === "multi" ? (isChecked ? "■" : "□") : (isChecked ? "●" : "○");
+							const prefix = selected ? theme.fg("accent", "> ") : "  ";
+							pushAnswer(`${prefix}${theme.fg(isChecked ? "success" : "muted", marker)} ${sanitizeDisplayText(opt.label)}`);
+							if (opt.description) pushAnswer(`    ${theme.fg("muted", sanitizeDisplayText(opt.description))}`);
 						}
-						const otherIdx = opts.length;
-						const otherSelected = optionIdx === otherIdx;
-						const prefix = otherSelected ? theme.fg("accent", "> ") : "  ";
-						pushOption(otherSelected ? prefix + theme.fg("accent", `${otherIdx + 1}. Type something.`) : `  ${theme.fg("text", `${otherIdx + 1}. Type something.`)}`);
-						ensureOptionVisible();
-						const optionHeight = Math.min(optionMaxRows(), optionRows.length);
-						optionsLocalY = lines.length + 1;
-						optionsRenderedHeight = optionHeight;
-						const visibleOptions = optionRows.slice(optionScrollOffset, optionScrollOffset + optionHeight);
-						const hiddenOptions = optionRows.length - optionScrollOffset - visibleOptions.length;
-						if (optionScrollOffset > 0 && visibleOptions.length > 0) visibleOptions[0] = theme.fg("dim", ` ↑ ${optionScrollOffset} more `.padEnd(width, " ").slice(0, width));
-						if (hiddenOptions > 0 && visibleOptions.length > 1) visibleOptions[visibleOptions.length - 1] = theme.fg("dim", ` ↓ ${hiddenOptions} more `.padEnd(width, " ").slice(0, width));
-						lines.push(...visibleOptions);
-						lines.push("");
+						const otherSelected = optionIdx === opts.length;
+						pushAnswer(`${otherSelected ? theme.fg("accent", "> ") : "  "}${theme.fg("muted", "○")} Type something.`);
 					}
-
-					if (q.type === "text" && inputMode) {
-						add(theme.fg("muted", " Your answer:"));
-						for (const line of editor.render(width - 2)) lines.push(` ${line}`);
-						lines.push("");
-					} else if (q.type === "text") {
-						add(theme.fg("dim", " Esc to cancel question"));
+					if ((q.type === "text" && inputMode) || (q.type !== "text" && optionIdx === opts.length && inputMode)) {
+						answerRows.push("");
+						pushAnswer(theme.fg("muted", "Your answer:"));
+						answerRows.push(...editor.render(regionInnerWidth));
 					}
+					ensureOptionVisible(width);
+					const answerContentHeight = Math.max(1, answerMaxRows(width) - 2);
+					answerMaxScroll = Math.max(0, answerRows.length - answerContentHeight);
+					const minimumScroll = q.type === "text" || inputMode ? answerScrollOffset : Math.max(answerScrollOffset, optionScrollOffset);
+					const answerStart = Math.max(0, Math.min(answerMaxScroll, minimumScroll));
+					answerScrollOffset = answerStart;
+					const visibleAnswer = answerRows.slice(answerStart, answerStart + answerContentHeight);
+					if (answerStart > 0 && visibleAnswer.length > 0) visibleAnswer[0] = theme.fg("dim", `↑ ${answerStart} more`.padEnd(regionInnerWidth, " ").slice(0, regionInnerWidth));
+					const hiddenAnswerLines = answerRows.length - answerStart - visibleAnswer.length;
+					if (hiddenAnswerLines > 0 && visibleAnswer.length > 1) visibleAnswer[visibleAnswer.length - 1] = theme.fg("dim", `↓ ${hiddenAnswerLines} more`.padEnd(regionInnerWidth, " ").slice(0, regionInnerWidth));
+					optionsLocalY = lines.length + 1;
+					const answerBox = renderMouseRegionBox(theme, trackingEnabled, "Answer", regionWidth, visibleAnswer, answerMaxRows(width));
+					optionsRenderedHeight = answerBox.length;
+					lines.push(...answerBox);
+					lines.push("");
 
-					if (q.type !== "text" && optionIdx === opts.length && inputMode) {
-						lines.push("");
-						add(theme.fg("muted", " Your answer:"));
-						for (const line of editor.render(width - 2)) lines.push(` ${line}`);
-						lines.push("");
-					}
-
-					if (q.type === "text") add(theme.fg("dim", " Shift+Enter newline • Enter next • Esc cancel"));
-					else if (inputMode && optionIdx === opts.length) add(theme.fg("dim", " Shift+Enter newline • Enter next • Esc go back"));
-					else if (q.type === "multi") add(theme.fg("dim", " ↑↓ navigate • wheel over options • Space toggle • Enter next • Esc cancel"));
-					else add(theme.fg("dim", " ↑↓ navigate • wheel over options • Enter select • Esc cancel"));
+					if (q.type === "text") add(theme.fg("dim", "Shift+Enter newline • Esc cancel"));
+					else if (inputMode && optionIdx === opts.length) add(theme.fg("dim", "Shift+Enter newline • Esc cancel"));
+					else add(theme.fg("dim", "↑↓ navigate • Space select/toggle • Esc cancel"));
 				}
 
-				// Bottom border
-				lines.push("");
-				add(theme.fg("accent", "─".repeat(width)));
-
-				const rows = typeof tui?.terminal?.rows === "number" ? tui.terminal.rows : lines.length;
-				const topRow = Math.max(1, rows - lines.length + 1);
-				questionPromptBounds = promptLocalY === undefined ? undefined : {
-					x: 1,
-					y: topRow + promptLocalY - 1,
+				const frame = renderModal({
+					theme,
+					terminalRows: rows,
 					width,
+					size: "comfortable",
+					title: "Ask Questions",
+					meta: `${questions.length} question${questions.length === 1 ? "" : "s"}`,
+					tabs: [
+						...questions.map((question, index) => ({ id: question.id, label: question.label || question.id, complete: hasCurrentAnswer(question) })),
+						{ id: "review", label: "Review", complete: true },
+					],
+					activeTabId: isConfirmTab ? "review" : q?.id,
+					body: lines,
+					hints: [
+						{ key: "↑↓", label: isConfirmTab ? "review" : "move" },
+						{ key: "Space", label: "select" },
+						{ key: "Tab", label: "next step" },
+						{ key: "Enter", label: isConfirmTab ? "submit" : "disabled" },
+						{ key: "Esc", label: "cancel" },
+					],
+					mouseHint: mouseHandler.isTrackingEnabled() ? "Wheel move/scroll" : "Ctrl+Shift+M mouse",
+				});
+				questionPromptBounds = promptLocalY === undefined ? undefined : {
+					x: frame.bodyX,
+					y: frame.bodyY + promptLocalY - 1,
+					width: frame.bodyWidth,
 					height: promptRenderedHeight,
 				};
 				optionListBounds = optionsLocalY === undefined ? undefined : {
-					x: 1,
-					y: topRow + optionsLocalY - 1,
-					width,
+					x: frame.bodyX,
+					y: frame.bodyY + optionsLocalY - 1,
+					width: frame.bodyWidth,
 					height: optionsRenderedHeight,
 				};
-
-				cachedLines = lines;
-				return lines;
+				reviewListBounds = reviewLocalY === undefined ? undefined : {
+					x: frame.bodyX,
+					y: frame.bodyY + reviewLocalY - 1,
+					width: reviewListWidth,
+					height: reviewRenderedHeight,
+				};
+				reviewDetailsBounds = reviewLocalY === undefined ? undefined : {
+					x: frame.bodyX + reviewListWidth + 3,
+					y: frame.bodyY + reviewLocalY - 1,
+					width: reviewDetailWidth,
+					height: reviewRenderedHeight,
+				};
+				cachedLines = frame.lines;
+				cachedWidth = width;
+				cachedRows = rows;
+				return frame.lines;
 			}
 
 			return {
@@ -746,5 +742,5 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				handleInput,
 				dispose: cleanupMouseHandling,
 			};
-		});
+		}, { overlay: true, overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left", margin: 0 } });
 }

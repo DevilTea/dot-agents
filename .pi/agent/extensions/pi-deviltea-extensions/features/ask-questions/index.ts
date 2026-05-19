@@ -12,7 +12,8 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
+import { renderStatus, renderToolCallTitle } from "../../shared/ui.js";
 import { formatAnswerLines, formatRenderedAnswer } from "./format.js";
 import { runQuestionnaire } from "./questionnaire.js";
 import { AskQuestionsParams, errorResult, normalizeQuestions } from "./schema.js";
@@ -62,8 +63,7 @@ export default function askQuestions(pi: ExtensionAPI) {
 			const qs = (args.questions as Question[]) || [];
 			const count = qs.length;
 			const labels = qs.map((q) => q.label || q.id).join(", ");
-			let text = theme.fg("toolTitle", "ask_questions ");
-			text += theme.fg("muted", `${count} question${count !== 1 ? "s" : ""}`);
+			let text = renderToolCallTitle(theme, "ask_questions", `${count} question${count !== 1 ? "s" : ""}`);
 			if (labels) {
 				text += theme.fg("dim", ` (${labels})`);
 			}
@@ -77,7 +77,7 @@ export default function askQuestions(pi: ExtensionAPI) {
 				return new Text(text?.type === "text" ? text.text : "", 0, 0);
 			}
 			if (details.cancelled) {
-				return new Text(theme.fg("warning", "Cancelled"), 0, 0);
+				return new Text(renderStatus(theme, "warning", "Cancelled"), 0, 0);
 			}
 			const lines = details.answers.map((answer) => formatRenderedAnswer(answer, theme));
 			return new Text(lines.join("\n"), 0, 0);

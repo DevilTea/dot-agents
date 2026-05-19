@@ -1,8 +1,8 @@
 {
-	"name": "smart-commit",
+	"name": "pi-deviltea-extensions",
 	"type": "module",
 	"version": "0.0.1",
-	"description": "pi extension: AI-assisted commit planning with interactive confirmation",
+	"description": "Deviltea local pi extensions bundle",
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "catalog:",
 		"@earendil-works/pi-tui": "catalog:"
