@@ -10,24 +10,24 @@
       },
       "models": [
         {
-          "id": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf",
-          "name": "Qwen3.6 [128K] [35B_A3B] [APEX_I_BALANCED]",
+          "id": "qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved@q6_k",
+          "name": "Qwen3.6 [128K] [35B A3B] [Q6 K]",
           "reasoning": true,
           "input": ["text", "image"],
           "contextWindow": 131072
         },
         {
-          "id": "nvidia-nemotron-3-nano-omni-30b-a3b-reasoning",
-          "name": "NVIDIA NeMo-TRON 3 Nano Omni [200K] [30B] [UD_Q4_K_M]",
+          "id": "qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved@q5_k_m",
+          "name": "Qwen3.6 [128K] [35B A3B] [Q5 K M]",
           "reasoning": true,
           "input": ["text", "image"],
-          "contextWindow": 204800
+          "contextWindow": 131072
         },
         {
-          "id": "gpt-oss-20b",
-          "name": "GPT-OSS [128K] [20B] [UD_Q8_K_XL]",
+          "id": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf",
+          "name": "Qwen3.6 [128K] [35B A3B] [APEX I BALANCED]",
           "reasoning": true,
-          "input": ["text"],
+          "input": ["text", "image"],
           "contextWindow": 131072
         }
       ]
