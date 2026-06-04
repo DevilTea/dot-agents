@@ -11,28 +11,40 @@ export function currentAnswer(
 	if (question.type === "multi") {
 		const optionValues = new Set(question.options.map((opt) => opt.value));
 		const selectedValues = (answer?.multiValues || []).filter((value) => optionValues.has(value));
-		const multiValues = bufferedText ? [...selectedValues, bufferedText] : selectedValues;
-		if (multiValues.length > 0) {
-			const label = multiValues
-				.map((value) => question.options.find((opt) => opt.value === value)?.label || value)
-				.join(", ");
+		const combinedValues = bufferedText ? [...selectedValues, bufferedText] : selectedValues;
+		if (combinedValues.length > 0) {
+			const label = [
+				...selectedValues.map((value) => question.options.find((opt) => opt.value === value)?.label || value),
+				...(bufferedText ? [bufferedText] : []),
+			].join(", ");
 			return {
 				id: question.id,
-				value: multiValues.join(","),
+				value: combinedValues.join(","),
 				label,
-				wasCustom: false,
-				multiValues,
+				wasCustom: Boolean(bufferedText),
+				multiValues: combinedValues,
 			};
 		}
 		return undefined;
 	}
-	if (buffer && bufferedText) {
+	if (question.type === "text") {
+		if (buffer && bufferedText) {
+			return {
+				id: question.id,
+				value: bufferedText,
+				label: bufferedText,
+				wasCustom: true,
+			};
+		}
+		return answer;
+	}
+	if (buffer?.activeCustom && bufferedText) {
 		return {
 			id: question.id,
 			value: bufferedText,
 			label: bufferedText,
 			wasCustom: true,
-			index: question.type === "text" ? undefined : buffer.optionIdx + 1,
+			index: question.options.length + 1,
 		};
 	}
 	return answer;
@@ -53,10 +65,8 @@ export function previewCurrentAnswer(
 ): string {
 	const answer = currentAnswer(question, answers, inputBuffers);
 	if (!answer) return "(not answered)";
-	if (question.type === "multi" && answer.multiValues) {
-		return answer.multiValues
-			.map((v) => question.options.find((o) => o.value === v)?.label || v)
-			.join(", ");
+	if (question.type === "multi") {
+		return answer.label;
 	}
 	return answer.wasCustom ? `(wrote) ${answer.label}` : answer.label;
 }

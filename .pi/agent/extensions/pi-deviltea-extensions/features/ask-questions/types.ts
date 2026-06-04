@@ -35,4 +35,5 @@ export interface InputBuffer {
 	text: string;
 	cursor: number;
 	optionIdx: number;
+	activeCustom?: boolean;
 }
