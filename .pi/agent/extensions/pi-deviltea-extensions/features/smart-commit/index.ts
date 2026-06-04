@@ -4,13 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Box, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { isCancelKey, isTabBackward, isTabForward, renderModal, renderSplitPane, type ModalFrame } from "../../shared/modal.js";
+import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSplitPane, type ModalFrame } from "../../shared/modal.js";
 import { addViewportIndicators, getViewportWindow } from "../../shared/viewport.js";
-import { expandTabs, fitToWidth, trimToWidth } from "../../shared/ui.js";
+import { expandTabs, fitToWidth, renderToolCallTitle, trimToWidth } from "../../shared/ui.js";
 
 const EXTENSION_NAME = "smart-commit";
+const ANALYSIS_MESSAGE_TYPE = "smart-commit-analysis";
 const APPLY_PLAN_TOOL = "smart_commit_apply_plan";
 const MAX_INLINE_DIFF_CHARS = 12_000;
 const MAX_INLINE_LOG_CHARS = 12_000;
@@ -71,6 +72,14 @@ type SmartCommitToolDetails = {
         mode?: TargetMode;
         commits?: CommittedCommit[];
         error?: string;
+};
+
+type SmartCommitAnalysisDetails = {
+        requestId: string;
+        mode: TargetMode;
+        repoRoot: string;
+        sectionCount: number;
+        sections: string[];
 };
 
 type GitRunOptions = {
@@ -151,6 +160,19 @@ const formatDiffManifest = (sections: DiffSection[]): string => sections.map((se
 }).join("\n");
 
 const firstLine = (value: string): string => value.split("\n")[0]?.trim() || "Untitled commit";
+
+const summarizePlanMode = (commits: PlannedCommitInput[]): "refs" | "patches" | "mixed" | "empty" => {
+        let refs = 0;
+        let patches = 0;
+        for (const commit of commits) {
+                if ((commit.refs?.length ?? 0) > 0) refs++;
+                if (commit.patch?.trim()) patches++;
+        }
+        if (refs > 0 && patches > 0) return "mixed";
+        if (refs > 0) return "refs";
+        if (patches > 0) return "patches";
+        return "empty";
+};
 
 const hashDiff = (mode: TargetMode, diff: string): string => createHash("sha256").update(mode).update("\0").update(diff).digest("hex");
 
@@ -301,6 +323,14 @@ const buildPrompt = (request: PendingSmartCommitRequest, recentMessages: string)
         ].join("\n");
 };
 
+const buildAnalysisDetails = (request: PendingSmartCommitRequest): SmartCommitAnalysisDetails => ({
+        requestId: request.requestId,
+        mode: request.mode,
+        repoRoot: request.repoRoot,
+        sectionCount: request.diffSections.length,
+        sections: request.diffSections.map((section) => `${section.id} ${section.path}`),
+});
+
 class SmartCommitConfirmView implements Component {
         private selectedCommit = 0;
         private contentScroll = 0;
@@ -385,13 +415,16 @@ class SmartCommitConfirmView implements Component {
         }
 
         render(width: number): string[] {
-                const bodyWidth = 132;
-                const bodyHeight = this.bodyHeight();
-                const sidebarWidth = 38;
-                const contentWidth = bodyWidth - sidebarWidth - 3;
+                const bodySize = getModalBodySize("wide", width, this.tui.terminal.rows, false);
+                const bodyWidth = Math.max(1, bodySize.width);
+                const bodyHeight = Math.max(4, bodySize.height);
+                const minContentWidth = 28;
+                const maxSidebarWidth = 42;
+                const sidebarWidth = Math.max(24, Math.min(maxSidebarWidth, bodyWidth - minContentWidth - 3, Math.floor(bodyWidth * 0.28)));
+                const contentWidth = Math.max(minContentWidth, bodyWidth - sidebarWidth - 3);
                 this.sidebarWidth = sidebarWidth;
                 this.contentWidth = contentWidth;
-                const contentLines = this.renderContent(contentWidth - 4);
+                const contentLines = this.renderContent(Math.max(1, contentWidth - 4));
                 const contentViewport = getViewportWindow(contentLines, this.contentScroll, Math.max(1, bodyHeight - 2));
                 this.contentScroll = contentViewport.offset;
                 const visibleContent = addViewportIndicators(this.theme, contentViewport.visibleLines, Math.max(1, contentWidth - 4), contentViewport.hiddenBefore, contentViewport.hiddenAfter);
@@ -425,7 +458,7 @@ class SmartCommitConfirmView implements Component {
         }
 
         private bodyHeight(): number {
-                return Math.max(4, Math.min(30, this.tui.terminal.rows - 10));
+                return Math.max(4, getModalBodySize("wide", this.tui.terminal.columns, this.tui.terminal.rows, false).height);
         }
 
         private moveCommit(delta: number): void {
@@ -662,7 +695,12 @@ const handleSmartCommitCommand = async (pi: ExtensionAPI, args: string, ctx: Ext
                 };
                 pendingRequests.set(requestId, request);
                 const recentMessages = await getRecentCommitMessages(pi, repoRoot, ctx.signal);
-                pi.sendUserMessage(buildPrompt(request, recentMessages));
+                pi.sendMessage({
+                        customType: ANALYSIS_MESSAGE_TYPE,
+                        content: buildPrompt(request, recentMessages),
+                        display: true,
+                        details: buildAnalysisDetails(request),
+                }, { triggerTurn: true });
         } catch (error) {
                 ctx.ui.notify(asErrorMessage(error), "error");
         }
@@ -689,6 +727,15 @@ const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
                         patch: Type.Optional(Type.String({ description: "Legacy fallback git unified diff patch for this commit. Avoid for large diffs." })),
                 }), { description: "Ordered commits to apply after confirmation." }),
         }),
+        renderCall(args, theme) {
+                const commits = Array.isArray(args.commits) ? args.commits as PlannedCommitInput[] : [];
+                const count = commits.length;
+                const mode = summarizePlanMode(commits);
+                const requestId = typeof args.requestId === "string" && args.requestId.trim()
+                        ? args.requestId.trim().slice(0, 8)
+                        : "unknown";
+                return new Text(renderToolCallTitle(theme, APPLY_PLAN_TOOL, `${count} commit${count === 1 ? "" : "s"} • ${mode} • ${requestId}`), 0, 0);
+        },
         async execute(_toolCallId, params, signal, _onUpdate, ctx) {
                 const request = pendingRequests.get(params.requestId);
                 if (!request) {
@@ -755,6 +802,29 @@ const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
 });
 
 export default function smartCommitExtension(pi: ExtensionAPI) {
+        pi.registerMessageRenderer(ANALYSIS_MESSAGE_TYPE, (message, { expanded }, theme) => {
+                const details = message.details as SmartCommitAnalysisDetails | undefined;
+                const lines = [
+                        theme.fg("toolTitle", theme.bold("Smart Commit Analysis")),
+                        details
+                                ? theme.fg("muted", `${details.mode} changes • ${details.sectionCount} section${details.sectionCount === 1 ? "" : "s"} • ${details.requestId.slice(0, 8)}`)
+                                : theme.fg("muted", "Preparing analysis"),
+                ];
+                if (details?.sections.length) {
+                        const preview = details.sections.slice(0, 3).join(", ");
+                        const suffix = details.sections.length > 3 ? ` +${details.sections.length - 3} more` : "";
+                        lines.push(theme.fg("dim", `${preview}${suffix}`));
+                }
+                if (expanded) {
+                        const fullText = typeof message.content === "string"
+                                ? message.content
+                                : message.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
+                        lines.push("", fullText);
+                }
+                const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+                box.addChild(new Text(lines.join("\n"), 0, 0));
+                return box;
+        });
         pi.registerTool(createApplyPlanTool(pi));
         pi.registerCommand("smart-commit", {
                 description: "Plan, review, and apply AI-split git commits",
