@@ -49,6 +49,9 @@ const SIZE_LIMITS: Record<ModalSize, { widthRatio: number, heightRatio: number, 
 	wide: { widthRatio: 0.92, heightRatio: 0.88, minW: 72, minH: 18 },
 }
 
+const MODAL_OUTER_MARGIN_X = 2
+const MODAL_OUTER_MARGIN_Y = 1
+
 export function isCancelKey(data: string): boolean {
 	return matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))
 }
@@ -70,13 +73,14 @@ export function formatHints(theme: Theme, hints: ModalHint[], mouseHint?: string
 
 function panelSize(size: ModalSize, width: number, rows: number, maxHeightRatio?: number): { width: number, height: number } {
 	const limits = SIZE_LIMITS[size]
-	const availableWidth = Math.max(1, width - 2)
+	const availableWidth = Math.max(1, width - MODAL_OUTER_MARGIN_X * 2)
+	const availableHeight = Math.max(1, rows - MODAL_OUTER_MARGIN_Y * 2)
 	const heightRatio = maxHeightRatio ?? limits.heightRatio
 	const targetWidth = Math.floor(width * limits.widthRatio)
 	const targetHeight = Math.floor(rows * heightRatio)
 	return {
 		width: Math.min(availableWidth, Math.max(Math.min(limits.minW, availableWidth), targetWidth)),
-		height: Math.min(rows, Math.max(Math.min(limits.minH, rows), targetHeight)),
+		height: Math.min(availableHeight, Math.max(Math.min(limits.minH, availableHeight), targetHeight)),
 	}
 }
 
@@ -103,7 +107,7 @@ export function getModalBodySize(sizeName: ModalSize, width: number, rows: numbe
 	}
 }
 
-export function renderMouseRegionBox(theme: Theme, enabled: boolean, title: string, width: number, lines: string[], height?: number): string[] {
+export function renderSectionBox(theme: Theme, enabled: boolean, title: string, width: number, lines: string[], height?: number): string[] {
 	const color = enabled ? 'accent' : 'border'
 	const safeWidth = Math.max(4, width)
 	const interiorWidth = Math.max(2, safeWidth - 2)
@@ -124,6 +128,16 @@ export function renderMouseRegionBox(theme: Theme, enabled: boolean, title: stri
 	}
 	box.push(theme.fg(color, `└${'─'.repeat(interiorWidth)}┘`))
 	return box.map(line => fitToWidth(line, safeWidth))
+}
+
+export function renderSplitPane(theme: Theme, left: { title: string, width: number, lines: string[], focused: boolean }, right: { title: string, width: number, lines: string[], focused: boolean }, height: number): string[] {
+	const leftBox = renderSectionBox(theme, left.focused, left.title, left.width, left.lines, height)
+	const rightBox = renderSectionBox(theme, right.focused, right.title, right.width, right.lines, height)
+	const rows: string[] = []
+	for (let index = 0; index < height; index++) {
+		rows.push(`${fitToWidth(leftBox[index] ?? '', left.width)} ${theme.fg('border', '│')} ${fitToWidth(rightBox[index] ?? '', right.width)}`)
+	}
+	return rows
 }
 
 export function renderModal(options: ModalRenderOptions): ModalFrame {

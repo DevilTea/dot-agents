@@ -2,12 +2,10 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import askQuestions from './features/ask-questions/index.js'
 import modelSwitcher from './features/model-switcher/index.js'
 import smartCommit from './features/smart-commit/index.js'
-import mouseTracking from './shared/mouse-tracking.js'
 
 type ExtensionRegistrar = (pi: ExtensionAPI) => void
 
 const extensions: ExtensionRegistrar[] = [
-	mouseTracking,
 	askQuestions,
 	modelSwitcher,
 	smartCommit,

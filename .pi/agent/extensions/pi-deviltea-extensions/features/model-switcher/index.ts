@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
-import { getMouseHandler, handleMouseTrackingInput, type MouseBounds } from "../../shared/mouse-tracking.js";
-import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderMouseRegionBox, type ModalFrame } from "../../shared/modal.js";
+import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, type ModalFrame } from "../../shared/modal.js";
+import { ensureViewportIndex } from "../../shared/viewport.js";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 type FocusPane = "models" | "thinking";
@@ -93,8 +93,9 @@ class ModelThinkingSelectorView implements Component {
 	private selectedThinkingLevel: ThinkingLevel;
 	private modelScroll = 0;
 	private thinkingScroll = 0;
+	private modelVisibleRows = 1;
+	private thinkingVisibleRows = 1;
 	private lastFrame?: ModalFrame;
-	private readonly removeMouseListener: () => void;
 
 	constructor(
 		private readonly pi: ExtensionAPI,
@@ -111,7 +112,6 @@ class ModelThinkingSelectorView implements Component {
 		this.selectedModelIndex = initialIndex;
 		this.selectedThinkingLevel = clampThinkingLevel(this.selectedModel(), initialThinkingLevel);
 		this.focusedThinkingLevel = this.selectedThinkingLevel;
-		this.removeMouseListener = getMouseHandler(pi).onWheel((direction) => this.moveFocused(direction), { id: "model-switcher.active-list", bounds: () => this.activeListBounds() });
 	}
 
 	render(width: number): string[] {
@@ -134,32 +134,28 @@ class ModelThinkingSelectorView implements Component {
 				{ id: "thinking", label: "Thinking level", complete: true },
 			],
 			activeTabId: this.focusPane,
-			body: renderMouseRegionBox(this.theme, getMouseHandler(this.pi).isTrackingEnabled(), this.focusPane === "models" ? "Models" : "Thinking levels", boxWidth, body, boxHeight),
+			body: renderSectionBox(this.theme, false, this.focusPane === "models" ? "Models" : "Thinking levels", boxWidth, body, boxHeight),
 			hints: [
 				{ key: "↑↓", label: "move" },
+				{ key: "Tab/←→", label: "pane" },
 				{ key: "Space", label: "select" },
-				{ key: "Tab", label: "next tab" },
 				{ key: "Enter", label: "apply" },
 				{ key: "Esc", label: "cancel" },
 			],
-			mouseHint: getMouseHandler(this.pi).isTrackingEnabled() ? "Wheel move" : "Ctrl+Shift+M mouse",
 		});
 		return this.lastFrame.lines;
 	}
 
 	invalidate(): void {}
 
-	dispose(): void {
-		this.removeMouseListener();
-	}
+	dispose(): void {}
 
 	handleInput(data: string): void {
-		if (handleMouseTrackingInput(this.pi, this.ctx, data)) return;
 		if (isCancelKey(data)) {
 			this.done(null);
 			return;
 		}
-		if (isTabForward(data) || isTabBackward(data)) {
+		if (isTabForward(data) || isTabBackward(data) || matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
 			this.focusPane = this.focusPane === "models" ? "thinking" : "models";
 			this.tui.requestRender();
 			return;
@@ -193,16 +189,15 @@ class ModelThinkingSelectorView implements Component {
 		return supportedThinkingLevels(this.thinkingSourceModel());
 	}
 
-	private moveFocused(direction: 1 | -1): void {
+	private moveFocused(delta: number): void {
 		if (this.focusPane === "models") {
-			this.focusedModelIndex = Math.max(0, Math.min(this.models.length - 1, this.focusedModelIndex + direction));
-			this.ensureVisible("models");
+			this.focusedModelIndex = Math.max(0, Math.min(this.models.length - 1, this.focusedModelIndex + delta));
 		} else {
 			const levels = this.thinkingLevels();
 			const current = Math.max(0, levels.indexOf(this.focusedThinkingLevel));
-			this.focusedThinkingLevel = levels[Math.max(0, Math.min(levels.length - 1, current + direction))] ?? "off";
-			this.ensureVisible("thinking");
+			this.focusedThinkingLevel = levels[Math.max(0, Math.min(levels.length - 1, current + delta))] ?? "off";
 		}
+		this.ensureVisible(this.focusPane);
 		this.tui.requestRender();
 	}
 
@@ -219,30 +214,19 @@ class ModelThinkingSelectorView implements Component {
 		this.tui.requestRender();
 	}
 
-	private ensureVisible(tab: FocusPane, visibleRows = 1): void {
-		const visible = Math.max(1, visibleRows);
+	private ensureVisible(tab: FocusPane, visibleRows?: number): void {
+		const visible = Math.max(1, visibleRows ?? (tab === "models" ? this.modelVisibleRows : this.thinkingVisibleRows));
 		if (tab === "models") {
-			if (this.focusedModelIndex < this.modelScroll) this.modelScroll = this.focusedModelIndex;
-			if (this.focusedModelIndex >= this.modelScroll + visible) this.modelScroll = this.focusedModelIndex - visible + 1;
+			this.modelScroll = ensureViewportIndex(this.modelScroll, this.focusedModelIndex, visible);
 		} else {
 			const index = this.thinkingLevels().indexOf(this.focusedThinkingLevel);
-			if (index < this.thinkingScroll) this.thinkingScroll = index;
-			if (index >= this.thinkingScroll + visible) this.thinkingScroll = index - visible + 1;
+			this.thinkingScroll = ensureViewportIndex(this.thinkingScroll, index, visible);
 		}
-	}
-
-	private activeListBounds(): MouseBounds | undefined {
-		if (!this.lastFrame) return undefined;
-		return {
-			x: this.lastFrame.bodyX,
-			y: this.lastFrame.bodyY + 2,
-			width: this.lastFrame.bodyWidth,
-			height: Math.max(1, this.lastFrame.bodyHeight - 3),
-		};
 	}
 
 	private renderModels(width: number, visible: number): string[] {
 		const listRows = Math.max(1, visible - 4);
+		this.modelVisibleRows = listRows;
 		this.ensureVisible("models", listRows);
 		const lines = [this.theme.fg("dim", "Select runtime model. Space selects focused row; Enter applies selected model and thinking level."), ""];
 		for (let i = this.modelScroll; i < Math.min(this.models.length, this.modelScroll + listRows); i++) {
@@ -261,6 +245,7 @@ class ModelThinkingSelectorView implements Component {
 	private renderThinking(_width: number, visible: number): string[] {
 		const levels = this.thinkingLevels();
 		const listRows = Math.max(1, visible - 2);
+		this.thinkingVisibleRows = listRows;
 		this.ensureVisible("thinking", listRows);
 		const lines = [this.theme.fg("dim", `Thinking levels for ${modelKey(this.thinkingSourceModel())}.`), ""];
 		for (let i = this.thinkingScroll; i < Math.min(levels.length, this.thinkingScroll + listRows); i++) {
@@ -277,6 +262,8 @@ class ModelThinkingSelectorView implements Component {
 }
 
 class ConfirmDefaultsView implements Component {
+	private armed = false;
+
 	constructor(
 		private readonly tui: any,
 		private readonly theme: any,
@@ -294,24 +281,37 @@ class ConfirmDefaultsView implements Component {
 			title: "Save Model Defaults",
 			meta: "risky setting write",
 			body: [
-				this.theme.fg("warning", "This will update default model settings."),
+				this.theme.fg("warning", this.armed ? "Press Enter again to save defaults." : "This will update default model settings."),
 				"",
 				`Provider: ${this.model.provider}`,
 				`Model: ${modelName(this.model)} (${this.model.id})`,
 				`Thinking: ${this.thinkingLevel}`,
 			],
-			hints: [
-				{ key: "Enter", label: "save" },
-				{ key: "Esc", label: "cancel" },
-			],
+			hints: this.armed
+				? [
+					{ key: "Enter", label: "confirm" },
+					{ key: "Esc", label: "cancel" },
+				]
+				: [
+					{ key: "Enter", label: "arm" },
+					{ key: "Esc", label: "cancel" },
+				],
 		}).lines;
 	}
 
 	invalidate(): void {}
 
 	handleInput(data: string): void {
-		if (isCancelKey(data)) this.done(false);
-		else if (matchesKey(data, Key.enter)) this.done(true);
+		if (isCancelKey(data)) {
+			this.done(false);
+			return;
+		}
+		if (!matchesKey(data, Key.enter)) return;
+		if (this.armed) this.done(true);
+		else {
+			this.armed = true;
+			this.tui.requestRender();
+		}
 	}
 }
 
@@ -380,7 +380,7 @@ export default function piModelSwitcher(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerShortcut("ctrl+alt+m", {
+	pi.registerShortcut("ctrl+shift+l", {
 		description: "Open runtime model/thinking selector",
 		handler: async (ctx) => {
 			await openRuntimeSelector(pi, ctx);

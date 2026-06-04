@@ -6,9 +6,9 @@ import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type Exten
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { getMouseHandler, handleMouseTrackingInput, type MouseBounds } from "../../shared/mouse-tracking.js";
-import { isCancelKey, renderModal, renderMouseRegionBox, type ModalFrame } from "../../shared/modal.js";
-import { expandTabs, fitToWidth, padToWidth, trimToWidth } from "../../shared/ui.js";
+import { isCancelKey, isTabBackward, isTabForward, renderModal, renderSplitPane, type ModalFrame } from "../../shared/modal.js";
+import { addViewportIndicators, getViewportWindow } from "../../shared/viewport.js";
+import { expandTabs, fitToWidth, trimToWidth } from "../../shared/ui.js";
 
 const EXTENSION_NAME = "smart-commit";
 const APPLY_PLAN_TOOL = "smart_commit_apply_plan";
@@ -305,10 +305,10 @@ class SmartCommitConfirmView implements Component {
         private selectedCommit = 0;
         private contentScroll = 0;
         private confirmArmed = false;
+        private focusPane: "commits" | "detail" = "commits";
         private lastFrame?: ModalFrame;
         private sidebarWidth = 38;
         private contentWidth = 91;
-        private readonly removeMouseListeners: Array<() => void> = [];
 
         constructor(
                 private readonly pi: ExtensionAPI,
@@ -318,22 +318,13 @@ class SmartCommitConfirmView implements Component {
                 private readonly tui: TUI,
                 private readonly theme: Theme,
                 private readonly done: (approved: boolean) => void,
-        ) {
-                const mouseHandler = getMouseHandler(pi);
-                this.removeMouseListeners.push(
-                        mouseHandler.onWheel((direction) => this.moveCommit(direction), { id: "smart-commit.sidebar", bounds: () => this.sidebarBounds() }),
-                        mouseHandler.onWheel((direction) => this.scrollContent(direction * this.bodyHeight()), { id: "smart-commit.content", bounds: () => this.contentBounds() }),
-                );
-        }
+        ) {}
 
         invalidate(): void {}
 
-        dispose(): void {
-                for (const remove of this.removeMouseListeners.splice(0)) remove();
-        }
+        dispose(): void {}
 
         handleInput(data: string): void {
-                if (handleMouseTrackingInput(this.pi, this.ctx, data)) return;
                 if (isCancelKey(data)) {
                         this.done(false);
                         return;
@@ -346,29 +337,48 @@ class SmartCommitConfirmView implements Component {
                         }
                         return;
                 }
-                this.confirmArmed = false;
+                if (isTabForward(data) || matchesKey(data, Key.right)) {
+                        this.confirmArmed = false;
+                        this.focusPane = "detail";
+                        this.tui.requestRender();
+                        return;
+                }
+                if (isTabBackward(data) || matchesKey(data, Key.left)) {
+                        this.confirmArmed = false;
+                        this.focusPane = "commits";
+                        this.tui.requestRender();
+                        return;
+                }
                 if (matchesKey(data, Key.up)) {
-                        this.moveCommit(-1);
+                        this.confirmArmed = false;
+                        if (this.focusPane === "commits") this.moveCommit(-1);
+                        else this.scrollContent(-1);
                         return;
                 }
                 if (matchesKey(data, Key.down)) {
-                        this.moveCommit(1);
+                        this.confirmArmed = false;
+                        if (this.focusPane === "commits") this.moveCommit(1);
+                        else this.scrollContent(1);
                         return;
                 }
                 if (matchesKey(data, Key.pageUp)) {
+                        this.confirmArmed = false;
                         this.scrollContent(-this.bodyHeight());
                         return;
                 }
                 if (matchesKey(data, Key.pageDown)) {
+                        this.confirmArmed = false;
                         this.scrollContent(this.bodyHeight());
                         return;
                 }
                 if (matchesKey(data, Key.home)) {
+                        this.confirmArmed = false;
                         this.contentScroll = 0;
                         this.tui.requestRender();
                         return;
                 }
                 if (matchesKey(data, Key.end)) {
+                        this.confirmArmed = false;
                         this.contentScroll = Number.MAX_SAFE_INTEGER;
                         this.tui.requestRender();
                 }
@@ -381,19 +391,15 @@ class SmartCommitConfirmView implements Component {
                 const contentWidth = bodyWidth - sidebarWidth - 3;
                 this.sidebarWidth = sidebarWidth;
                 this.contentWidth = contentWidth;
-                const trackingEnabled = getMouseHandler(this.pi).isTrackingEnabled();
-                const sidebarLines = renderMouseRegionBox(this.theme, trackingEnabled, "Commits", sidebarWidth, this.renderSidebar(sidebarWidth, bodyHeight - 2), bodyHeight);
                 const contentLines = this.renderContent(contentWidth - 4);
-                const maxScroll = Math.max(0, contentLines.length - bodyHeight);
-                this.contentScroll = Math.max(0, Math.min(this.contentScroll, maxScroll));
-                const visibleContent = contentLines.slice(this.contentScroll, this.contentScroll + bodyHeight);
-                const body: string[] = [];
-                const contentBox = renderMouseRegionBox(this.theme, trackingEnabled, "Diff", contentWidth, visibleContent, bodyHeight);
-                for (let index = 0; index < bodyHeight; index++) {
-                        const left = sidebarLines[index] ?? "";
-                        const right = contentBox[index] ?? "";
-                        body.push(`${padToWidth(left, sidebarWidth)} ${this.theme.fg("border", "│")} ${padToWidth(trimToWidth(right, contentWidth), contentWidth)}`);
-                }
+                const contentViewport = getViewportWindow(contentLines, this.contentScroll, Math.max(1, bodyHeight - 2));
+                this.contentScroll = contentViewport.offset;
+                const visibleContent = addViewportIndicators(this.theme, contentViewport.visibleLines, Math.max(1, contentWidth - 4), contentViewport.hiddenBefore, contentViewport.hiddenAfter);
+                const body = renderSplitPane(this.theme,
+                        { title: "Commits", width: sidebarWidth, lines: this.renderSidebar(sidebarWidth, bodyHeight - 2), focused: this.focusPane === "commits" },
+                        { title: "Diff", width: contentWidth, lines: visibleContent, focused: this.focusPane === "detail" },
+                        bodyHeight,
+                );
                 if (this.confirmArmed) body.unshift(this.theme.fg("warning", "Press Enter again to create commits. Esc cancels."), "");
                 this.lastFrame = renderModal({
                         theme: this.theme,
@@ -403,13 +409,17 @@ class SmartCommitConfirmView implements Component {
                         title: "Smart Commit Plan",
                         meta: `${this.request.mode} changes • ${this.commits.length} commit${this.commits.length === 1 ? "" : "s"}`,
                         body,
-                        hints: [
-                                { key: "↑↓", label: "move" },
-                                { key: "PgUp/PgDn", label: "scroll" },
-                                { key: "Enter", label: this.confirmArmed ? "confirm apply" : "apply" },
-                                { key: "Esc", label: "cancel" },
-                        ],
-                        mouseHint: getMouseHandler(this.pi).isTrackingEnabled() ? "Wheel scroll" : "Ctrl+Shift+M mouse",
+                        hints: this.confirmArmed
+                                ? [
+                                        { key: "Enter", label: "confirm" },
+                                        { key: "Esc", label: "cancel" },
+                                ]
+                                : [
+                                        { key: "↑↓", label: this.focusPane === "commits" ? "move" : "scroll" },
+                                        { key: "Tab/←→", label: "pane" },
+                                        { key: "Enter", label: "arm" },
+                                        { key: "Esc", label: "cancel" },
+                                ],
                 });
                 return this.lastFrame.lines;
         }
@@ -418,8 +428,8 @@ class SmartCommitConfirmView implements Component {
                 return Math.max(4, Math.min(30, this.tui.terminal.rows - 10));
         }
 
-        private moveCommit(direction: 1 | -1): void {
-                this.selectedCommit = Math.max(0, Math.min(this.commits.length - 1, this.selectedCommit + direction));
+        private moveCommit(delta: number): void {
+                this.selectedCommit = Math.max(0, Math.min(this.commits.length - 1, this.selectedCommit + delta));
                 this.contentScroll = 0;
                 this.tui.requestRender();
         }
@@ -427,26 +437,6 @@ class SmartCommitConfirmView implements Component {
         private scrollContent(delta: number): void {
                 this.contentScroll = Math.max(0, this.contentScroll + delta);
                 this.tui.requestRender();
-        }
-
-        private sidebarBounds(): MouseBounds | undefined {
-                if (!this.lastFrame) return undefined;
-                return {
-                        x: this.lastFrame.bodyX,
-                        y: this.lastFrame.bodyY + (this.confirmArmed ? 2 : 0),
-                        width: this.sidebarWidth,
-                        height: this.bodyHeight(),
-                };
-        }
-
-        private contentBounds(): MouseBounds | undefined {
-                if (!this.lastFrame) return undefined;
-                return {
-                        x: this.lastFrame.bodyX + this.sidebarWidth + 3,
-                        y: this.lastFrame.bodyY + (this.confirmArmed ? 2 : 0),
-                        width: this.contentWidth,
-                        height: this.bodyHeight(),
-                };
         }
 
         private renderSidebar(width: number, height: number): string[] {
