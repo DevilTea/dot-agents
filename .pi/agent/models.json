@@ -3,31 +3,40 @@
     "lmstudio": {
       "baseUrl": "https://llm.deviltea.me/v1",
       "api": "openai-completions",
-      "apiKey": "LM_STUDIO_API_KEY",
+      "apiKey": "$LM_STUDIO_API_KEY",
       "headers": {
-          "CF-Access-Client-Id": "CF_ACCESS_CLIENT_ID",
-          "CF-Access-Client-Secret": "CF_ACCESS_CLIENT_SECRET"
+        "CF-Access-Client-Id": "$CF_ACCESS_CLIENT_ID",
+        "CF-Access-Client-Secret": "$CF_ACCESS_CLIENT_SECRET"
       },
       "models": [
         {
           "id": "qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved@q6_k",
           "name": "Qwen3.6 [128K] [35B A3B] [Q6 K]",
           "reasoning": true,
-          "input": ["text", "image"],
+          "input": [
+            "text",
+            "image"
+          ],
           "contextWindow": 131072
         },
         {
           "id": "qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved@q5_k_m",
           "name": "Qwen3.6 [128K] [35B A3B] [Q5 K M]",
           "reasoning": true,
-          "input": ["text", "image"],
+          "input": [
+            "text",
+            "image"
+          ],
           "contextWindow": 131072
         },
         {
           "id": "mudler/qwen3.6-35b-a3b-uncensored-heretic-apex-gguf/qwen3.6-35b-a3b-uncensored-heretic-apex-i-balanced.gguf",
           "name": "Qwen3.6 [128K] [35B A3B] [APEX I BALANCED]",
           "reasoning": true,
-          "input": ["text", "image"],
+          "input": [
+            "text",
+            "image"
+          ],
           "contextWindow": 131072
         }
       ]
