@@ -1,5 +1,4 @@
 import type { Theme } from '@earendil-works/pi-coding-agent'
-import type { Component } from '@earendil-works/pi-tui'
 import { Key, matchesKey, visibleWidth } from '@earendil-works/pi-tui'
 import { fitToWidth, trimToWidth } from './ui.js'
 
@@ -189,18 +188,4 @@ export function renderModal(options: ModalRenderOptions): ModalFrame {
 		bodyWidth: innerWidth,
 		bodyHeight,
 	}
-}
-
-export class ModalComponent implements Component {
-	private readonly renderFrame: (width: number) => ModalFrame
-
-	constructor(renderFrame: (width: number) => ModalFrame) {
-		this.renderFrame = renderFrame
-	}
-
-	render(width: number): string[] {
-		return this.renderFrame(width).lines
-	}
-
-	invalidate(): void {}
 }

@@ -1,29 +1,12 @@
 import type { Theme } from '@earendil-works/pi-coding-agent'
 import { fitToWidth } from './ui.js'
 
-export function clampViewportOffset(offset: number, totalRows: number, visibleRows: number): number {
-	const safeVisibleRows = Math.max(1, visibleRows)
-	const maxOffset = Math.max(0, totalRows - safeVisibleRows)
-	return Math.max(0, Math.min(offset, maxOffset))
-}
-
 export function ensureViewportIndex(offset: number, index: number, visibleRows: number): number {
 	const safeVisibleRows = Math.max(1, visibleRows)
 	if (index < offset)
 		return index
 	if (index >= offset + safeVisibleRows)
 		return index - safeVisibleRows + 1
-	return Math.max(0, offset)
-}
-
-export function ensureViewportRange(offset: number, start: number, end: number, visibleRows: number): number {
-	const safeVisibleRows = Math.max(1, visibleRows)
-	const safeStart = Math.max(0, start)
-	const safeEnd = Math.max(safeStart + 1, end)
-	if (safeStart < offset)
-		return safeStart
-	if (safeEnd > offset + safeVisibleRows)
-		return safeEnd - safeVisibleRows
 	return Math.max(0, offset)
 }
 
