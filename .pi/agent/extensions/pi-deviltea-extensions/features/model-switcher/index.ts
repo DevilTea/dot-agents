@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
 import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, type ModalFrame } from "../../shared/modal.js";
+import { FULLSCREEN_OVERLAY_OPTIONS } from "../../shared/overlay.js";
 import { ensureViewportIndex } from "../../shared/viewport.js";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -334,7 +335,7 @@ async function openRuntimeSelector(pi: ExtensionAPI, ctx: ExtensionContext): Pro
 	const result = await ctx.ui.custom<SelectorResult | null>(
 		(tui: any, theme: any, _keybindings: any, done: (value: SelectorResult | null) => void) =>
 			new ModelThinkingSelectorView(pi, ctx, tui, theme, models, currentModel, currentThinkingLevel, done),
-		{ overlay: true, overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left", margin: 0 } },
+		FULLSCREEN_OVERLAY_OPTIONS,
 	);
 	if (!result) return;
 
@@ -366,7 +367,7 @@ export default function piModelSwitcher(pi: ExtensionAPI) {
 			const thinkingLevel = pi.getThinkingLevel();
 			const approved = await ctx.ui.custom<boolean>(
 				(tui: any, theme: any, _keybindings: any, done: (approved: boolean) => void) => new ConfirmDefaultsView(tui, theme, model, thinkingLevel, done),
-				{ overlay: true, overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left", margin: 0 } },
+				FULLSCREEN_OVERLAY_OPTIONS,
 			);
 			if (!approved) return;
 
