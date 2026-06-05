@@ -1,3 +1,4 @@
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Answer, Question } from "./types.js";
 
 export function formatAnswerLines(questions: Question[], answers: Answer[]): string[] {
@@ -13,7 +14,7 @@ export function formatAnswerLines(questions: Question[], answers: Answer[]): str
 	});
 }
 
-export function formatRenderedAnswer(answer: Answer, theme: any): string {
+export function formatRenderedAnswer(answer: Answer, theme: Theme): string {
 	if (answer.wasCustom) {
 		return `${theme.fg("success", "✓ ")}${theme.fg("accent", answer.id)}: ${theme.fg("muted", "(wrote) ")}${answer.label}`;
 	}

@@ -56,13 +56,13 @@ class SmartCommitConfirmView implements Component {
                         }
                         return;
                 }
-                if (isTabForward(data) || matchesKey(data, Key.right)) {
+                if (isTabForward(data)) {
                         this.confirmArmed = false;
                         this.focusPane = "detail";
                         this.tui.requestRender();
                         return;
                 }
-                if (isTabBackward(data) || matchesKey(data, Key.left)) {
+                if (isTabBackward(data)) {
                         this.confirmArmed = false;
                         this.focusPane = "commits";
                         this.tui.requestRender();
@@ -138,7 +138,7 @@ class SmartCommitConfirmView implements Component {
                                 ]
                                 : [
                                         { key: "↑↓", label: this.focusPane === "commits" ? "move" : "scroll" },
-                                        { key: "Tab/←→", label: "pane" },
+                                        { key: "Tab", label: "pane" },
                                         { key: "Enter", label: "arm" },
                                         { key: "Esc", label: "cancel" },
                                 ],

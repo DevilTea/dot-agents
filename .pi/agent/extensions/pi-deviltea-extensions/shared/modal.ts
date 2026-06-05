@@ -50,6 +50,7 @@ const SIZE_LIMITS: Record<ModalSize, { widthRatio: number, heightRatio: number, 
 
 const MODAL_OUTER_MARGIN_X = 2
 const MODAL_OUTER_MARGIN_Y = 1
+const MODAL_FOOTER_ROWS = 3
 
 export function isCancelKey(data: string): boolean {
 	return matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))
@@ -102,7 +103,7 @@ export function getModalBodySize(sizeName: ModalSize, width: number, rows: numbe
 	const headerRows = hasTabs ? 4 : 3
 	return {
 		width: Math.max(1, size.width - 4),
-		height: Math.max(1, size.height - headerRows - 2),
+		height: Math.max(1, size.height - headerRows - MODAL_FOOTER_ROWS),
 	}
 }
 
@@ -162,10 +163,10 @@ export function renderModal(options: ModalRenderOptions): ModalFrame {
 	panel.push(separator)
 
 	const footerText = formatHints(theme, options.hints, options.mouseHint)
-	const bodyHeight = Math.max(1, panelHeight - panel.length - 2)
+	const bodyHeight = Math.max(1, panelHeight - panel.length - MODAL_FOOTER_ROWS)
 	const visibleBody = options.body.slice(0, bodyHeight)
 	for (const line of visibleBody) panel.push(row(line))
-	while (panel.length < panelHeight - 2) panel.push(row(''))
+	while (panel.length < panelHeight - MODAL_FOOTER_ROWS) panel.push(row(''))
 	panel.push(separator)
 	panel.push(row(trimToWidth(footerText, innerWidth)))
 	panel.push(bottom)

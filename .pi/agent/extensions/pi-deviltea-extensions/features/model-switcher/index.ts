@@ -1,6 +1,6 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, type Component } from "@earendil-works/pi-tui";
+import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
 import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, type ModalFrame } from "../../shared/modal.js";
 import { FULLSCREEN_OVERLAY_OPTIONS } from "../../shared/overlay.js";
 import { ensureViewportIndex } from "../../shared/viewport.js";
@@ -99,10 +99,8 @@ class ModelThinkingSelectorView implements Component {
 	private lastFrame?: ModalFrame;
 
 	constructor(
-		private readonly pi: ExtensionAPI,
-		private readonly ctx: ExtensionContext,
-		private readonly tui: any,
-		private readonly theme: any,
+		private readonly tui: TUI,
+		private readonly theme: Theme,
 		private readonly models: RuntimeModel[],
 		initialModel: RuntimeModel,
 		initialThinkingLevel: ThinkingLevel,
@@ -138,7 +136,7 @@ class ModelThinkingSelectorView implements Component {
 			body: renderSectionBox(this.theme, false, this.focusPane === "models" ? "Models" : "Thinking levels", boxWidth, body, boxHeight),
 			hints: [
 				{ key: "↑↓", label: "move" },
-				{ key: "Tab/←→", label: "pane" },
+				{ key: "Tab", label: "pane" },
 				{ key: "Space", label: "select" },
 				{ key: "Enter", label: "apply" },
 				{ key: "Esc", label: "cancel" },
@@ -156,7 +154,7 @@ class ModelThinkingSelectorView implements Component {
 			this.done(null);
 			return;
 		}
-		if (isTabForward(data) || isTabBackward(data) || matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+		if (isTabForward(data) || isTabBackward(data)) {
 			this.focusPane = this.focusPane === "models" ? "thinking" : "models";
 			this.tui.requestRender();
 			return;
@@ -266,8 +264,8 @@ class ConfirmDefaultsView implements Component {
 	private armed = false;
 
 	constructor(
-		private readonly tui: any,
-		private readonly theme: any,
+		private readonly tui: TUI,
+		private readonly theme: Theme,
 		private readonly model: RuntimeModel,
 		private readonly thinkingLevel: string,
 		private readonly done: (approved: boolean) => void,
@@ -333,8 +331,8 @@ async function openRuntimeSelector(pi: ExtensionAPI, ctx: ExtensionContext): Pro
 	const currentThinkingLevel = clampThinkingLevel(currentModel, pi.getThinkingLevel() as ThinkingLevel);
 
 	const result = await ctx.ui.custom<SelectorResult | null>(
-		(tui: any, theme: any, _keybindings: any, done: (value: SelectorResult | null) => void) =>
-			new ModelThinkingSelectorView(pi, ctx, tui, theme, models, currentModel, currentThinkingLevel, done),
+		(tui: TUI, theme: Theme, _keybindings: unknown, done: (value: SelectorResult | null) => void) =>
+			new ModelThinkingSelectorView(tui, theme, models, currentModel, currentThinkingLevel, done),
 		FULLSCREEN_OVERLAY_OPTIONS,
 	);
 	if (!result) return;
@@ -366,7 +364,7 @@ export default function piModelSwitcher(pi: ExtensionAPI) {
 
 			const thinkingLevel = pi.getThinkingLevel();
 			const approved = await ctx.ui.custom<boolean>(
-				(tui: any, theme: any, _keybindings: any, done: (approved: boolean) => void) => new ConfirmDefaultsView(tui, theme, model, thinkingLevel, done),
+				(tui: TUI, theme: Theme, _keybindings: unknown, done: (approved: boolean) => void) => new ConfirmDefaultsView(tui, theme, model, thinkingLevel, done),
 				FULLSCREEN_OVERLAY_OPTIONS,
 			);
 			if (!approved) return;

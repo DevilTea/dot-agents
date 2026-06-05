@@ -1,5 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { type Component, Editor, type EditorTheme, type Focusable, Key, matchesKey, type TUI, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, renderSplitPane } from "../../shared/modal.js";
 import { FULLSCREEN_OVERLAY_OPTIONS } from "../../shared/overlay.js";
 import { addViewportIndicators, getViewportWindow } from "../../shared/viewport.js";
@@ -9,13 +9,17 @@ import { currentAnswer as getCurrentAnswer, hasCurrentAnswer as getHasCurrentAns
 import { sanitizeDisplayText } from "./sanitize.js";
 import type { Answer, InputBuffer, Question, QuestionnaireResult } from "./types.js";
 
-export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question[]): Promise<QuestionnaireResult> {
-	return ctx.ui.custom((tui: any, theme: any, _kb: any, done: (result: QuestionnaireResult) => void) => {
+type StepPane = "question" | "answer" | "currentAnswer";
+
+export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, questions: Question[]): Promise<QuestionnaireResult> {
+	return ctx.ui.custom((tui: TUI, theme: Theme, _kb: unknown, done: (result: QuestionnaireResult) => void) => {
 			// ── State ──────────────────────────────────────────────
 			let currentQ = 0;
 			let optionIdx = 0;
 			let inputMode = false;
 			let inputQuestionId: string | null = null;
+			let inputModeSnapshot: { qId: string; answer?: Answer; buffer?: InputBuffer } | null = null;
+			let stepFocus: StepPane = "answer";
 			let reviewIdx = 0;
 			let reviewFocus: "list" | "detail" = "list";
 			let promptScrollOffset = 0;
@@ -26,6 +30,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 			let cachedLines: string[] | undefined;
 			let cachedWidth: number | undefined;
 			let cachedRows: number | undefined;
+			let focused = false;
 			const answers = new Map<string, Answer>();
 
 			// ── Editor for multi-line text input ───────────────
@@ -52,6 +57,14 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					inputBuffers.set(qId, buf);
 				}
 				return buf;
+			}
+
+			function cloneInputBuffer(buffer: InputBuffer | undefined): InputBuffer | undefined {
+				return buffer ? { ...buffer } : undefined;
+			}
+
+			function cloneAnswer(answer: Answer | undefined): Answer | undefined {
+				return answer ? { ...answer, multiValues: answer.multiValues ? [...answer.multiValues] : undefined } : undefined;
 			}
 
 			function saveInputBuffer(qId: string) {
@@ -201,10 +214,6 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 			}
 
 
-			function editorContentRows(width?: number, question: Question | undefined = currentQuestion()): number {
-				return Math.max(1, getStepPaneHeights(width, question).answerHeight - 2);
-			}
-
 			function promptContentRows(width?: number): number {
 				return Math.max(1, promptMaxRows(width) - 2);
 			}
@@ -269,42 +278,22 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				lines.push(theme.fg("text", `${question.options.length + 1}. Type something.`));
 			}
 
-			function withEditorViewportRows<T>(contentRows: number, fn: () => T): T {
-				const editorAny = editor as any;
-				const originalTui = editorAny.tui;
-				const originalTerminal = originalTui?.terminal;
-				if (!originalTui || !originalTerminal || typeof originalTerminal.rows !== "number") return fn();
-				const syntheticRows = Math.max(1, Math.ceil(Math.max(1, contentRows) / 0.3));
-				const terminalProxy = Object.create(originalTerminal);
-				Object.defineProperty(terminalProxy, "rows", {
-					value: syntheticRows,
-					configurable: true,
-				});
-				const tuiProxy = Object.create(originalTui);
-				Object.defineProperty(tuiProxy, "terminal", {
-					value: terminalProxy,
-					configurable: true,
-				});
-				editorAny.tui = tuiProxy;
-				try {
-					return fn();
-				} finally {
-					editorAny.tui = originalTui;
-				}
+			function editorIsActive(question: Question | undefined = currentQuestion()): boolean {
+				return stepFocus === "answer" && currentQ !== questions.length && Boolean(inputMode || question?.type === "text");
+			}
+
+			function syncEditorFocus(question: Question | undefined = currentQuestion()): void {
+				editor.focused = focused && editorIsActive(question);
 			}
 
 			function renderEditorBodyLines(width: number, contentRows: number): string[] {
-				return withEditorViewportRows(contentRows, () => {
-					const rendered = editor.render(width);
-					const bodyLines = rendered.length > 2 ? rendered.slice(1, -1) : rendered;
-					return bodyLines.slice(0, contentRows);
-				});
+				const rendered = editor.render(width);
+				const bodyLines = rendered.length > 2 ? rendered.slice(1, -1) : rendered;
+				return bodyLines.slice(0, contentRows);
 			}
 
-			function handleEditorInput(data: string, question: Question | undefined = currentQuestion()): void {
-				withEditorViewportRows(editorContentRows(undefined, question), () => {
-					editor.handleInput(data);
-				});
+			function handleEditorInput(data: string): void {
+				editor.handleInput(data);
 				refresh();
 			}
 
@@ -359,15 +348,6 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				const selectedRange = optionLineRanges[optionIdx];
 				if (!selectedRange) return;
 				answerScrollOffset = Math.max(0, Math.min(maxScroll, selectedRange.start - scrollStart));
-			}
-
-			function moveOption(direction: 1 | -1): void {
-				const q = currentQuestion();
-				const totalOptions = totalOptionCount(q);
-				if (!q || totalOptions <= 0) return;
-				setOptionIdx(q, Math.max(0, Math.min(totalOptions - 1, optionIdx + direction)));
-				ensureOptionVisible();
-				refresh();
 			}
 
 			function scrollOrMoveOption(question: Question, direction: 1 | -1): boolean {
@@ -443,11 +423,40 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				});
 			}
 
+			function panesForQuestion(question: Question | undefined): StepPane[] {
+				if (!question) return ["question"];
+				return question.type === "text" ? ["question", "answer"] : ["question", "answer", "currentAnswer"];
+			}
+
+			function ensureStepFocus(question: Question | undefined = currentQuestion()): void {
+				const panes = panesForQuestion(question);
+				if (!panes.includes(stepFocus)) stepFocus = panes[0] ?? "question";
+			}
+
+			function moveStepFocusOrTab(delta: 1 | -1): void {
+				const panes = panesForQuestion(currentQuestion());
+				const index = Math.max(0, panes.indexOf(stepFocus));
+				const nextIndex = index + delta;
+				if (nextIndex < 0 || nextIndex >= panes.length) {
+					setCurrentStep(currentQ + delta);
+					return;
+				}
+				stepFocus = panes[nextIndex] ?? "question";
+				syncEditorFocus();
+				refresh();
+			}
+
 			function setCurrentStep(nextIndex: number) {
 				const totalTabs = questions.length + 1;
 				currentQ = Math.max(0, Math.min(totalTabs - 1, nextIndex));
-				if (currentQ < questions.length) restoreQuestionState(currentQ);
-				else {
+				inputMode = false;
+				inputQuestionId = null;
+				inputModeSnapshot = null;
+				if (currentQ < questions.length) {
+					restoreQuestionState(currentQ);
+					stepFocus = "question";
+					ensureStepFocus();
+				} else {
 					optionIdx = 0;
 					reviewFocus = "list";
 				}
@@ -455,165 +464,90 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				refresh();
 			}
 
-			function advanceToNextQuestion() {
-				setCurrentStep(currentQ + 1);
+			function beginCustomInput(question: Question): void {
+				const buffer = getInputBuffer(question.id);
+				inputMode = true;
+				inputQuestionId = question.id;
+				inputModeSnapshot = {
+					qId: question.id,
+					answer: cloneAnswer(answers.get(question.id)),
+					buffer: cloneInputBuffer(inputBuffers.get(question.id)),
+				};
+				buffer.activeCustom = true;
+				stepFocus = "answer";
+				restoreInputBuffer(question.id, answers.get(question.id)?.wasCustom ? answers.get(question.id)?.label || "" : "");
+				answerScrollOffset = Number.MAX_SAFE_INTEGER;
+				refresh();
 			}
 
-			// ── Text input submit ────────────────────────────────
-			function submitInput() {
-				if (!inputQuestionId) return;
-				const qId = inputQuestionId;
-				syncInputAnswer(qId);
+			function discardCustomInput(): void {
+				if (!inputModeSnapshot) return;
+				const snapshot = inputModeSnapshot;
 				inputMode = false;
 				inputQuestionId = null;
-				editor.setText("");
-				advanceToNextQuestion();
+				inputModeSnapshot = null;
+				if (snapshot.answer) answers.set(snapshot.qId, snapshot.answer);
+				else answers.delete(snapshot.qId);
+				if (snapshot.buffer) inputBuffers.set(snapshot.qId, snapshot.buffer);
+				else inputBuffers.delete(snapshot.qId);
+				restoreInputBuffer(snapshot.qId, snapshot.buffer?.text ?? "");
+				refresh();
+			}
+
+			function saveCustomInput(): void {
+				if (!inputQuestionId) return;
+				syncInputAnswer(inputQuestionId);
+				saveInputBuffer(inputQuestionId);
+				inputMode = false;
+				inputQuestionId = null;
+				inputModeSnapshot = null;
+				refresh();
 			}
 
 			// ── Input handler ──────────────────────────────────────
 			function handleInput(data: string) {
 				const q = currentQuestion();
 				const isReviewStep = currentQ === questions.length;
-				const isTextQuestion = q?.type === "text";
-				const useEditorViewport = Boolean((inputMode || isTextQuestion) && !isReviewStep);
-				if (matchesKey(data, Key.shift("up"))) {
-					scrollPromptLine(-1);
-					return;
-				}
-				if (matchesKey(data, Key.shift("down"))) {
-					scrollPromptLine(1);
-					return;
-				}
-				if (matchesKey(data, Key.pageUp)) {
-					if (isReviewStep) scrollReviewDetailsBy(-5);
-					else if (useEditorViewport) handleEditorInput(data, q);
-					else scrollPromptPage(-1);
-					return;
-				}
-				if (matchesKey(data, Key.pageDown)) {
-					if (isReviewStep) scrollReviewDetailsBy(5);
-					else if (useEditorViewport) handleEditorInput(data, q);
-					else scrollPromptPage(1);
-					return;
-				}
-				if (matchesKey(data, Key.home)) {
-					if (useEditorViewport) handleEditorInput(data, q);
-					else {
-						promptScrollOffset = 0;
-						refresh();
-					}
-					return;
-				}
-				if (matchesKey(data, Key.end)) {
-					if (useEditorViewport) handleEditorInput(data, q);
-					else {
-						promptScrollOffset = Number.MAX_SAFE_INTEGER;
-						refresh();
-					}
-					return;
-				}
-
 				const opts = q?.options || [];
-				const totalTabs = questions.length + 1;
-				// Save current input buffer before any navigation
-				function saveCurrentInput() {
-					if (!inputQuestionId) return;
-					if (inputMode || (q?.type === "text" && q.id === inputQuestionId)) {
-						syncInputAnswer(inputQuestionId);
-						saveInputBuffer(inputQuestionId);
+
+				function toggleCurrentOption(question: Question): void {
+					const opt = opts[optionIdx];
+					if (opt && question.type === "single") {
+						const buffer = getInputBuffer(question.id);
+						buffer.activeCustom = false;
+						saveAnswer(question.id, opt.value, opt.label, false, optionIdx + 1);
+					} else if (opt) {
+						const existing = answers.get(question.id);
+						const optionValues = new Set(opts.map((item) => item.value));
+						const isAlreadySelected = existing?.multiValues?.includes(opt.value);
+						const values = (existing?.multiValues || []).filter((value) => optionValues.has(value));
+						const newValues = isAlreadySelected ? values.filter((v) => v !== opt.value) : [...values, opt.value];
+						const labels = newValues.map((v) => opts.find((o) => o.value === v)?.label || v).join(", ");
+						if (newValues.length > 0) saveAnswer(question.id, newValues.join(","), labels, false, undefined, newValues);
+						else answers.delete(question.id);
+					} else {
+						beginCustomInput(question);
+						return;
 					}
+					refresh();
 				}
 
-				// ── Custom input mode for single/multi ─────────────
-				if (inputMode) {
-					if (matchesKey(data, Key.escape)) {
-						saveCurrentInput();
-						inputMode = false;
-						inputQuestionId = null;
-						refresh();
-						return;
-					}
-					if (matchesKey(data, Key.ctrl("c"))) {
-						submit(true);
-						return;
-					}
-					if (matchesKey(data, Key.enter)) {
-						submitInput();
-						return;
-					}
-					handleEditorInput(data, q);
-					return;
-				}
-
-				// ── Text questions are always editor-active ───────
-				if (q && q.type === "text") {
-					ensureTextEditorReady(q);
-					if (currentQ !== questions.length && isTabForward(data)) {
-						saveCurrentInput();
-						inputQuestionId = null;
-						setCurrentStep((currentQ + 1) % totalTabs);
-						return;
-					}
-					if (currentQ !== questions.length && isTabBackward(data)) {
-						saveCurrentInput();
-						inputQuestionId = null;
-						setCurrentStep((currentQ - 1 + totalTabs) % totalTabs);
-						return;
-					}
-					if (matchesKey(data, Key.enter)) {
-						syncInputAnswer(q.id);
-						saveInputBuffer(q.id);
-						inputQuestionId = null;
-						advanceToNextQuestion();
-						return;
-					}
-					if (matchesKey(data, Key.escape)) {
-						refresh();
-						return;
-					}
-					if (matchesKey(data, Key.ctrl("c"))) {
-						submit(true);
-						return;
-					}
-					handleEditorInput(data, q);
-					return;
-				}
-
-				// ── Normal mode ────────────────────────────────────
-				if (currentQ !== questions.length && isTabForward(data)) {
-					setCurrentStep((currentQ + 1) % totalTabs);
-					return;
-				}
-				if (currentQ !== questions.length && isTabBackward(data)) {
-					setCurrentStep((currentQ - 1 + totalTabs) % totalTabs);
-					return;
-				}
-
-				// Confirmation tab
-				if (currentQ === questions.length) {
-					if (matchesKey(data, Key.enter)) {
-						submit(false);
-					} else if (isCancelKey(data)) {
-						submit(true);
-					} else if (matchesKey(data, Key.left)) {
-						reviewFocus = "list";
-						refresh();
-					} else if (matchesKey(data, Key.right)) {
-						reviewFocus = "detail";
-						refresh();
-					} else if (isTabForward(data)) {
+				if (isReviewStep) {
+					if (matchesKey(data, Key.enter)) submit(false);
+					else if (isCancelKey(data)) submit(true);
+					else if (isTabForward(data)) {
 						if (reviewFocus === "list") {
 							reviewFocus = "detail";
 							refresh();
 						} else {
-							setCurrentStep((currentQ + 1) % totalTabs);
+							setCurrentStep(currentQ + 1);
 						}
 					} else if (isTabBackward(data)) {
 						if (reviewFocus === "detail") {
 							reviewFocus = "list";
 							refresh();
 						} else {
-							setCurrentStep((currentQ - 1 + totalTabs) % totalTabs);
+							setCurrentStep(currentQ - 1);
 						}
 					} else if (matchesKey(data, Key.up)) {
 						if (reviewFocus === "list") moveReview(-1);
@@ -625,89 +559,121 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					return;
 				}
 
-				// Option navigation (up/down) is only available outside input mode.
-				if (matchesKey(data, Key.up)) {
-					if (q && q.type !== "text") {
-						const movedWithinOption = scrollOrMoveOption(q, -1);
-						if (movedWithinOption) return;
-					}
-					refresh();
+				if (!q) return;
+				ensureStepFocus(q);
+				if (q.type === "text") ensureTextEditorReady(q);
+
+				if (!inputMode && isTabForward(data)) {
+					moveStepFocusOrTab(1);
 					return;
 				}
-				if (matchesKey(data, Key.down)) {
-					if (q && q.type !== "text") {
-						const movedWithinOption = scrollOrMoveOption(q, 1);
-						if (movedWithinOption) return;
-					}
-					refresh();
+				if (!inputMode && isTabBackward(data)) {
+					moveStepFocusOrTab(-1);
 					return;
 				}
 
-				if (matchesKey(data, Key.enter)) {
-					if (!q) return;
-					if (q.type === "multi") {
-						advanceToNextQuestion();
+				if (inputMode) {
+					if (matchesKey(data, Key.escape)) {
+						discardCustomInput();
 						return;
 					}
-					if (q.type === "single") {
-						const opt = opts[optionIdx];
-						if (opt) {
-							const buffer = getInputBuffer(q.id);
-							buffer.activeCustom = false;
-							saveAnswer(q.id, opt.value, opt.label, false, optionIdx + 1);
-							advanceToNextQuestion();
+					if (matchesKey(data, Key.enter)) {
+						saveCustomInput();
+						return;
+					}
+					if (matchesKey(data, Key.ctrl("c"))) {
+						submit(true);
+						return;
+					}
+					handleEditorInput(data);
+					return;
+				}
+
+				if (q.type === "text") {
+					if (stepFocus === "answer") {
+						if (matchesKey(data, Key.enter) || matchesKey(data, Key.return))
 							return;
-						}
-						const buffer = getInputBuffer(q.id);
-						buffer.activeCustom = true;
-						inputMode = true;
-						inputQuestionId = q.id;
-						restoreInputBuffer(q.id, answers.get(q.id)?.wasCustom ? answers.get(q.id)?.label || "" : "");
-						answerScrollOffset = Number.MAX_SAFE_INTEGER;
+						handleEditorInput(data);
+						return;
+					}
+					if (matchesKey(data, Key.up)) {
+						scrollPromptLine(-1);
+						return;
+					}
+					if (matchesKey(data, Key.down)) {
+						scrollPromptLine(1);
+						return;
+					}
+				}
+
+				if (matchesKey(data, Key.pageUp)) {
+					if (stepFocus === "question") scrollPromptPage(-1);
+					else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
+					else if (stepFocus === "answer") scrollAnswerBy(-Math.max(1, answerMaxRows() - 3));
+					return;
+				}
+				if (matchesKey(data, Key.pageDown)) {
+					if (stepFocus === "question") scrollPromptPage(1);
+					else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
+					else if (stepFocus === "answer") scrollAnswerBy(Math.max(1, answerMaxRows() - 3));
+					return;
+				}
+				if (matchesKey(data, Key.home)) {
+					if (stepFocus === "question") {
+						promptScrollOffset = 0;
+						refresh();
+					} else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
+					else if (stepFocus === "answer") {
+						answerScrollOffset = 0;
+						setOptionIdx(q, 0);
+						refresh();
+					}
+					return;
+				}
+				if (matchesKey(data, Key.end)) {
+					if (stepFocus === "question") {
+						promptScrollOffset = Number.MAX_SAFE_INTEGER;
+						refresh();
+					} else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
+					else if (stepFocus === "answer") {
+						setOptionIdx(q, Math.max(0, totalOptionCount(q) - 1));
+						ensureOptionVisible();
 						refresh();
 					}
 					return;
 				}
 
-				// Spacebar for single/multi select
-				if (matchesKey(data, Key.space) && q && (q.type === "multi" || q.type === "single")) {
-					const opt = opts[optionIdx];
-					if (opt && q.type === "single") {
-						const buffer = getInputBuffer(q.id);
-						buffer.activeCustom = false;
-						saveAnswer(q.id, opt.value, opt.label, false, optionIdx + 1);
-					} else if (opt) {
-						const existing = answers.get(q.id);
-						const optionValues = new Set(opts.map((item) => item.value));
-						const isAlreadySelected = existing?.multiValues?.includes(opt.value);
-						const values = (existing?.multiValues || []).filter((value) => optionValues.has(value));
-						const newValues = isAlreadySelected ? values.filter((v) => v !== opt.value) : [...values, opt.value];
-						const labels = newValues.map((v) => opts.find((o) => o.value === v)?.label || v).join(", ");
-						if (newValues.length > 0) saveAnswer(q.id, newValues.join(","), labels, false, undefined, newValues);
-						else answers.delete(q.id);
-					} else {
-						const buffer = getInputBuffer(q.id);
-						buffer.activeCustom = true;
-						inputMode = true;
-						inputQuestionId = q.id;
-						restoreInputBuffer(q.id, answers.get(q.id)?.wasCustom ? answers.get(q.id)?.label || "" : "");
-						answerScrollOffset = Number.MAX_SAFE_INTEGER;
+				if (matchesKey(data, Key.up)) {
+					if (stepFocus === "question") scrollPromptLine(-1);
+					else if (stepFocus === "answer" && q.type !== "text") {
+						scrollOrMoveOption(q, -1);
+						refresh();
 					}
-					refresh();
+					return;
+				}
+				if (matchesKey(data, Key.down)) {
+					if (stepFocus === "question") scrollPromptLine(1);
+					else if (stepFocus === "answer" && q.type !== "text") {
+						scrollOrMoveOption(q, 1);
+						refresh();
+					}
 					return;
 				}
 
-				// Cancel
-				if (isCancelKey(data)) {
-					submit(true);
+				if ((matchesKey(data, Key.space) || matchesKey(data, Key.enter)) && stepFocus === "answer" && (q.type === "multi" || q.type === "single")) {
+					toggleCurrentOption(q);
+					return;
 				}
+
+				if (isCancelKey(data)) submit(true);
 			}
 
 			// ── Render ─────────────────────────────────────────────
 			function render(width: number): string[] {
 				const qRender = currentQuestion();
 				if (qRender?.type === "text") ensureTextEditorReady(qRender);
-				editor.focused = Boolean(inputMode || qRender?.type === "text");
+				if (currentQ !== questions.length) ensureStepFocus(qRender);
+				syncEditorFocus(qRender);
 				const rows = typeof tui?.terminal?.rows === "number" ? tui.terminal.rows : 24;
 				if (cachedLines && cachedWidth === width && cachedRows === rows) return cachedLines;
 				const bodySize = modalBodySize(width);
@@ -791,15 +757,15 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					const visiblePrompt = addViewportIndicators(theme, promptViewport.visibleLines, regionInnerWidth, promptViewport.hiddenBefore, promptViewport.hiddenAfter, true);
 					const answerContentHeight = Math.max(1, answerHeight - 2);
 					lines.push("");
-					lines.push(...renderSectionBox(theme, false, "Question", regionWidth, visiblePrompt, questionHeight));
+					lines.push(...renderSectionBox(theme, stepFocus === "question", "Question", regionWidth, visiblePrompt, questionHeight));
 					lines.push("");
 
 					if (q.type === "text") {
-						lines.push(...renderSectionBox(theme, true, "Answer", regionWidth, renderEditorBodyLines(regionInnerWidth, answerContentHeight), answerHeight));
+						lines.push(...renderSectionBox(theme, stepFocus === "answer", "Answer", regionWidth, renderEditorBodyLines(regionInnerWidth, answerContentHeight), answerHeight));
 					} else if (optionIdx === opts.length && inputMode) {
 						answerScrollOffset = 0;
 						answerMaxScroll = 0;
-						lines.push(...renderSectionBox(theme, true, "Options", regionWidth, renderEditorBodyLines(regionInnerWidth, answerContentHeight), answerHeight));
+						lines.push(...renderSectionBox(theme, stepFocus === "answer", "Type Something", regionWidth, renderEditorBodyLines(regionInnerWidth, answerContentHeight), answerHeight));
 					} else {
 						const answerRows: string[] = [];
 						for (let i = 0; i < opts.length; i++) answerRows.push(renderCompactOptionLine(q, i, regionInnerWidth));
@@ -808,7 +774,7 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 						answerScrollOffset = answerViewport.offset;
 						answerMaxScroll = answerViewport.maxOffset;
 						const visibleAnswer = addViewportIndicators(theme, answerViewport.visibleLines, regionInnerWidth, answerViewport.hiddenBefore, answerViewport.hiddenAfter, true);
-						lines.push(...renderSectionBox(theme, true, "Options", regionWidth, visibleAnswer, answerHeight));
+						lines.push(...renderSectionBox(theme, stepFocus === "answer", "Options", regionWidth, visibleAnswer, answerHeight));
 					}
 					if (q.type !== "text") {
 						lines.push("");
@@ -816,11 +782,14 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 							theme.fg(hasCurrentAnswer(q) ? "success" : "dim", previewCurrentAnswer(q)),
 							Math.max(1, regionWidth - 4),
 						);
-						lines.push(...renderSectionBox(theme, false, "Answer", regionWidth, currentAnswerLines, currentAnswerHeight));
+						lines.push(...renderSectionBox(theme, stepFocus === "currentAnswer", "Answer", regionWidth, currentAnswerLines, currentAnswerHeight));
 					}
 					lines.push("");
 				}
 
+				const stepActionHint = q?.type === "text"
+					? stepFocus === "answer" ? "editor" : "scroll question"
+					: stepFocus === "answer" ? "move/select" : stepFocus === "question" ? "scroll question" : "read answer";
 				const frame = renderModal({
 					theme,
 					terminalRows: rows,
@@ -837,23 +806,20 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 					hints: isConfirmTab
 						? [
 							{ key: "↑↓", label: reviewFocus === "list" ? "move" : "scroll" },
-							{ key: "Tab/←→", label: "pane" },
+							{ key: "Tab", label: "pane/step" },
 							{ key: "Enter", label: "submit" },
 							{ key: "Esc", label: "cancel" },
 						]
 						: inputMode
 							? [
 								{ key: "↑↓", label: "editor" },
-								{ key: "Tab", label: "switch" },
-								{ key: "Shift+Enter", label: "newline" },
-								{ key: "Enter", label: "next" },
-								{ key: "Esc", label: "leave input" },
+								{ key: "Enter", label: "save input" },
+								{ key: "Esc", label: "discard input" },
 							]
 							: [
-								{ key: "↑↓", label: "move" },
-								{ key: "Tab", label: "switch" },
-								{ key: "Space", label: "select" },
-								{ key: "Enter", label: "next" },
+								{ key: "↑↓", label: stepActionHint },
+								{ key: "Tab", label: "pane/step" },
+								...(q?.type !== "text" && stepFocus === "answer" ? [{ key: "Space/Enter", label: "select" }] : []),
 								{ key: "Esc", label: "cancel" },
 							],
 				});
@@ -864,12 +830,20 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 			}
 
 			return {
+				get focused() {
+					return focused;
+				},
+				set focused(value: boolean) {
+					focused = value;
+					syncEditorFocus();
+				},
 				render,
 				invalidate: () => {
 					cachedLines = undefined;
+					editor.invalidate();
 				},
 				handleInput,
 				dispose: () => {},
-			};
+			} satisfies Component & Focusable & { dispose: () => void };
 		}, FULLSCREEN_OVERLAY_OPTIONS);
 }
