@@ -1,77 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Editor, type EditorTheme, Key, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, renderSplitPane } from "../../shared/modal.js";
+import { FULLSCREEN_OVERLAY_OPTIONS } from "../../shared/overlay.js";
 import { addViewportIndicators, getViewportWindow } from "../../shared/viewport.js";
 import { trimToWidth } from "../../shared/ui.js";
+import { renderInlineMarkdown, renderMarkdownLines } from "./markdown.js";
 import { currentAnswer as getCurrentAnswer, hasCurrentAnswer as getHasCurrentAnswer, previewCurrentAnswer as getPreviewCurrentAnswer } from "./answers.js";
 import { sanitizeDisplayText } from "./sanitize.js";
 import type { Answer, InputBuffer, Question, QuestionnaireResult } from "./types.js";
-
-function renderInlineMarkdown(text: string, theme: any): string {
-	return text
-		.replace(/`([^`]+)`/g, (_m, code) => theme.fg("accent", code))
-		.replace(/\*\*([^*]+)\*\*/g, (_m, bold) => theme.bold(bold))
-		.replace(/\*([^*]+)\*/g, (_m, italic) => theme.fg("muted", italic))
-		.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => `${label} ${theme.fg("dim", `(${url})`)}`);
-}
-
-function renderMarkdownLines(markdown: string, width: number, theme: any, tone: "text" | "success" | "dim" = "text"): string[] {
-	const lines: string[] = [];
-	const safeWidth = Math.max(1, width);
-	let inCodeBlock = false;
-
-	for (const rawLine of sanitizeDisplayText(markdown).split("\n")) {
-		if (/^```/.test(rawLine.trim())) {
-			inCodeBlock = !inCodeBlock;
-			continue;
-		}
-		if (!rawLine.trim()) {
-			lines.push("");
-			continue;
-		}
-		if (inCodeBlock) {
-			lines.push(theme.fg("accent", trimToWidth(rawLine, safeWidth)));
-			continue;
-		}
-
-		const heading = rawLine.match(/^(#{1,6})\s+(.*)$/);
-		if (heading) {
-			const level = heading[1].length;
-			const prefix = "#".repeat(level);
-			lines.push(...wrapTextWithAnsi(theme.fg("accent", theme.bold(`${prefix} ${renderInlineMarkdown(heading[2], theme)}`)), safeWidth));
-			continue;
-		}
-
-		const bullet = rawLine.match(/^\s*[-*+]\s+(.*)$/);
-		if (bullet) {
-			lines.push(...wrapTextWithAnsi(`${theme.fg("accent", "•")} ${theme.fg(tone, renderInlineMarkdown(bullet[1], theme))}`, safeWidth));
-			continue;
-		}
-
-		const ordered = rawLine.match(/^\s*(\d+)\.\s+(.*)$/);
-		if (ordered) {
-			lines.push(...wrapTextWithAnsi(`${theme.fg("accent", `${ordered[1]}.`)} ${theme.fg(tone, renderInlineMarkdown(ordered[2], theme))}`, safeWidth));
-			continue;
-		}
-
-		const quote = rawLine.match(/^>\s?(.*)$/);
-		if (quote) {
-			lines.push(...wrapTextWithAnsi(`${theme.fg("muted", "│")} ${theme.fg("muted", renderInlineMarkdown(quote[1], theme))}`, safeWidth));
-			continue;
-		}
-
-		const hr = rawLine.match(/^(-{3,}|\*{3,}|_{3,})$/);
-		if (hr) {
-			lines.push(theme.fg("border", "─".repeat(safeWidth)));
-			continue;
-		}
-
-		lines.push(...wrapTextWithAnsi(theme.fg(tone, renderInlineMarkdown(rawLine, theme)), safeWidth));
-	}
-
-	while (lines.length > 1 && lines.at(-1) === "" && lines.at(-2) === "") lines.pop();
-	return lines;
-}
 
 export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question[]): Promise<QuestionnaireResult> {
 	return ctx.ui.custom((tui: any, theme: any, _kb: any, done: (result: QuestionnaireResult) => void) => {
@@ -935,5 +871,5 @@ export function runQuestionnaire(pi: ExtensionAPI, ctx: any, questions: Question
 				handleInput,
 				dispose: () => {},
 			};
-		}, { overlay: true, overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left", margin: 0 } });
+		}, FULLSCREEN_OVERLAY_OPTIONS);
 }

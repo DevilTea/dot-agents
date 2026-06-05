@@ -71,16 +71,3 @@ export function previewCurrentAnswer(
 	return answer.wasCustom ? `(wrote) ${answer.label}` : answer.label;
 }
 
-export function buildMultiAnswer(question: Question, values: string[]): Answer | undefined {
-	const labels = values
-		.map((value) => question.options.find((opt) => opt.value === value)?.label || value)
-		.join(", ");
-	if (values.length === 0) return undefined;
-	return {
-		id: question.id,
-		value: values.join(","),
-		label: labels,
-		wasCustom: false,
-		multiValues: values,
-	};
-}
