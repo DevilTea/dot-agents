@@ -560,12 +560,12 @@ function restoreEditorPatch(): void {
 export default function editorSelectionHelper(pi: ExtensionAPI): void {
 	const patched = patchEditor()
 
-	pi.on('session_start', (_event, ctx) => {
-		ctx.ui.setStatus('editor-selection-helper', patched ? 'native editor patched' : 'native editor patch active')
-	})
+	// pi.on('session_start', (_event, ctx) => {
+	// 	ctx.ui.setStatus('editor-selection-helper', patched ? 'native editor patched' : 'native editor patch active')
+	// })
 
-	pi.on('session_shutdown', (_event, ctx) => {
-		restoreEditorPatch()
-		ctx.ui.setStatus('editor-selection-helper', undefined)
-	})
+	// pi.on('session_shutdown', (_event, ctx) => {
+	// 	restoreEditorPatch()
+	// 	ctx.ui.setStatus('editor-selection-helper', undefined)
+	// })
 }
