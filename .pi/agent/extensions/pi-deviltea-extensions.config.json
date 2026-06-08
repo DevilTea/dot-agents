@@ -1,0 +1,81 @@
+{
+	"editorSelectionHelper": {
+		"enabled": true,
+		"modifier": "cmd",
+		"visualSelection": true,
+		"bindings": {
+			"selectAll": [
+				"ctrl+shift+a"
+			],
+			"copySelection": [
+				"ctrl+shift+c"
+			],
+			"cancelSelection": [],
+			"deleteSelection": [
+				"backspace",
+				"delete"
+			],
+			"selectLeft": [
+				"shift+left"
+			],
+			"selectRight": [
+				"shift+right"
+			],
+			"selectUp": [
+				"shift+up"
+			],
+			"selectDown": [
+				"shift+down"
+			],
+			"selectWordLeft": [
+				"shift+alt+left"
+			],
+			"selectWordRight": [
+				"shift+alt+right"
+			],
+			"selectLineStart": [
+				"shift+{mod}+left",
+				"shift+home"
+			],
+			"selectLineEnd": [
+				"shift+{mod}+right",
+				"shift+end"
+			]
+		}
+	},
+	"customFooter": {
+		"enabled": true,
+		"pathStyle": "home-relative",
+		"showBranch": true,
+		"showProvider": true,
+		"showModel": true,
+		"showThinking": true,
+		"showContextUsage": true,
+		"contextUsageThresholds": {
+			"warning": 50,
+			"error": 80
+		},
+		"thinkingDisplay": {
+			"mode": "icon-label"
+		}
+	},
+	"modelSwitcher": {
+		"enabled": true,
+		"shortcut": "ctrl+shift+l",
+		"saveDefaults": {
+			"requireConfirm": true
+		}
+	},
+	"smartCommit": {
+		"enabled": true,
+		"recentCommitLimit": 30,
+		"inlineDiffCharLimit": 12000,
+		"inlineLogCharLimit": 12000,
+		"gitTimeoutMs": 120000,
+		"commitTimeoutMs": 180000,
+		"confirmBeforeApply": true
+	},
+	"askQuestions": {
+		"enabled": true
+	}
+}

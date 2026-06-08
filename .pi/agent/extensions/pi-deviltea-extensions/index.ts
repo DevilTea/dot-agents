@@ -1,20 +1,43 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+import type { ResolvedDevilteaExtensionsConfig } from './config/schema.js'
+import {
+	DEVILTEA_EXTENSIONS_CONFIG_PATH,
+	ensureDevilteaExtensionsConfigFile,
+	resetDevilteaExtensionsConfigFile,
+} from './config/load.js'
 import askQuestions from './features/ask-questions/index.js'
 import customFooter from './features/custom-footer/index.js'
 import editorSelectionHelper from './features/editor-selection-helper/index.js'
 import modelSwitcher from './features/model-switcher/index.js'
 import smartCommit from './features/smart-commit/index.js'
 
-type ExtensionRegistrar = (pi: ExtensionAPI) => void
+type FeatureName = keyof ResolvedDevilteaExtensionsConfig
+type ExtensionRegistrar = (pi: ExtensionAPI, config: ResolvedDevilteaExtensionsConfig) => void
 
-const extensions: ExtensionRegistrar[] = [
-	askQuestions,
-	customFooter,
-	editorSelectionHelper,
-	modelSwitcher,
-	smartCommit,
+const RESET_CONFIG_COMMAND = 'reset-pi-deviltea-extensions-config'
+
+const extensions: Array<{ name: FeatureName, register: ExtensionRegistrar }> = [
+	{ name: 'askQuestions', register: askQuestions },
+	{ name: 'customFooter', register: customFooter },
+	{ name: 'editorSelectionHelper', register: editorSelectionHelper },
+	{ name: 'modelSwitcher', register: modelSwitcher },
+	{ name: 'smartCommit', register: smartCommit },
 ]
 
 export default function devilteaExtensions(pi: ExtensionAPI) {
-	for (const register of extensions) register(pi)
+	const config = ensureDevilteaExtensionsConfigFile()
+
+	pi.registerCommand(RESET_CONFIG_COMMAND, {
+		description: `Reset ${DEVILTEA_EXTENSIONS_CONFIG_PATH} to default settings`,
+		handler: async (_args, ctx) => {
+			resetDevilteaExtensionsConfigFile()
+			ctx.ui.notify(`Reset ${DEVILTEA_EXTENSIONS_CONFIG_PATH} to defaults. Restart pi to reload feature settings.`, 'info')
+		},
+	})
+
+	for (const { name, register } of extensions) {
+		if (!config[name].enabled)
+			continue
+		register(pi, config)
+	}
 }
