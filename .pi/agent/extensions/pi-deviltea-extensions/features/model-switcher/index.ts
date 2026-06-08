@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ResolvedDevilteaExtensionsConfig } from "../../config/schema.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
 import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, type ModalFrame } from "../../shared/modal.js";
@@ -346,8 +347,9 @@ async function openRuntimeSelector(pi: ExtensionAPI, ctx: ExtensionContext): Pro
 	ctx.ui.notify(`Runtime model: ${modelKey(result.model)} • thinking:${result.thinkingLevel}`, "info");
 }
 
-export default function piModelSwitcher(pi: ExtensionAPI) {
+export default function piModelSwitcher(pi: ExtensionAPI, bundleConfig: ResolvedDevilteaExtensionsConfig) {
 	installSettingsGuard();
+	const config = bundleConfig.modelSwitcher;
 
 	pi.registerCommand("save-model-defaults", {
 		description: "Save current model and thinking level as defaults",
@@ -363,11 +365,13 @@ export default function piModelSwitcher(pi: ExtensionAPI) {
 			}
 
 			const thinkingLevel = pi.getThinkingLevel();
-			const approved = await ctx.ui.custom<boolean>(
-				(tui: TUI, theme: Theme, _keybindings: unknown, done: (approved: boolean) => void) => new ConfirmDefaultsView(tui, theme, model, thinkingLevel, done),
-				FULLSCREEN_OVERLAY_OPTIONS,
-			);
-			if (!approved) return;
+			if (config.saveDefaults.requireConfirm) {
+				const approved = await ctx.ui.custom<boolean>(
+					(tui: TUI, theme: Theme, _keybindings: unknown, done: (approved: boolean) => void) => new ConfirmDefaultsView(tui, theme, model, thinkingLevel, done),
+					FULLSCREEN_OVERLAY_OPTIONS,
+				);
+				if (!approved) return;
+			}
 
 			await withDefaultWrites(async () => {
 				const settings = SettingsManager.create(ctx.cwd);
@@ -379,10 +383,12 @@ export default function piModelSwitcher(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerShortcut("ctrl+shift+l", {
-		description: "Open runtime model/thinking selector",
-		handler: async (ctx) => {
-			await openRuntimeSelector(pi, ctx);
-		},
-	});
+	if (config.shortcut) {
+		pi.registerShortcut(config.shortcut as any, {
+			description: "Open runtime model/thinking selector",
+			handler: async (ctx) => {
+				await openRuntimeSelector(pi, ctx);
+			},
+		});
+	}
 }

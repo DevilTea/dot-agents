@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import type { ResolvedDevilteaExtensionsConfig, ResolvedSmartCommitConfig } from "../../config/schema.js";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { Box, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -228,56 +229,56 @@ const writePatchFiles = async (commits: PlannedCommit[]): Promise<{ tempDir: str
         return { tempDir, patchFiles };
 };
 
-const resetIndex = async (pi: ExtensionAPI, cwd: string, signal?: AbortSignal): Promise<void> => {
-        await runGit(pi, ["reset", "--mixed", "HEAD"], { cwd, signal });
+const resetIndex = async (pi: ExtensionAPI, cwd: string, config: ResolvedSmartCommitConfig, signal?: AbortSignal): Promise<void> => {
+        await runGit(pi, ["reset", "--mixed", "HEAD"], { cwd, signal, defaultTimeoutMs: config.gitTimeoutMs });
 };
 
-const bestEffortResetIndex = async (pi: ExtensionAPI, cwd: string, signal?: AbortSignal): Promise<void> => {
+const bestEffortResetIndex = async (pi: ExtensionAPI, cwd: string, config: ResolvedSmartCommitConfig, signal?: AbortSignal): Promise<void> => {
         try {
-                await resetIndex(pi, cwd, signal);
+                await resetIndex(pi, cwd, config, signal);
         } catch {
         }
 };
 
-const applyPatchToIndex = async (pi: ExtensionAPI, cwd: string, patchFile: string, signal?: AbortSignal): Promise<void> => {
-        await runGit(pi, ["apply", "--cached", "--check", patchFile], { cwd, signal });
-        await runGit(pi, ["apply", "--cached", patchFile], { cwd, signal });
+const applyPatchToIndex = async (pi: ExtensionAPI, cwd: string, patchFile: string, config: ResolvedSmartCommitConfig, signal?: AbortSignal): Promise<void> => {
+        await runGit(pi, ["apply", "--cached", "--check", patchFile], { cwd, signal, defaultTimeoutMs: config.gitTimeoutMs });
+        await runGit(pi, ["apply", "--cached", patchFile], { cwd, signal, defaultTimeoutMs: config.gitTimeoutMs });
 };
 
-const preflightPatches = async (pi: ExtensionAPI, cwd: string, patchFiles: string[], signal?: AbortSignal): Promise<void> => {
-        await resetIndex(pi, cwd, signal);
+const preflightPatches = async (pi: ExtensionAPI, cwd: string, patchFiles: string[], config: ResolvedSmartCommitConfig, signal?: AbortSignal): Promise<void> => {
+        await resetIndex(pi, cwd, config, signal);
         try {
-                for (const patchFile of patchFiles) await applyPatchToIndex(pi, cwd, patchFile, signal);
+                for (const patchFile of patchFiles) await applyPatchToIndex(pi, cwd, patchFile, config, signal);
         } finally {
-                await bestEffortResetIndex(pi, cwd, signal);
+                await bestEffortResetIndex(pi, cwd, config, signal);
         }
 };
 
-const commitAppliedIndex = async (pi: ExtensionAPI, cwd: string, message: string, signal?: AbortSignal): Promise<string> => {
-        await runGit(pi, ["commit", "--message", message], { cwd, signal, timeout: 180_000 });
-        const hash = await runGit(pi, ["rev-parse", "--short", "HEAD"], { cwd, signal });
+const commitAppliedIndex = async (pi: ExtensionAPI, cwd: string, message: string, config: ResolvedSmartCommitConfig, signal?: AbortSignal): Promise<string> => {
+        await runGit(pi, ["commit", "--message", message], { cwd, signal, timeout: config.commitTimeoutMs, defaultTimeoutMs: config.gitTimeoutMs });
+        const hash = await runGit(pi, ["rev-parse", "--short", "HEAD"], { cwd, signal, defaultTimeoutMs: config.gitTimeoutMs });
         return hash.stdout.trim();
 };
 
-const applySmartCommits = async (pi: ExtensionAPI, request: PendingSmartCommitRequest, commits: PlannedCommit[], signal?: AbortSignal): Promise<CommittedCommit[]> => {
+const applySmartCommits = async (pi: ExtensionAPI, request: PendingSmartCommitRequest, commits: PlannedCommit[], config: ResolvedSmartCommitConfig, signal?: AbortSignal): Promise<CommittedCommit[]> => {
         const { tempDir, patchFiles } = await writePatchFiles(commits);
         const committed: CommittedCommit[] = [];
         try {
-                await preflightPatches(pi, request.repoRoot, patchFiles, signal);
+                await preflightPatches(pi, request.repoRoot, patchFiles, config, signal);
                 for (let index = 0; index < commits.length; index++) {
-                        await resetIndex(pi, request.repoRoot, signal);
-                        await applyPatchToIndex(pi, request.repoRoot, patchFiles[index]!, signal);
-                        const hash = await commitAppliedIndex(pi, request.repoRoot, commits[index]!.message, signal);
+                        await resetIndex(pi, request.repoRoot, config, signal);
+                        await applyPatchToIndex(pi, request.repoRoot, patchFiles[index]!, config, signal);
+                        const hash = await commitAppliedIndex(pi, request.repoRoot, commits[index]!.message, config, signal);
                         committed.push({ message: commits[index]!.message, hash });
                 }
-                await bestEffortResetIndex(pi, request.repoRoot, signal);
+                await bestEffortResetIndex(pi, request.repoRoot, config, signal);
                 return committed;
         } finally {
                 await rm(tempDir, { recursive: true, force: true });
         }
 };
 
-const handleSmartCommitCommand = async (pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> => {
+const handleSmartCommitCommand = async (pi: ExtensionAPI, config: ResolvedSmartCommitConfig, args: string, ctx: ExtensionCommandContext): Promise<void> => {
         if (args.trim()) {
                 ctx.ui.notify("/smart-commit does not accept arguments.", "warning");
                 return;
@@ -293,14 +294,14 @@ const handleSmartCommitCommand = async (pi: ExtensionAPI, args: string, ctx: Ext
 
         try {
                 ctx.ui.notify("Preparing smart commit analysis.", "info");
-                const repoRoot = await getRepoRoot(pi, ctx.cwd, ctx.signal);
-                const selected = await selectTargetDiff(pi, repoRoot, ctx.signal);
+                const repoRoot = await getRepoRoot(pi, ctx.cwd, ctx.signal, config);
+                const selected = await selectTargetDiff(pi, repoRoot, ctx.signal, config);
                 if (!selected.diff.trim()) throw new Error("Selected changes produced an empty diff.");
                 const requestId = randomUUID();
                 const targetDiffHash = hashDiff(selected.mode, selected.diff);
                 const diffSections = parseDiffSections(selected.diff);
                 if (diffSections.length === 0) throw new Error("Selected diff could not be parsed into git diff sections.");
-                const diffFile = await writeLargeDiff(requestId, selected.diff);
+                const diffFile = await writeLargeDiff(requestId, selected.diff, config);
                 const request: PendingSmartCommitRequest = {
                         requestId,
                         cwd: ctx.cwd,
@@ -314,10 +315,10 @@ const handleSmartCommitCommand = async (pi: ExtensionAPI, args: string, ctx: Ext
                         createdAt: Date.now(),
                 };
                 pendingRequests.set(requestId, request);
-                const recentMessages = await getRecentCommitMessages(pi, repoRoot, ctx.signal);
+                const recentMessages = await getRecentCommitMessages(pi, repoRoot, ctx.signal, config);
                 pi.sendMessage({
                         customType: ANALYSIS_MESSAGE_TYPE,
-                        content: buildPrompt(request, recentMessages),
+                        content: buildPrompt(request, recentMessages, config.inlineDiffCharLimit),
                         display: true,
                         details: buildAnalysisDetails(request),
                 }, { triggerTurn: true });
@@ -326,7 +327,7 @@ const handleSmartCommitCommand = async (pi: ExtensionAPI, args: string, ctx: Ext
         }
 };
 
-const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
+const createApplyPlanTool = (pi: ExtensionAPI, config: ResolvedSmartCommitConfig) => defineTool({
         name: APPLY_PLAN_TOOL,
         label: "Smart Commit Apply Plan",
         description: "Present a proposed smart commit plan for fullscreen confirmation, then apply approved commits.",
@@ -378,7 +379,9 @@ const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
                 }
 
                 try {
-                        const approved = await showConfirmView(pi, ctx, request, commits);
+                        const approved = config.confirmBeforeApply
+                                ? await showConfirmView(pi, ctx, request, commits)
+                                : true;
                         if (!approved) {
                                 pendingRequests.delete(params.requestId);
                                 return {
@@ -388,7 +391,7 @@ const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
                                 };
                         }
 
-                        const committed = await applySmartCommits(pi, request, commits, signal);
+                        const committed = await applySmartCommits(pi, request, commits, config, signal);
                         pendingRequests.delete(params.requestId);
                         return {
                                 content: [{ type: "text", text: `Created ${committed.length} commit${committed.length === 1 ? "" : "s"}.` }],
@@ -397,7 +400,7 @@ const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
                         };
                 } catch (error) {
                         pendingRequests.delete(params.requestId);
-                        await bestEffortResetIndex(pi, request.repoRoot, signal);
+                        await bestEffortResetIndex(pi, request.repoRoot, config, signal);
                         return {
                                 content: [{ type: "text", text: `Smart commit failed: ${asErrorMessage(error)}` }],
                                 details: { status: "error", requestId: params.requestId, mode: request.mode, error: asErrorMessage(error) } satisfies SmartCommitToolDetails,
@@ -421,7 +424,8 @@ const createApplyPlanTool = (pi: ExtensionAPI) => defineTool({
         },
 });
 
-export default function smartCommitExtension(pi: ExtensionAPI) {
+export default function smartCommitExtension(pi: ExtensionAPI, bundleConfig: ResolvedDevilteaExtensionsConfig) {
+        const config = bundleConfig.smartCommit;
         pi.registerMessageRenderer(ANALYSIS_MESSAGE_TYPE, (message, { expanded }, theme) => {
                 const details = message.details as SmartCommitAnalysisDetails | undefined;
                 const lines = [
@@ -445,11 +449,11 @@ export default function smartCommitExtension(pi: ExtensionAPI) {
                 box.addChild(new Text(lines.join("\n"), 0, 0));
                 return box;
         });
-        pi.registerTool(createApplyPlanTool(pi));
+        pi.registerTool(createApplyPlanTool(pi, config));
         pi.registerCommand("smart-commit", {
                 description: "Plan, review, and apply AI-split git commits",
                 handler: async (args, ctx) => {
-                        await handleSmartCommitCommand(pi, args, ctx);
+                        await handleSmartCommitCommand(pi, config, args, ctx);
                 },
         });
 }

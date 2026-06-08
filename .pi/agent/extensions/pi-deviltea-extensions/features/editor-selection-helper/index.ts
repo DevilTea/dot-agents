@@ -1,9 +1,7 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
+import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
 import type { KeyId } from '@earendil-works/pi-tui'
 
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { copyToClipboard } from '@earendil-works/pi-coding-agent'
 import {
 	CURSOR_MARKER,
@@ -31,16 +29,11 @@ type SelectionAction
 		| 'selectLineStart'
 		| 'selectLineEnd'
 
-interface ResolvedSelectionEditorConfig {
-	modifier: 'cmd' | 'super' | 'ctrl'
-	visualSelection: boolean
-	bindings: Record<SelectionAction, string | string[]>
-}
+type ResolvedSelectionEditorConfig = ResolvedDevilteaExtensionsConfig['editorSelectionHelper']
 
 interface SelectionState {
 	anchor: Position | null
 	focus: Position | null
-	config: ResolvedSelectionEditorConfig
 }
 
 interface VisualLine {
@@ -66,79 +59,13 @@ interface EditorPatch {
 	insertTextAtCursor: Editor['insertTextAtCursor']
 }
 
-const DEFAULT_CONFIG: ResolvedSelectionEditorConfig = {
-	modifier: 'cmd',
-	visualSelection: true,
-	bindings: {
-		selectAll: ['ctrl+shift+a'],
-		copySelection: ['ctrl+shift+c'],
-		cancelSelection: [],
-		deleteSelection: ['backspace', 'delete'],
-		selectLeft: ['shift+left'],
-		selectRight: ['shift+right'],
-		selectUp: ['shift+up'],
-		selectDown: ['shift+down'],
-		selectWordLeft: ['shift+alt+left'],
-		selectWordRight: ['shift+alt+right'],
-		selectLineStart: ['shift+{mod}+left', 'shift+home'],
-		selectLineEnd: ['shift+{mod}+right', 'shift+end'],
-	},
-}
-
-const FEATURE_DIR = dirname(fileURLToPath(import.meta.url))
-const AGENT_DIR = join(FEATURE_DIR, '..', '..', '..', '..')
-const CONFIG_PATHS = [
-	join(FEATURE_DIR, 'config.json'),
-	join(AGENT_DIR, 'editor-selection-helper.json'),
-	join(AGENT_DIR, 'selection-editor.json'),
-]
 const PATCH_SYMBOL = Symbol.for('deviltea.editor-selection-helper.patch')
 const STATE = new WeakMap<Editor, SelectionState>()
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function readJson(path: string): unknown {
-	if (!existsSync(path))
-		return undefined
-	return JSON.parse(readFileSync(path, 'utf8'))
-}
-
-function resolveModifier(value: unknown): ResolvedSelectionEditorConfig['modifier'] {
-	if (value === 'ctrl' || value === 'super')
-		return value
-	return 'cmd'
-}
-
-function resolveVisualSelection(value: unknown): boolean {
-	return value !== false && value !== 'off'
-}
-
-function readConfig(): ResolvedSelectionEditorConfig {
-	const settings = readJson(join(AGENT_DIR, 'settings.json'))
-	const settingsConfig = isRecord(settings) && isRecord(settings.editorSelectionHelper)
-		? settings.editorSelectionHelper
-		: isRecord(settings) && isRecord(settings.selectionEditor)
-			? settings.selectionEditor
-			: undefined
-
-	const fileConfig = CONFIG_PATHS.map(readJson)
-		.find(isRecord)
-	const raw = { ...DEFAULT_CONFIG, ...(settingsConfig ?? {}), ...(fileConfig ?? {}) }
-	const bindings = { ...DEFAULT_CONFIG.bindings, ...(isRecord(raw.bindings) ? raw.bindings : {}) }
-
-	return {
-		modifier: resolveModifier(raw.modifier),
-		visualSelection: resolveVisualSelection(raw.visualSelection),
-		bindings,
-	}
-}
 
 function getState(editor: Editor): SelectionState {
 	let state = STATE.get(editor)
 	if (!state) {
-		state = { anchor: null, focus: null, config: readConfig() }
+		state = { anchor: null, focus: null }
 		STATE.set(editor, state)
 	}
 	return state
@@ -160,8 +87,7 @@ function matchesAny(data: string, keys: string[], modifier: 'cmd' | 'super' | 'c
 	return keys.some(key => matchesKey(data, normalizeKeyId(key, modifier)))
 }
 
-function matchAction(editor: Editor, data: string): SelectionAction | null {
-	const config = getState(editor).config
+function matchAction(editor: Editor, data: string, config: ResolvedSelectionEditorConfig): SelectionAction | null {
 	for (const action of Object.keys(config.bindings) as SelectionAction[]) {
 		if (matchesAny(data, toArray(config.bindings[action]), config.modifier))
 			return action
@@ -280,8 +206,7 @@ function shouldReplaceSelection(data: string): boolean {
 	return data.includes('\x1B[200~') || data === '\n' || data === '\r' || data.charCodeAt(0) >= 32
 }
 
-function isSelectionExtendKey(editor: Editor, data: string): boolean {
-	const config = getState(editor).config
+function isSelectionExtendKey(editor: Editor, data: string, config: ResolvedSelectionEditorConfig): boolean {
 	return [
 		'selectLeft',
 		'selectRight',
@@ -470,10 +395,9 @@ function visibleVisualLines(editor: Editor, rendered: string[]): VisualLine[] | 
 	return visible.length === bodyLineCount ? visible : null
 }
 
-function renderWithVisualSelection(editor: Editor, width: number, original: EditorPatch): string[] {
+function renderWithVisualSelection(editor: Editor, width: number, original: EditorPatch, config: ResolvedSelectionEditorConfig): string[] {
 	const rendered = original.render.call(editor, width)
-	const state = getState(editor)
-	if (!state.config.visualSelection || !hasSelection(editor) || internals(editor).autocompleteState)
+	if (!config.visualSelection || !hasSelection(editor) || internals(editor).autocompleteState)
 		return rendered
 
 	const range = selectionRange(editor)
@@ -497,7 +421,7 @@ function renderWithVisualSelection(editor: Editor, width: number, original: Edit
 	return renderInvariantHolds(rendered, decorated, width) ? decorated : rendered
 }
 
-function patchEditor(): boolean {
+function patchEditor(config: ResolvedSelectionEditorConfig): boolean {
 	const prototype = Editor.prototype as Editor & { [PATCH_SYMBOL]?: EditorPatch }
 	if (prototype[PATCH_SYMBOL])
 		return false
@@ -511,7 +435,7 @@ function patchEditor(): boolean {
 	prototype[PATCH_SYMBOL] = original
 
 	Editor.prototype.handleInput = function patchedHandleInput(this: Editor, data: string): void {
-		const action = matchAction(this, data)
+		const action = matchAction(this, data, config)
 		if (action) {
 			handleSelectionAction(this, action, data, original)
 			;(this as unknown as { tui: { requestRender: () => void } }).tui.requestRender()
@@ -523,12 +447,12 @@ function patchEditor(): boolean {
 
 		original.handleInput.call(this, data)
 
-		if (!isSelectionExtendKey(this, data))
+		if (!isSelectionExtendKey(this, data, config))
 			clearSelection(this)
 	}
 
 	Editor.prototype.render = function patchedRender(this: Editor, width: number): string[] {
-		return renderWithVisualSelection(this, width, original)
+		return renderWithVisualSelection(this, width, original, config)
 	}
 
 	Editor.prototype.setText = function patchedSetText(this: Editor, text: string): void {
@@ -557,8 +481,8 @@ function restoreEditorPatch(): void {
 	delete prototype[PATCH_SYMBOL]
 }
 
-export default function editorSelectionHelper(pi: ExtensionAPI): void {
-	const patched = patchEditor()
+export default function editorSelectionHelper(_pi: ExtensionAPI, bundleConfig: ResolvedDevilteaExtensionsConfig): void {
+	const patched = patchEditor(bundleConfig.editorSelectionHelper)
 
 	// pi.on('session_start', (_event, ctx) => {
 	// 	ctx.ui.setStatus('editor-selection-helper', patched ? 'native editor patched' : 'native editor patch active')

@@ -1,11 +1,11 @@
 import type { PendingSmartCommitRequest, SmartCommitAnalysisDetails } from './types.js'
-import { APPLY_PLAN_TOOL, MAX_INLINE_DIFF_CHARS } from './constants.js'
+import { APPLY_PLAN_TOOL } from './constants.js'
 import { formatDiffManifest } from './diff.js'
 
-export function buildPrompt(request: PendingSmartCommitRequest, recentMessages: string): string {
-	const inlineDiff = request.targetDiff.length <= MAX_INLINE_DIFF_CHARS
+export function buildPrompt(request: PendingSmartCommitRequest, recentMessages: string, inlineDiffCharLimit: number): string {
+	const inlineDiff = request.targetDiff.length <= inlineDiffCharLimit
 		? request.targetDiff
-		: request.targetDiff.slice(0, MAX_INLINE_DIFF_CHARS)
+		: request.targetDiff.slice(0, inlineDiffCharLimit)
 	const omitted = request.targetDiff.length - inlineDiff.length
 	const diffSection = [
 		'Selected diff section manifest:',

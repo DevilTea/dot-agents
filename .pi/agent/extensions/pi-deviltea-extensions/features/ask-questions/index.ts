@@ -12,6 +12,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ResolvedDevilteaExtensionsConfig } from "../../config/schema.js";
 import { Text } from "@earendil-works/pi-tui";
 import { renderStatus, renderToolCallTitle } from "../../shared/ui.js";
 import { formatAnswerLines, formatRenderedAnswer } from "./format.js";
@@ -21,7 +22,7 @@ import type { Question, QuestionnaireResult } from "./types.js";
 
 // ── Extension ────────────────────────────────────────────────────────────
 
-export default function askQuestions(pi: ExtensionAPI) {
+export default function askQuestions(pi: ExtensionAPI, _config: ResolvedDevilteaExtensionsConfig) {
 	pi.registerTool({
 		name: "ask_questions",
 		label: "Ask Questions",

@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ThemeColor } from '@earendil-works/pi-coding-agent'
+import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
@@ -34,8 +35,9 @@ const thinkingLabels: Record<ThinkingLevel, string> = {
 	xhigh: 'xhi',
 }
 
-function formatCwdForFooter(cwd: string, home = homedir()): string {
-	if (!home) return cwd
+function formatCwdForFooter(cwd: string, pathStyle: 'home-relative' | 'absolute', home = homedir()): string {
+	if (pathStyle === 'absolute' || !home)
+		return cwd
 	const resolvedCwd = resolve(cwd)
 	const resolvedHome = resolve(home)
 	if (resolvedCwd.startsWith(resolvedHome + '/')) {
@@ -44,15 +46,29 @@ function formatCwdForFooter(cwd: string, home = homedir()): string {
 	return cwd
 }
 
-function contextUsageLabel(theme: Theme, percent: number | null, windowStr: string): string {
-	if (percent === null) return theme.fg('dim', `${windowStr} —`)
+function contextUsageLabel(theme: Theme, percent: number | null, windowStr: string, warning: number, error: number): string {
+	if (percent === null)
+		return theme.fg('dim', `${windowStr} —`)
 	const pct = Math.round(percent)
-	const color = percent < 50 ? 'success' : percent < 80 ? 'warning' : 'error'
+	const color = percent < warning ? 'success' : percent < error ? 'warning' : 'error'
 	return theme.fg(color, `${windowStr} (${pct}%)`)
 }
 
-export default function customFooter(pi: ExtensionAPI) {
-	pi.on('session_start', (event, ctx) => {
+function renderThinking(theme: Theme, thinkingLevel: ThinkingLevel, mode: 'icon-label' | 'icon' | 'label'): string {
+	const thinkingColorKey = `thinking${thinkingLevel.charAt(0).toUpperCase() + thinkingLevel.slice(1)}` as ThemeColor
+	const icon = thinkingIcons[thinkingLevel]
+	const label = thinkingLabels[thinkingLevel]
+	const content = mode === 'icon'
+		? icon
+		: mode === 'label'
+			? label
+			: `${icon} ${label}`
+	return theme.fg(thinkingColorKey, content)
+}
+
+export default function customFooter(pi: ExtensionAPI, bundleConfig: ResolvedDevilteaExtensionsConfig) {
+	const config = bundleConfig.customFooter
+	pi.on('session_start', (_event, ctx) => {
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const unsubBranch = footerData.onBranchChange(() => tui.requestRender())
 
@@ -62,41 +78,38 @@ export default function customFooter(pi: ExtensionAPI) {
 				},
 				invalidate() {},
 				render(width: number): string[] {
-					// Left side: path + git branch
-					const cwd = formatCwdForFooter(ctx.cwd)
+					const cwd = formatCwdForFooter(ctx.cwd, config.pathStyle)
 					const branch = footerData.getGitBranch()
-					const branchStr = branch ? ` (${branch})` : ''
+					const branchStr = config.showBranch && branch ? ` (${branch})` : ''
 					const left = `${cwd}${branchStr}`
 
-					// Right side: context usage + provider + model + thinking
 					const usage = ctx.getContextUsage()
 					const percent = usage?.percent ?? null
-
 					const contextWindow = usage?.contextWindow == null
 						? null
 						: `${Math.floor(usage.contextWindow / 1_000)}K`
 					const contextWindowStr = contextWindow ?? '—'
 
 					const model = ctx.model
-					const provider = model?.provider ?? '—'
-					const modelId = model?.name ?? '—'
+					const rightParts: string[] = []
+					if (config.showProvider)
+						rightParts.push(`⚙ ${theme.fg('text', model?.provider ?? '—')}`)
+					if (config.showModel)
+						rightParts.push(model?.name ?? '—')
+					if (config.showThinking)
+						rightParts.push(renderThinking(theme, pi.getThinkingLevel() as ThinkingLevel, config.thinkingDisplay.mode))
+					if (config.showContextUsage)
+						rightParts.push(contextUsageLabel(theme, percent, contextWindowStr, config.contextUsageThresholds.warning, config.contextUsageThresholds.error))
 
-					const thinkingLevel = pi.getThinkingLevel() as ThinkingLevel
-					const thinkingColorKey = `thinking${thinkingLevel.charAt(0).toUpperCase() + thinkingLevel.slice(1)}` as ThemeColor
-					const icon = thinkingIcons[thinkingLevel]
-					const label = thinkingLabels[thinkingLevel]
-					const thinkingStr = theme.fg(thinkingColorKey, `${icon} ${label}`)
+					if (rightParts.length === 0)
+						return [truncateToWidth(left, width)]
 
-					const right = `⚙ ${theme.fg('text', provider)} │ ${modelId} │ ${thinkingStr} │ ${contextUsageLabel(theme, percent, contextWindowStr)}`
-
-					// Calculate spacer
+					const right = rightParts.join(' │ ')
 					const leftWidth = visibleWidth(left)
 					const rightWidth = visibleWidth(right)
 					const spacerSize = Math.max(1, width - leftWidth - rightWidth)
 					const spacer = ' '.repeat(spacerSize)
-
-					const fullLine = `${left}${spacer}${right}`
-					return [truncateToWidth(fullLine, width)]
+					return [truncateToWidth(`${left}${spacer}${right}`, width)]
 				},
 			}
 		})
