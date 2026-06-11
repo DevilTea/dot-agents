@@ -10,16 +10,29 @@
       },
       "models": [
         {
-          "id": "qwen3.6-35b-a3b-mtp",
+          "id": "qwen3.6-35b-a3b-mtp@q6_k_xl",
           "name": "Qwen3.6 [MOE] [Q6]",
           "reasoning": true,
           "input": [
             "text",
             "image"
           ],
-          "contextWindow": 131072
+          "contextWindow": 131072,
+          "supportsReasoningEffort": false
+        },
+        {
+          "id": "qwen3.6-35b-a3b-mtp@q8_k_xl",
+          "name": "Qwen3.6 [MOE] [Q8]",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 131072,
+          "supportsReasoningEffort": false
         }
-      ]
+      ],
+      "supportsReasoningEffort": false
     }
   }
 }
