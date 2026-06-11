@@ -5,5 +5,8 @@
   "defaultModel": "gpt-5.4",
   "doubleEscapeAction": "tree",
   "defaultThinkingLevel": "medium",
-  "theme": "nord"
+  "theme": "nord",
+  "retry": {
+    "enabled": true
+  }
 }
