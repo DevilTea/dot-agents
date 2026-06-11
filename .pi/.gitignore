@@ -3,5 +3,6 @@ run-history.jsonl
 agent/sessions/
 agent/bin/
 agent/git/
+agent/npm/
 agent/pi-crash.log
 trust.json

@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.79.1",
   "packages": [
-    "git:github.com/ravshansbox/vscode-pi-companion"
+    "npm:@m4riok/pi-ide-bridge"
   ],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.4",
