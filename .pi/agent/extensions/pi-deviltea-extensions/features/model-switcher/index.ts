@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { ResolvedDevilteaExtensionsConfig } from "../../config/schema.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
-import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, type ModalFrame } from "../../shared/modal.js";
+import { Key, matchesKey, visibleWidth, type Component, type EditorComponent, type TUI } from "@earendil-works/pi-tui";
+import { isCancelKey, isTabBackward, isTabForward, renderModal } from "../../shared/modal.js";
 import { FULLSCREEN_OVERLAY_OPTIONS } from "../../shared/overlay.js";
 import { ensureViewportIndex } from "../../shared/viewport.js";
 
@@ -31,6 +31,7 @@ const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	high: "Deep reasoning",
 	xhigh: "Maximum reasoning",
 };
+const SELECTOR_VISIBLE_ROWS = 15;
 
 const originalSetDefaultModelAndProvider = SettingsManager.prototype.setDefaultModelAndProvider;
 const originalSetDefaultThinkingLevel = SettingsManager.prototype.setDefaultThinkingLevel;
@@ -87,7 +88,7 @@ function clampThinkingLevel(model: RuntimeModel, level: ThinkingLevel): Thinking
 	return available[0] ?? "off";
 }
 
-class ModelThinkingSelectorView implements Component {
+class ModelThinkingSelectorView implements EditorComponent {
 	private focusPane: FocusPane = "models";
 	private focusedModelIndex: number;
 	private selectedModelIndex: number;
@@ -97,7 +98,6 @@ class ModelThinkingSelectorView implements Component {
 	private thinkingScroll = 0;
 	private modelVisibleRows = 1;
 	private thinkingVisibleRows = 1;
-	private lastFrame?: ModalFrame;
 
 	constructor(
 		private readonly tui: TUI,
@@ -115,38 +115,20 @@ class ModelThinkingSelectorView implements Component {
 	}
 
 	render(width: number): string[] {
-		const rows = this.tui.terminal.rows;
-		const bodySize = getModalBodySize("compact", width, rows, true);
-		const boxWidth = bodySize.width;
-		const boxHeight = bodySize.height;
-		const contentWidth = Math.max(1, boxWidth - 4);
-		const contentRows = Math.max(1, boxHeight - 2);
-		const body = this.focusPane === "models" ? this.renderModels(contentWidth, contentRows) : this.renderThinking(contentWidth, contentRows);
-		this.lastFrame = renderModal({
-			theme: this.theme,
-			terminalRows: rows,
-			width,
-			size: "compact",
-			title: "Runtime Model",
-			meta: `${modelKey(this.selectedModel())} • ${this.selectedThinkingLevel}`,
-			tabs: [
-				{ id: "models", label: "Model", complete: true },
-				{ id: "thinking", label: "Thinking level", complete: true },
-			],
-			activeTabId: this.focusPane,
-			body: renderSectionBox(this.theme, false, this.focusPane === "models" ? "Models" : "Thinking levels", boxWidth, body, boxHeight),
-			hints: [
-				{ key: "↑↓", label: "move" },
-				{ key: "Tab", label: "pane" },
-				{ key: "Space", label: "select" },
-				{ key: "Enter", label: "apply" },
-				{ key: "Esc", label: "cancel" },
-			],
-		});
-		return this.lastFrame.lines;
+		const contentWidth = Math.max(1, width);
+		const body = this.focusPane === "models" ? this.renderModels(contentWidth, SELECTOR_VISIBLE_ROWS) : this.renderThinking(contentWidth, SELECTOR_VISIBLE_ROWS);
+		const hiddenBefore = this.focusPane === "models" ? this.modelScroll : this.thinkingScroll;
+		const totalRows = this.focusPane === "models" ? this.models.length : this.thinkingLevels().length;
+		const visibleRows = this.focusPane === "models" ? this.modelVisibleRows : this.thinkingVisibleRows;
+		const hiddenAfter = Math.max(0, totalRows - hiddenBefore - visibleRows);
+		return this.renderEditorFrame(width, body, hiddenBefore, hiddenAfter);
 	}
 
 	invalidate(): void {}
+
+	getText(): string { return ""; }
+
+	setText(_text: string): void {}
 
 	dispose(): void {}
 
@@ -171,6 +153,58 @@ class ModelThinkingSelectorView implements Component {
 		}
 		if (matchesKey(data, Key.up)) this.moveFocused(-1);
 		else if (matchesKey(data, Key.down)) this.moveFocused(1);
+	}
+
+	private renderEditorFrame(width: number, body: string[], hiddenBefore: number, hiddenAfter: number): string[] {
+		const lineWidth = Math.max(1, width);
+		return [
+			this.renderBorder(lineWidth, hiddenBefore > 0 ? `↑ ${hiddenBefore} more` : undefined),
+			...body.flatMap((line) => this.wrapLine(line, lineWidth)).slice(0, SELECTOR_VISIBLE_ROWS).map((line) => this.padLine(line, lineWidth)),
+			this.renderBorder(lineWidth, hiddenAfter > 0 ? `↓ ${hiddenAfter} more` : undefined),
+		];
+	}
+
+	private renderBorder(width: number, label?: string): string {
+		if (!label) return this.theme.fg("border", "─".repeat(width));
+		const indicator = `─── ${label} `;
+		const remaining = Math.max(0, width - visibleWidth(indicator));
+		return this.theme.fg("border", `${indicator}${"─".repeat(remaining)}`);
+	}
+
+	private wrapLine(line: string, width: number): string[] {
+		if (visibleWidth(line) <= width) return [line];
+		const result: string[] = [];
+		let remaining = line;
+		while (visibleWidth(remaining) > width) {
+			let chunk = "";
+			let chunkWidth = 0;
+			for (const char of remaining) {
+				const nextWidth = visibleWidth(char);
+				if (chunkWidth + nextWidth > width) break;
+				chunk += char;
+				chunkWidth += nextWidth;
+			}
+			result.push(chunk);
+			remaining = remaining.slice(chunk.length);
+		}
+		result.push(remaining);
+		return result;
+	}
+
+	private padLine(line: string, width: number): string {
+		return `${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`;
+	}
+
+	private renderTabs(): string {
+		const tabs = [
+			{ id: "models", label: "Model" },
+			{ id: "thinking", label: "Thinking level" },
+		];
+		return tabs.map((tab) => {
+			const active = tab.id === this.focusPane;
+			const label = active ? `● ${tab.label}` : `○ ${tab.label}`;
+			return active ? this.theme.fg("accent", label) : this.theme.fg("muted", label);
+		}).join("  ");
 	}
 
 	private focusedModel(): RuntimeModel {
@@ -225,29 +259,30 @@ class ModelThinkingSelectorView implements Component {
 	}
 
 	private renderModels(width: number, visible: number): string[] {
-		const listRows = Math.max(1, visible - 4);
+		const header = [`${this.theme.fg("accent", "Runtime Model")}  ${this.theme.fg("muted", `${modelKey(this.selectedModel())} • ${this.selectedThinkingLevel}`)}  ${this.renderTabs()}`];
+		const listRows = Math.max(1, visible - header.length);
 		this.modelVisibleRows = listRows;
 		this.ensureVisible("models", listRows);
-		const lines = [this.theme.fg("dim", "Select runtime model. Space selects focused row; Enter applies selected model and thinking level."), ""];
+		const lines = [...header];
 		for (let i = this.modelScroll; i < Math.min(this.models.length, this.modelScroll + listRows); i++) {
 			const model = this.models[i]!;
 			const focused = i === this.focusedModelIndex;
 			const selected = i === this.selectedModelIndex;
 			const focus = focused ? this.theme.fg("accent", ">") : " ";
 			const radio = this.theme.fg(selected ? "success" : "muted", selected ? "●" : "○");
-			const text = `${focus} ${radio} (${model.provider}) ${modelName(model)}`;
+			const text = `${focus} ${radio} (${model.provider}) ${modelName(model)} ${this.theme.fg("muted", model.id)}`;
 			lines.push(focused ? this.theme.fg("accent", text) : text);
 		}
-		lines.push("", this.theme.fg("muted", `Focused model ID: ${this.focusedModel().id}`));
 		return lines;
 	}
 
 	private renderThinking(_width: number, visible: number): string[] {
 		const levels = this.thinkingLevels();
-		const listRows = Math.max(1, visible - 2);
+		const header = [`${this.theme.fg("accent", "Runtime Model")}  ${this.theme.fg("muted", `${modelKey(this.selectedModel())} • ${this.selectedThinkingLevel}`)}  ${this.renderTabs()}`];
+		const listRows = Math.max(1, visible - header.length);
 		this.thinkingVisibleRows = listRows;
 		this.ensureVisible("thinking", listRows);
-		const lines = [this.theme.fg("dim", `Thinking levels for ${modelKey(this.thinkingSourceModel())}.`), ""];
+		const lines = [...header];
 		for (let i = this.thinkingScroll; i < Math.min(levels.length, this.thinkingScroll + listRows); i++) {
 			const level = levels[i]!;
 			const focused = level === this.focusedThinkingLevel;
@@ -331,11 +366,12 @@ async function openRuntimeSelector(pi: ExtensionAPI, ctx: ExtensionContext): Pro
 	const currentModel = models.find((model) => sameModel(model, ctx.model)) ?? models[0]!;
 	const currentThinkingLevel = clampThinkingLevel(currentModel, pi.getThinkingLevel() as ThinkingLevel);
 
-	const result = await ctx.ui.custom<SelectorResult | null>(
-		(tui: TUI, theme: Theme, _keybindings: unknown, done: (value: SelectorResult | null) => void) =>
-			new ModelThinkingSelectorView(tui, theme, models, currentModel, currentThinkingLevel, done),
-		FULLSCREEN_OVERLAY_OPTIONS,
-	);
+	const previousEditor = ctx.ui.getEditorComponent();
+	const result = await new Promise<SelectorResult | null>((resolve) => {
+		ctx.ui.setEditorComponent((tui: TUI) =>
+			new ModelThinkingSelectorView(tui, ctx.ui.theme, models, currentModel, currentThinkingLevel, resolve));
+	});
+	ctx.ui.setEditorComponent(previousEditor);
 	if (!result) return;
 
 	const success = await pi.setModel(result.model as any);
