@@ -128,6 +128,14 @@ export interface AskQuestionsConfig {
 }
 
 /**
+ * Configuration for the system prompt viewer feature.
+ */
+export interface SyspromptManagerConfig {
+	/** Enables or disables the feature registration. */
+	enabled?: boolean
+}
+
+/**
  * Top-level configuration object stored in `pi-deviltea-extensions.config.json`.
  */
 export interface DevilteaExtensionsConfig {
@@ -141,6 +149,8 @@ export interface DevilteaExtensionsConfig {
 	smartCommit?: SmartCommitConfig
 	/** Settings for the ask_questions feature. */
 	askQuestions?: AskQuestionsConfig
+	/** Settings for the system prompt viewer feature. */
+	syspromptManager?: SyspromptManagerConfig
 }
 
 /**
@@ -263,6 +273,14 @@ export interface ResolvedAskQuestionsConfig {
 }
 
 /**
+ * Fully resolved configuration for the system prompt viewer feature.
+ */
+export interface ResolvedSyspromptManagerConfig {
+	/** Enables or disables the feature registration. */
+	enabled: boolean
+}
+
+/**
  * Fully resolved top-level configuration object used internally by the extension bundle.
  */
 export interface ResolvedDevilteaExtensionsConfig {
@@ -276,6 +294,8 @@ export interface ResolvedDevilteaExtensionsConfig {
 	smartCommit: ResolvedSmartCommitConfig
 	/** Settings for the ask_questions feature. */
 	askQuestions: ResolvedAskQuestionsConfig
+	/** Settings for the system prompt viewer feature. */
+	syspromptManager: ResolvedSyspromptManagerConfig
 }
 
 export const EditorSelectionHelperBindingsSchema = Type.Object({
@@ -350,12 +370,17 @@ export const AskQuestionsConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false })
 
+export const SyspromptManagerConfigSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false })
+
 export const DevilteaExtensionsConfigSchema = Type.Object({
 	editorSelectionHelper: Type.Optional(EditorSelectionHelperConfigSchema),
 	customFooter: Type.Optional(CustomFooterConfigSchema),
 	modelSwitcher: Type.Optional(ModelSwitcherConfigSchema),
 	smartCommit: Type.Optional(SmartCommitConfigSchema),
 	askQuestions: Type.Optional(AskQuestionsConfigSchema),
+	syspromptManager: Type.Optional(SyspromptManagerConfigSchema),
 }, { additionalProperties: false })
 
 export const DEFAULT_EDITOR_SELECTION_HELPER_CONFIG: ResolvedEditorSelectionHelperConfig = {
@@ -417,6 +442,10 @@ export const DEFAULT_ASK_QUESTIONS_CONFIG: ResolvedAskQuestionsConfig = {
 	enabled: true,
 }
 
+export const DEFAULT_SYSPROMPT_MANAGER_CONFIG: ResolvedSyspromptManagerConfig = {
+	enabled: true,
+}
+
 export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensionsConfig {
 	return {
 		editorSelectionHelper: {
@@ -434,5 +463,6 @@ export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensi
 		},
 		smartCommit: { ...DEFAULT_SMART_COMMIT_CONFIG },
 		askQuestions: { ...DEFAULT_ASK_QUESTIONS_CONFIG },
+		syspromptManager: { ...DEFAULT_SYSPROMPT_MANAGER_CONFIG },
 	}
 }

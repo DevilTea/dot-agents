@@ -10,6 +10,7 @@ import customFooter from './features/custom-footer/index.js'
 import editorSelectionHelper from './features/editor-selection-helper/index.js'
 import modelSwitcher from './features/model-switcher/index.js'
 import smartCommit from './features/smart-commit/index.js'
+import syspromptManager from './features/sysprompt-manager/index.js'
 
 type FeatureName = keyof ResolvedDevilteaExtensionsConfig
 type ExtensionRegistrar = (pi: ExtensionAPI, config: ResolvedDevilteaExtensionsConfig) => void
@@ -22,6 +23,7 @@ const extensions: Array<{ name: FeatureName, register: ExtensionRegistrar }> = [
 	{ name: 'editorSelectionHelper', register: editorSelectionHelper },
 	{ name: 'modelSwitcher', register: modelSwitcher },
 	{ name: 'smartCommit', register: smartCommit },
+	{ name: 'syspromptManager', register: syspromptManager },
 ]
 
 export default function devilteaExtensions(pi: ExtensionAPI) {

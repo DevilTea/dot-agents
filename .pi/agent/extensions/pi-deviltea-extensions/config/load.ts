@@ -13,6 +13,7 @@ import {
 	type ModelSwitcherConfig,
 	type ResolvedDevilteaExtensionsConfig,
 	type SmartCommitConfig,
+	type SyspromptManagerConfig,
 } from './schema.js'
 
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url))
@@ -106,6 +107,15 @@ function mergeAskQuestions(base: ResolvedDevilteaExtensionsConfig['askQuestions'
 	}
 }
 
+function mergeSyspromptManager(base: ResolvedDevilteaExtensionsConfig['syspromptManager'], override?: SyspromptManagerConfig): ResolvedDevilteaExtensionsConfig['syspromptManager'] {
+	if (!override)
+		return base
+	return {
+		...base,
+		...override,
+	}
+}
+
 function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: DevilteaExtensionsConfig): ResolvedDevilteaExtensionsConfig {
 	if (!override)
 		return base
@@ -115,6 +125,7 @@ function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: De
 		modelSwitcher: mergeModelSwitcher(base.modelSwitcher, override.modelSwitcher),
 		smartCommit: mergeSmartCommit(base.smartCommit, override.smartCommit),
 		askQuestions: mergeAskQuestions(base.askQuestions, override.askQuestions),
+		syspromptManager: mergeSyspromptManager(base.syspromptManager, override.syspromptManager),
 	}
 }
 
