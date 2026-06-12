@@ -8,6 +8,10 @@
         "CF-Access-Client-Id": "$CF_ACCESS_CLIENT_ID",
         "CF-Access-Client-Secret": "$CF_ACCESS_CLIENT_SECRET"
       },
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
       "models": [
         {
           "id": "qwen3.6-35b-a3b-mtp@q6_k_xl",
@@ -17,8 +21,7 @@
             "text",
             "image"
           ],
-          "contextWindow": 131072,
-          "supportsReasoningEffort": false
+          "contextWindow": 196608
         },
         {
           "id": "qwen3.6-35b-a3b-mtp@q8_k_xl",
@@ -28,11 +31,9 @@
             "text",
             "image"
           ],
-          "contextWindow": 131072,
-          "supportsReasoningEffort": false
+          "contextWindow": 196608
         }
-      ],
-      "supportsReasoningEffort": false
+      ]
     }
   }
 }
