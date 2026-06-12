@@ -43,22 +43,6 @@
 			]
 		}
 	},
-	"customFooter": {
-		"enabled": true,
-		"pathStyle": "home-relative",
-		"showBranch": true,
-		"showProvider": true,
-		"showModel": true,
-		"showThinking": true,
-		"showContextUsage": true,
-		"contextUsageThresholds": {
-			"warning": 50,
-			"error": 80
-		},
-		"thinkingDisplay": {
-			"mode": "icon-label"
-		}
-	},
 	"modelSwitcher": {
 		"enabled": true,
 		"shortcut": "ctrl+shift+l",

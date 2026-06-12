@@ -6,7 +6,6 @@ import {
 	resetDevilteaExtensionsConfigFile,
 } from './config/load.js'
 import askQuestions from './features/ask-questions/index.js'
-import customFooter from './features/custom-footer/index.js'
 import editorSelectionHelper from './features/editor-selection-helper/index.js'
 import modelSwitcher from './features/model-switcher/index.js'
 import smartCommit from './features/smart-commit/index.js'
@@ -19,7 +18,6 @@ const RESET_CONFIG_COMMAND = 'reset-pi-deviltea-extensions-config'
 
 const extensions: Array<{ name: FeatureName, register: ExtensionRegistrar }> = [
 	{ name: 'askQuestions', register: askQuestions },
-	{ name: 'customFooter', register: customFooter },
 	{ name: 'editorSelectionHelper', register: editorSelectionHelper },
 	{ name: 'modelSwitcher', register: modelSwitcher },
 	{ name: 'smartCommit', register: smartCommit },
