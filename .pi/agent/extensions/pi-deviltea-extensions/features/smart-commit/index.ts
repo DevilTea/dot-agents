@@ -4,12 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import type { ResolvedDevilteaExtensionsConfig, ResolvedSmartCommitConfig } from "../../config/schema.js";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { EditorComponent, TUI } from "@earendil-works/pi-tui";
 import { Box, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSplitPane, type ModalFrame } from "../../shared/modal.js";
-import { FULLSCREEN_OVERLAY_OPTIONS } from "../../shared/overlay.js";
-import { addViewportIndicators, getViewportWindow } from "../../shared/viewport.js";
+import { isCancelKey, isTabBackward, isTabForward } from "../../shared/modal.js";
+import { getViewportWindow } from "../../shared/viewport.js";
 import { expandTabs, fitToWidth, renderToolCallTitle, trimToWidth } from "../../shared/ui.js";
 import { ANALYSIS_MESSAGE_TYPE, APPLY_PLAN_TOOL, EXTENSION_NAME } from "./constants.js";
 import type { CommittedCommit, DiffSection, GitRunOptions, PendingSmartCommitRequest, PlannedCommit, PlannedCommitInput, SmartCommitAnalysisDetails, SmartCommitToolDetails, TargetMode } from "./types.js";
@@ -21,12 +20,11 @@ import { asErrorMessage, firstLine, patchStats } from "./utils.js";
 
 const pendingRequests = new Map<string, PendingSmartCommitRequest>();
 
-class SmartCommitConfirmView implements Component {
+class SmartCommitConfirmView implements EditorComponent {
         private selectedCommit = 0;
         private contentScroll = 0;
         private confirmArmed = false;
         private focusPane: "commits" | "detail" = "commits";
-        private lastFrame?: ModalFrame;
         private sidebarWidth = 38;
         private contentWidth = 91;
 
@@ -43,6 +41,10 @@ class SmartCommitConfirmView implements Component {
         invalidate(): void {}
 
         dispose(): void {}
+
+        getText(): string { return ""; }
+
+        setText(_text: string): void {}
 
         handleInput(data: string): void {
                 if (isCancelKey(data)) {
@@ -105,9 +107,10 @@ class SmartCommitConfirmView implements Component {
         }
 
         render(width: number): string[] {
-                const bodySize = getModalBodySize("wide", width, this.tui.terminal.rows, false);
-                const bodyWidth = Math.max(1, bodySize.width);
-                const bodyHeight = Math.max(4, bodySize.height);
+                const maxRows = this.maxRows();
+                const chromeRows = 4 + (this.confirmArmed ? 1 : 0);
+                const bodyWidth = Math.max(1, width);
+                const bodyHeight = Math.max(4, maxRows - chromeRows);
                 const minContentWidth = 28;
                 const maxSidebarWidth = 42;
                 const sidebarWidth = Math.max(24, Math.min(maxSidebarWidth, bodyWidth - minContentWidth - 3, Math.floor(bodyWidth * 0.28)));
@@ -117,38 +120,67 @@ class SmartCommitConfirmView implements Component {
                 const contentLines = this.renderContent(Math.max(1, contentWidth - 4));
                 const contentViewport = getViewportWindow(contentLines, this.contentScroll, Math.max(1, bodyHeight - 2));
                 this.contentScroll = contentViewport.offset;
-                const visibleContent = addViewportIndicators(this.theme, contentViewport.visibleLines, Math.max(1, contentWidth - 4), contentViewport.hiddenBefore, contentViewport.hiddenAfter);
-                const body = renderSplitPane(this.theme,
-                        { title: "Commits", width: sidebarWidth, lines: this.renderSidebar(sidebarWidth, bodyHeight - 2), focused: this.focusPane === "commits" },
-                        { title: "Diff", width: contentWidth, lines: visibleContent, focused: this.focusPane === "detail" },
-                        bodyHeight,
-                );
-                if (this.confirmArmed) body.unshift(this.theme.fg("warning", "Press Enter again to create commits. Esc cancels."), "");
-                this.lastFrame = renderModal({
-                        theme: this.theme,
-                        terminalRows: this.tui.terminal.rows,
-                        width,
-                        size: "wide",
-                        title: "Smart Commit Plan",
-                        meta: `${this.request.mode} changes • ${this.commits.length} commit${this.commits.length === 1 ? "" : "s"}`,
-                        body,
-                        hints: this.confirmArmed
-                                ? [
-                                        { key: "Enter", label: "confirm" },
-                                        { key: "Esc", label: "cancel" },
-                                ]
-                                : [
-                                        { key: "↑↓", label: this.focusPane === "commits" ? "move" : "scroll" },
-                                        { key: "Tab", label: "pane" },
-                                        { key: "Enter", label: "arm" },
-                                        { key: "Esc", label: "cancel" },
-                                ],
-                });
-                return this.lastFrame.lines;
+                const leftPane = this.renderPane("Commits", sidebarWidth, this.renderSidebar(sidebarWidth, bodyHeight - 2), bodyHeight, this.focusPane === "commits");
+                const rightPane = this.renderPane("Diff", contentWidth, contentViewport.visibleLines, bodyHeight, this.focusPane === "detail", contentViewport.hiddenBefore, contentViewport.hiddenAfter);
+                const body = this.joinPanes(leftPane, sidebarWidth, rightPane, contentWidth, bodyHeight);
+                const header = `${this.theme.fg("accent", "Smart Commit Plan")}  ${this.theme.fg("muted", `${this.request.mode} changes • ${this.commits.length} commit${this.commits.length === 1 ? "" : "s"}`)}`;
+                const hints = this.confirmArmed
+                        ? this.theme.fg("dim", "Enter confirm • Esc cancel")
+                        : this.theme.fg("dim", `↑↓ ${this.focusPane === "commits" ? "move" : "scroll"} • Tab pane • Enter arm • Esc cancel`);
+                return [
+                        this.renderBorder(bodyWidth),
+                        header,
+                        ...(this.confirmArmed ? [this.theme.fg("warning", "Press Enter again to create commits. Esc cancels.")] : []),
+                        ...body,
+                        hints,
+                        this.renderBorder(bodyWidth),
+                ].slice(0, maxRows);
         }
 
         private bodyHeight(): number {
-                return Math.max(4, getModalBodySize("wide", this.tui.terminal.columns, this.tui.terminal.rows, false).height);
+                return Math.max(4, this.maxRows() - 4);
+        }
+
+        private maxRows(): number {
+                return Math.max(8, Math.floor(this.tui.terminal.rows * 0.8));
+        }
+
+        private renderBorder(width: number): string {
+                return this.theme.fg("border", "─".repeat(Math.max(1, width)));
+        }
+
+        private renderPane(title: string, width: number, lines: string[], height: number, focused: boolean, hiddenBefore = 0, hiddenAfter = 0): string[] {
+                const color = focused ? "accent" : "border";
+                const safeWidth = Math.max(4, width);
+                const contentWidth = Math.max(1, safeWidth - 4);
+                const contentHeight = Math.max(0, height - 2);
+                const visibleLines = lines.slice(0, contentHeight);
+                const row = (line = ""): string => `${this.theme.fg(color, "│")} ${fitToWidth(line, contentWidth)} ${this.theme.fg(color, "│")}`;
+                const pane = [this.renderPaneBorder("top", title, safeWidth, color, hiddenBefore)];
+                for (const line of visibleLines) pane.push(row(line));
+                while (pane.length < height - 1) pane.push(row(""));
+                pane.push(this.renderPaneBorder("bottom", "", safeWidth, color, hiddenAfter));
+                return pane;
+        }
+
+        private renderPaneBorder(position: "top" | "bottom", title: string, width: number, color: "accent" | "border", hiddenCount: number): string {
+                const leftCorner = position === "top" ? "┌" : "└";
+                const rightCorner = position === "top" ? "┐" : "┘";
+                const titleLabel = title ? ` ${title} ` : "";
+                const scrollLabel = hiddenCount > 0 ? ` ${position === "top" ? "↑" : "↓"} ${hiddenCount} more ` : "";
+                const interiorWidth = Math.max(2, width - 2);
+                const separator = titleLabel && scrollLabel ? "─" : "";
+                const label = position === "top" ? `${titleLabel}${separator}${scrollLabel}` : scrollLabel;
+                const safeLabel = trimToWidth(label, interiorWidth);
+                return this.theme.fg(color, `${leftCorner}${safeLabel}${"─".repeat(Math.max(0, interiorWidth - visibleWidth(safeLabel)))}${rightCorner}`);
+        }
+
+        private joinPanes(left: string[], leftWidth: number, right: string[], rightWidth: number, height: number): string[] {
+                const rows: string[] = [];
+                for (let index = 0; index < height; index++) {
+                        rows.push(`${fitToWidth(left[index] ?? "", leftWidth)} ${fitToWidth(right[index] ?? "", rightWidth)}`);
+                }
+                return rows;
         }
 
         private moveCommit(delta: number): void {
@@ -164,6 +196,7 @@ class SmartCommitConfirmView implements Component {
 
         private renderSidebar(width: number, height: number): string[] {
                 const lines: string[] = [];
+                const contentWidth = Math.max(1, width - 4);
                 for (let index = 0; index < this.commits.length; index++) {
                         const commit = this.commits[index]!;
                         const stats = patchStats(commit.patch);
@@ -171,9 +204,12 @@ class SmartCommitConfirmView implements Component {
                         const marker = selected ? this.theme.fg("accent", ">") : " ";
                         const title = firstLine(commit.message);
                         const statText = this.theme.fg("dim", ` +${stats.additions}/-${stats.removals}`);
-                        const available = width - visibleWidth(marker) - visibleWidth(statText) - 2;
-                        const line = `${marker} ${selected ? this.theme.fg("accent", trimToWidth(title, available)) : trimToWidth(title, available)}${statText}`;
-                        lines.push(line);
+                        const wrapped = wrapTextWithAnsi(`${title}${statText}`, Math.max(1, contentWidth - 2));
+                        for (let lineIndex = 0; lineIndex < wrapped.length; lineIndex++) {
+                                const prefix = lineIndex === 0 ? `${marker} ` : "  ";
+                                const text = selected ? this.theme.fg("accent", wrapped[lineIndex]!) : wrapped[lineIndex]!;
+                                lines.push(`${prefix}${text}`);
+                        }
                 }
                 while (lines.length < height) lines.push("");
                 return lines.slice(0, height);
@@ -215,7 +251,14 @@ class SmartCommitConfirmView implements Component {
 
 const showConfirmView = async (pi: ExtensionAPI, ctx: ExtensionContext, request: PendingSmartCommitRequest, commits: PlannedCommit[]): Promise<boolean> => {
         if (!ctx.hasUI) return false;
-        return await ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => new SmartCommitConfirmView(pi, ctx, request, commits, tui, theme, done), FULLSCREEN_OVERLAY_OPTIONS);
+        const previousEditor = ctx.ui.getEditorComponent();
+        try {
+                return await new Promise<boolean>((resolve) => {
+                        ctx.ui.setEditorComponent((tui) => new SmartCommitConfirmView(pi, ctx, request, commits, tui, ctx.ui.theme, resolve));
+                });
+        } finally {
+                ctx.ui.setEditorComponent(previousEditor);
+        }
 };
 
 const writePatchFiles = async (commits: PlannedCommit[]): Promise<{ tempDir: string; patchFiles: string[] }> => {
