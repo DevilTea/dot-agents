@@ -1,9 +1,8 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from '@earendil-works/pi-coding-agent'
+import type { ExtensionAPI, Theme } from '@earendil-works/pi-coding-agent'
 import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
-import { Key, matchesKey, type Component, type TUI } from '@earendil-works/pi-tui'
-import { getModalBodySize, isCancelKey, renderModal, type ModalFrame } from '../../shared/modal.js'
-import { FULLSCREEN_OVERLAY_OPTIONS } from '../../shared/overlay.js'
-import { ensureViewportIndex } from '../../shared/viewport.js'
+import { Key, matchesKey, visibleWidth, type EditorComponent, type TUI } from '@earendil-works/pi-tui'
+import { isCancelKey } from '../../shared/modal.js'
+import { fitToWidth, trimToWidth } from '../../shared/ui.js'
 
 const SCROLL_UP = Key.up
 const SCROLL_DOWN = Key.down
@@ -39,10 +38,9 @@ function wrapLine(text: string, width: number): string[] {
 	return result
 }
 
-class SystemPromptViewer implements Component {
+class SystemPromptViewer implements EditorComponent {
 	private scrollOffset = 0
 	private contentRows = 1
-	private lastFrame?: ModalFrame
 
 	constructor(
 		private readonly tui: TUI,
@@ -52,36 +50,35 @@ class SystemPromptViewer implements Component {
 	) {}
 
 	render(width: number): string[] {
-		const rows = this.tui.terminal.rows
-		const bodySize = getModalBodySize('comfortable', width, rows, false)
-		const boxWidth = bodySize.width
-		const boxHeight = bodySize.height
-		const contentWidth = Math.max(1, boxWidth - 4)
-		const contentRows = Math.max(1, boxHeight - 2)
-
+		const maxRows = this.maxRows()
+		const contentWidth = Math.max(1, width - 2)
+		const contentRows = Math.max(1, maxRows - 5)
+		const allLines = this.renderWrappedLines(contentWidth)
+		const maxOffset = Math.max(0, allLines.length - contentRows)
+		this.scrollOffset = Math.max(0, Math.min(maxOffset, this.scrollOffset))
 		this.contentRows = contentRows
-		const rendered = this.renderBody(contentWidth, contentRows)
 
-		this.lastFrame = renderModal({
-			theme: this.theme,
-			terminalRows: rows,
-			width,
-			size: 'comfortable',
-			title: 'System Prompt',
-			meta: `${this.promptLines.length} lines`,
-			body: rendered,
-			hints: [
-				{ key: '↑↓', label: 'scroll' },
-				{ key: 'Ctrl+U/D', label: 'page' },
-				{ key: 'Esc', label: 'close' },
-			],
-		})
-		return this.lastFrame.lines
+		const visibleLines = allLines.slice(this.scrollOffset, this.scrollOffset + contentRows)
+		const hiddenBefore = this.scrollOffset
+		const hiddenAfter = Math.max(0, allLines.length - this.scrollOffset - visibleLines.length)
+
+		return [
+			this.renderEditorBoundary(width),
+			this.renderBorder('top', width, hiddenBefore),
+			...visibleLines.map(line => this.renderRow(line, width)),
+			this.renderBorder('bottom', width, hiddenAfter),
+			this.theme.fg('dim', '↑↓ scroll • Ctrl+U/D page • Esc close'),
+			this.renderEditorBoundary(width),
+		]
 	}
 
 	invalidate(): void {}
 
 	dispose(): void {}
+
+	getText(): string { return '' }
+
+	setText(_text: string): void {}
 
 	handleInput(data: string): void {
 		if (isCancelKey(data)) {
@@ -94,8 +91,7 @@ class SystemPromptViewer implements Component {
 			return
 		}
 		if (matchesKey(data, SCROLL_DOWN)) {
-			const maxOffset = Math.max(0, this.promptLines.length - this.contentRows)
-			this.scrollOffset = Math.min(maxOffset, this.scrollOffset + 1)
+			this.scrollOffset += 1
 			this.tui.requestRender()
 			return
 		}
@@ -105,43 +101,37 @@ class SystemPromptViewer implements Component {
 			return
 		}
 		if (matchesKey(data, SCROLL_PAGE_DOWN)) {
-			const maxOffset = Math.max(0, this.promptLines.length - this.contentRows)
-			this.scrollOffset = Math.min(maxOffset, this.scrollOffset + this.contentRows)
+			this.scrollOffset += this.contentRows
 			this.tui.requestRender()
 			return
 		}
 	}
 
-	private renderBody(width: number, visible: number): string[] {
-		const listRows = Math.max(1, visible - 2)
-		this.ensureVisible(listRows)
-		const lines: string[] = []
-
-		const start = this.scrollOffset
-		const end = Math.min(this.promptLines.length, this.scrollOffset + listRows)
-		const hiddenBefore = this.scrollOffset
-		const hiddenAfter = this.promptLines.length - end
-
-		for (let i = start; i < end; i++) {
-			const wrapped = wrapLine(this.promptLines[i]!, width)
-			lines.push(...wrapped)
-		}
-
-		if (hiddenBefore > 0 || hiddenAfter > 0) {
-			if (hiddenBefore > 0 && lines.length > 0) {
-				lines.unshift(this.theme.fg('dim', `↑ ${hiddenBefore} more lines above`))
-			}
-			if (hiddenAfter > 0 && lines.length < listRows) {
-				lines.push(this.theme.fg('dim', `↓ ${hiddenAfter} more lines below`))
-			}
-		}
-
-		return lines
+	private maxRows(): number {
+		return Math.max(8, Math.floor(this.tui.terminal.rows * 0.8))
 	}
 
-	private ensureVisible(contentRows: number): void {
-		const maxOffset = Math.max(0, this.promptLines.length - contentRows)
-		this.scrollOffset = Math.max(0, Math.min(maxOffset, this.scrollOffset))
+	private renderWrappedLines(width: number): string[] {
+		return this.promptLines.flatMap(line => wrapLine(line, width))
+	}
+
+	private renderRow(line: string, width: number): string {
+		return `${this.theme.fg('border', '│')}${fitToWidth(line, Math.max(1, width - 2))}${this.theme.fg('border', '│')}`
+	}
+
+	private renderEditorBoundary(width: number): string {
+		return this.theme.fg('border', '─'.repeat(Math.max(1, width)))
+	}
+
+	private renderBorder(position: 'top' | 'bottom', width: number, hiddenCount: number): string {
+		const leftCorner = position === 'top' ? '┌' : '└'
+		const rightCorner = position === 'top' ? '┐' : '┘'
+		const titleLabel = position === 'top' ? ` System Prompt (${this.promptLines.length} lines) ` : ''
+		const scrollLabel = hiddenCount > 0 ? ` ${position === 'top' ? '↑' : '↓'} ${hiddenCount} more ` : ''
+		const separator = titleLabel && scrollLabel ? '─' : ''
+		const interiorWidth = Math.max(2, width - 2)
+		const label = trimToWidth(`${titleLabel}${separator}${scrollLabel}`, interiorWidth)
+		return this.theme.fg('border', `${leftCorner}${label}${'─'.repeat(Math.max(0, interiorWidth - visibleWidth(label)))}${rightCorner}`)
 	}
 }
 
@@ -162,11 +152,14 @@ export default function syspromptManager(pi: ExtensionAPI, _config: ResolvedDevi
 
 			const lines = systemPrompt.split('\n')
 
-			await ctx.ui.custom<void>(
-				(tui: TUI, theme: Theme, _keybindings: unknown, done: () => void) =>
-					new SystemPromptViewer(tui, theme, lines, done),
-				FULLSCREEN_OVERLAY_OPTIONS,
-			)
+			const previousEditor = ctx.ui.getEditorComponent()
+			try {
+				await new Promise<void>((resolve) => {
+					ctx.ui.setEditorComponent((tui: TUI) => new SystemPromptViewer(tui, ctx.ui.theme, lines, resolve))
+				})
+			} finally {
+				ctx.ui.setEditorComponent(previousEditor)
+			}
 		},
 	})
 }
