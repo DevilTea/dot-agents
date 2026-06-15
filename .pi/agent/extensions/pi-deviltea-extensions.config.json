@@ -61,5 +61,44 @@
 	},
 	"askQuestions": {
 		"enabled": true
+	},
+	"worker": {
+		"enabled": true,
+		"roles": {
+			"Explorer": {
+				"model": null,
+				"systemPrompt": "Readonly investigation worker for exploration, research, codebase inspection, and evidence gathering. Do not modify files, repository state, dependencies, external services, or persistent configuration.",
+				"allowedTools": [
+					"read",
+					"bash",
+					"grep",
+					"find",
+					"ls"
+				],
+				"allowedCommands": [
+					"ls",
+					"pwd",
+					"find",
+					"rg",
+					"grep",
+					"cat",
+					"head",
+					"tail",
+					"wc",
+					"git status",
+					"git diff",
+					"git log",
+					"git show",
+					"git branch",
+					"git ls-files"
+				]
+			},
+			"Implementer": {
+				"model": null,
+				"systemPrompt": "Read-write implementation worker for making code changes, editing files, and running relevant validation. Keep changes scoped to the assigned job and report modified files, checks run, and remaining risks.",
+				"allowedTools": null,
+				"allowedCommands": null
+			}
+		}
 	}
 }

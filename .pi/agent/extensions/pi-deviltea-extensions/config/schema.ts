@@ -135,6 +135,24 @@ export interface SyspromptManagerConfig {
 	enabled?: boolean
 }
 
+export interface WorkerRoleConfig {
+	/** Model id used by this worker. Null inherits the current main-agent model. */
+	model?: string | null
+	/** Role-specific responsibility prompt appended after the base worker prompt. */
+	systemPrompt: string
+	/** Allowed pi tools. Null allows all active tools. */
+	allowedTools?: string[] | null
+	/** Allowed bash command prefixes. Null allows all commands. */
+	allowedCommands?: string[] | null
+}
+
+export interface WorkerConfig {
+	/** Enables or disables the worker tool registration. */
+	enabled?: boolean
+	/** User-defined worker roles keyed by role name. */
+	roles?: Record<string, WorkerRoleConfig>
+}
+
 /**
  * Top-level configuration object stored in `pi-deviltea-extensions.config.json`.
  */
@@ -151,6 +169,8 @@ export interface DevilteaExtensionsConfig {
 	askQuestions?: AskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
 	syspromptManager?: SyspromptManagerConfig
+	/** Settings for the lightweight worker tool feature. */
+	worker?: WorkerConfig
 }
 
 /**
@@ -280,6 +300,13 @@ export interface ResolvedSyspromptManagerConfig {
 	enabled: boolean
 }
 
+export interface ResolvedWorkerConfig {
+	/** Enables or disables the worker tool registration. */
+	enabled: boolean
+	/** User-defined worker roles keyed by role name. */
+	roles: Record<string, WorkerRoleConfig>
+}
+
 /**
  * Fully resolved top-level configuration object used internally by the extension bundle.
  */
@@ -296,6 +323,8 @@ export interface ResolvedDevilteaExtensionsConfig {
 	askQuestions: ResolvedAskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
 	syspromptManager: ResolvedSyspromptManagerConfig
+	/** Settings for the lightweight worker tool feature. */
+	worker: ResolvedWorkerConfig
 }
 
 export const EditorSelectionHelperBindingsSchema = Type.Object({
@@ -374,6 +403,18 @@ export const SyspromptManagerConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false })
 
+export const WorkerRoleConfigSchema = Type.Object({
+	model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	systemPrompt: Type.String({ minLength: 1 }),
+	allowedTools: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Null()])),
+	allowedCommands: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Null()])),
+}, { additionalProperties: false })
+
+export const WorkerConfigSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean()),
+	roles: Type.Optional(Type.Record(Type.String({ minLength: 1 }), WorkerRoleConfigSchema)),
+}, { additionalProperties: false })
+
 export const DevilteaExtensionsConfigSchema = Type.Object({
 	editorSelectionHelper: Type.Optional(EditorSelectionHelperConfigSchema),
 	customFooter: Type.Optional(CustomFooterConfigSchema),
@@ -381,6 +422,7 @@ export const DevilteaExtensionsConfigSchema = Type.Object({
 	smartCommit: Type.Optional(SmartCommitConfigSchema),
 	askQuestions: Type.Optional(AskQuestionsConfigSchema),
 	syspromptManager: Type.Optional(SyspromptManagerConfigSchema),
+	worker: Type.Optional(WorkerConfigSchema),
 }, { additionalProperties: false })
 
 export const DEFAULT_EDITOR_SELECTION_HELPER_CONFIG: ResolvedEditorSelectionHelperConfig = {
@@ -446,6 +488,40 @@ export const DEFAULT_SYSPROMPT_MANAGER_CONFIG: ResolvedSyspromptManagerConfig = 
 	enabled: true,
 }
 
+export const DEFAULT_WORKER_CONFIG: ResolvedWorkerConfig = {
+	enabled: true,
+	roles: {
+		Explorer: {
+			model: null,
+			systemPrompt: 'Readonly investigation worker for exploration, research, codebase inspection, and evidence gathering. Do not modify files, repository state, dependencies, external services, or persistent configuration.',
+			allowedTools: ['read', 'bash', 'grep', 'find', 'ls'],
+			allowedCommands: [
+				'ls',
+				'pwd',
+				'find',
+				'rg',
+				'grep',
+				'cat',
+				'head',
+				'tail',
+				'wc',
+				'git status',
+				'git diff',
+				'git log',
+				'git show',
+				'git branch',
+				'git ls-files',
+			],
+		},
+		Implementer: {
+			model: null,
+			systemPrompt: 'Read-write implementation worker for making code changes, editing files, and running relevant validation. Keep changes scoped to the assigned job and report modified files, checks run, and remaining risks.',
+			allowedTools: null,
+			allowedCommands: null,
+		},
+	},
+}
+
 export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensionsConfig {
 	return {
 		editorSelectionHelper: {
@@ -464,5 +540,6 @@ export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensi
 		smartCommit: { ...DEFAULT_SMART_COMMIT_CONFIG },
 		askQuestions: { ...DEFAULT_ASK_QUESTIONS_CONFIG },
 		syspromptManager: { ...DEFAULT_SYSPROMPT_MANAGER_CONFIG },
+		worker: { ...DEFAULT_WORKER_CONFIG, roles: { ...DEFAULT_WORKER_CONFIG.roles } },
 	}
 }

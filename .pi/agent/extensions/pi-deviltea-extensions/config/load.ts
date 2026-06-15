@@ -1,19 +1,15 @@
+import type { TSchema } from 'typebox'
+import type { AskQuestionsConfig, CustomFooterConfig, DevilteaExtensionsConfig, EditorSelectionHelperConfig, ModelSwitcherConfig, ResolvedDevilteaExtensionsConfig, SmartCommitConfig, SyspromptManagerConfig, WorkerConfig } from './schema.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Check, Errors } from 'typebox/value'
-import type { TSchema } from 'typebox'
 import {
+
 	createDefaultDevilteaExtensionsConfig,
+
 	DevilteaExtensionsConfigSchema,
-	type AskQuestionsConfig,
-	type CustomFooterConfig,
-	type DevilteaExtensionsConfig,
-	type EditorSelectionHelperConfig,
-	type ModelSwitcherConfig,
-	type ResolvedDevilteaExtensionsConfig,
-	type SmartCommitConfig,
-	type SyspromptManagerConfig,
+
 } from './schema.js'
 
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url))
@@ -26,7 +22,8 @@ export const DEVILTEA_EXTENSIONS_CONFIG_PATH = join(EXTENSIONS_DIR, DEVILTEA_EXT
 function readJson(path: string): unknown {
 	try {
 		return JSON.parse(readFileSync(path, 'utf8'))
-	} catch (error) {
+	}
+	catch (error) {
 		const reason = error instanceof Error ? error.message : String(error)
 		throw new Error(`Invalid JSON in ${path}: ${reason}`)
 	}
@@ -116,6 +113,19 @@ function mergeSyspromptManager(base: ResolvedDevilteaExtensionsConfig['sysprompt
 	}
 }
 
+function mergeWorker(base: ResolvedDevilteaExtensionsConfig['worker'], override?: WorkerConfig): ResolvedDevilteaExtensionsConfig['worker'] {
+	if (!override)
+		return base
+	return {
+		...base,
+		...override,
+		roles: {
+			...base.roles,
+			...(override.roles ?? {}),
+		},
+	}
+}
+
 function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: DevilteaExtensionsConfig): ResolvedDevilteaExtensionsConfig {
 	if (!override)
 		return base
@@ -126,6 +136,7 @@ function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: De
 		smartCommit: mergeSmartCommit(base.smartCommit, override.smartCommit),
 		askQuestions: mergeAskQuestions(base.askQuestions, override.askQuestions),
 		syspromptManager: mergeSyspromptManager(base.syspromptManager, override.syspromptManager),
+		worker: mergeWorker(base.worker, override.worker),
 	}
 }
 
