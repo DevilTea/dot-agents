@@ -66,7 +66,7 @@
 		"enabled": true,
 		"roles": {
 			"Explorer": {
-				"model": null,
+				"model": "qwen3.6-35b-a3b-mtp@q8_k_xl",
 				"systemPrompt": "Readonly investigation worker for exploration, research, codebase inspection, and evidence gathering. Do not modify files, repository state, dependencies, external services, or persistent configuration.",
 				"allowedTools": [
 					"read",
@@ -94,7 +94,7 @@
 				]
 			},
 			"Implementer": {
-				"model": null,
+				"model": "qwen3.6-35b-a3b-mtp@q8_k_xl",
 				"systemPrompt": "Read-write implementation worker for making code changes, editing files, and running relevant validation. Keep changes scoped to the assigned job and report modified files, checks run, and remaining risks.",
 				"allowedTools": null,
 				"allowedCommands": null

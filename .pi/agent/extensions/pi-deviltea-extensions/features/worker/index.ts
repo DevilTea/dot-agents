@@ -30,7 +30,6 @@ interface WorkerDetails {
 	exitCode: number
 	model?: string
 	stderr?: string
-	timedOut?: boolean
 	allowedTools?: string[] | null
 	allowedCommands?: string[] | null
 }
@@ -99,8 +98,6 @@ function previewRows(value: string, maxRows: number): string {
 function getStatusText(details: WorkerDetails | undefined, isPartial: boolean, theme: Parameters<typeof renderStatus>[0]): string {
 	if (isPartial)
 		return renderStatus(theme, 'warning', 'Running')
-	if (details?.timedOut)
-		return renderStatus(theme, 'warning', 'Timed out')
 	if (details && details.exitCode !== 0)
 		return renderStatus(theme, 'error', `Exit ${details.exitCode}`)
 	return renderStatus(theme, 'success', 'Done')
@@ -123,7 +120,6 @@ function formatRoleDescriptions(config: ResolvedDevilteaExtensionsConfig): strin
 const WorkerParams = Type.Object({
 	role: Type.String({ description: 'Worker role name defined in config worker.roles.<name>' }),
 	job: Type.String({ description: 'Task for the worker, including clear completion criteria' }),
-	timeout: Type.Optional(Type.Integer({ description: 'Optional timeout in milliseconds', minimum: 1_000 })),
 	extraAllowedCommands: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: 'Additional allowed bash command prefixes merged with the role allowedCommands' })),
 }, { additionalProperties: false })
 
@@ -159,7 +155,6 @@ ${roleDescriptions}`,
 			const tmpDir = await mkdtemp(join(tmpdir(), 'pi-worker-'))
 			const messages: WorkerMessage[] = []
 			let stderr = ''
-			let timedOut = false
 			try {
 				const promptPath = await writePrompt(tmpDir, params.role, roleConfig)
 				const args = ['--mode', 'json', '-p', '--no-session', '--append-system-prompt', promptPath]
@@ -179,10 +174,7 @@ ${roleDescriptions}`,
 					const invocation = getPiInvocation(args)
 					const proc = spawn(invocation.command, invocation.args, { cwd: ctx.cwd, shell: false, stdio: ['ignore', 'pipe', 'pipe'] })
 					let buffer = ''
-					let timeoutHandle: NodeJS.Timeout | undefined
 					const finish = (code: number) => {
-						if (timeoutHandle)
-							clearTimeout(timeoutHandle)
 						resolve(code)
 					}
 					const processLine = (line: string) => {
@@ -212,30 +204,27 @@ ${roleDescriptions}`,
 					})
 					proc.on('error', () => finish(1))
 					const killProc = () => {
-						timedOut = true
 						proc.kill('SIGTERM')
 						setTimeout(() => {
 							if (!proc.killed)
 								proc.kill('SIGKILL')
 						}, 5000)
 					}
-					if (params.timeout)
-						timeoutHandle = setTimeout(killProc, params.timeout)
 					if (signal?.aborted)
 						killProc()
 					else signal?.addEventListener('abort', killProc, { once: true })
 				})
 
 				const result = getFinalAssistantText(messages) || stderr || '(worker produced no output)'
-				const prefix = timedOut ? `Timed out after ${params.timeout}ms.\n\n` : exitCode === 0 ? '' : `Worker exited with code ${exitCode}.\n\n`
-				return { content: [{ type: 'text', text: `${prefix}${result}` }], details: { role: params.role, job: params.job, exitCode, model, stderr, timedOut, allowedTools: roleConfig.allowedTools, allowedCommands } satisfies WorkerDetails }
+				const prefix = exitCode === 0 ? '' : `Worker exited with code ${exitCode}.\n\n`
+				return { content: [{ type: 'text', text: `${prefix}${result}` }], details: { role: params.role, job: params.job, exitCode, model, stderr, allowedTools: roleConfig.allowedTools, allowedCommands } satisfies WorkerDetails }
 			}
 			finally {
 				await rm(tmpDir, { recursive: true, force: true })
 			}
 		},
 		renderCall(args, theme) {
-			return new Text(renderToolCallTitle(theme, 'Worker', `${String(args.role ?? '')}${args.timeout ? ` ${String(args.timeout)}ms` : ''}`), 0, 0)
+			return new Text(renderToolCallTitle(theme, 'Worker', String(args.role ?? '')), 0, 0)
 		},
 		renderResult(result, { expanded, isPartial }, theme) {
 			const details = result.details as WorkerDetails | undefined
