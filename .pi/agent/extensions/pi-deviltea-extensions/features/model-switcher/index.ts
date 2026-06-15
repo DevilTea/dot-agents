@@ -98,6 +98,7 @@ class ModelThinkingSelectorView implements EditorComponent {
 	private thinkingScroll = 0;
 	private modelVisibleRows = 1;
 	private thinkingVisibleRows = 1;
+	private preservedEditorText = "";
 
 	constructor(
 		private readonly tui: TUI,
@@ -126,9 +127,11 @@ class ModelThinkingSelectorView implements EditorComponent {
 
 	invalidate(): void {}
 
-	getText(): string { return ""; }
+	getText(): string { return this.preservedEditorText; }
 
-	setText(_text: string): void {}
+	setText(text: string): void {
+		this.preservedEditorText = text;
+	}
 
 	dispose(): void {}
 
