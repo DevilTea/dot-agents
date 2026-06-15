@@ -19,6 +19,30 @@ import { buildAnalysisDetails, buildPrompt } from "./prompt.js";
 import { asErrorMessage, firstLine, patchStats } from "./utils.js";
 
 const pendingRequests = new Map<string, PendingSmartCommitRequest>();
+const SMART_COMMIT_SESSION_NAME = "(smart commit)";
+
+function textFromMessageContent(content: unknown): string {
+        if (typeof content === "string") return content;
+        if (!Array.isArray(content)) return "";
+        return content.map((part) => {
+                if (typeof part === "string") return part;
+                if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+                return "";
+        }).join("");
+}
+
+function isSmartCommitFirstMessage(ctx: ExtensionCommandContext): boolean {
+        const firstMessage = ctx.sessionManager.getEntries().find((entry) => entry.type === "message");
+        if (!firstMessage || firstMessage.type !== "message") return false;
+        const message = firstMessage.message as { role?: string; content?: unknown };
+        if (message.role !== "user") return false;
+        return textFromMessageContent(message.content).trim().startsWith("/smart-commit");
+}
+
+function ensureSmartCommitSessionName(pi: ExtensionAPI, ctx: ExtensionCommandContext): void {
+        if (pi.getSessionName() === undefined || isSmartCommitFirstMessage(ctx))
+                pi.setSessionName(SMART_COMMIT_SESSION_NAME);
+}
 
 class SmartCommitConfirmView implements EditorComponent {
         private selectedCommit = 0;
@@ -134,7 +158,7 @@ class SmartCommitConfirmView implements EditorComponent {
                         ...body,
                         hints,
                         this.renderBorder(bodyWidth),
-                ].slice(0, maxRows);
+                ];
         }
 
         private bodyHeight(): number {
@@ -322,6 +346,7 @@ const applySmartCommits = async (pi: ExtensionAPI, request: PendingSmartCommitRe
 };
 
 const handleSmartCommitCommand = async (pi: ExtensionAPI, config: ResolvedSmartCommitConfig, args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        ensureSmartCommitSessionName(pi, ctx);
         if (args.trim()) {
                 ctx.ui.notify("/smart-commit does not accept arguments.", "warning");
                 return;
@@ -398,7 +423,7 @@ const createApplyPlanTool = (pi: ExtensionAPI, config: ResolvedSmartCommitConfig
                 const requestId = typeof args.requestId === "string" && args.requestId.trim()
                         ? args.requestId.trim().slice(0, 8)
                         : "unknown";
-                return new Text(renderToolCallTitle(theme, APPLY_PLAN_TOOL, `${count} commit${count === 1 ? "" : "s"} • ${mode} • ${requestId}`), 0, 0);
+                return new Text(renderToolCallTitle(theme, 'Smart Commit Apply Plan', `${count} commit${count === 1 ? "" : "s"} • ${mode} • ${requestId}`), 0, 0);
         },
         async execute(_toolCallId, params, signal, _onUpdate, ctx) {
                 const request = pendingRequests.get(params.requestId);
@@ -478,9 +503,11 @@ export default function smartCommitExtension(pi: ExtensionAPI, bundleConfig: Res
                                 : theme.fg("muted", "Preparing analysis"),
                 ];
                 if (details?.sections.length) {
-                        const preview = details.sections.slice(0, 3).join(", ");
+                        const preview = details.sections.slice(0, 3);
+                        preview.forEach(s => lines.push(theme.fg("dim", s)))
                         const suffix = details.sections.length > 3 ? ` +${details.sections.length - 3} more` : "";
-                        lines.push(theme.fg("dim", `${preview}${suffix}`));
+                        if (suffix)
+                                lines.push(theme.fg("dim", suffix));
                 }
                 if (expanded) {
                         const fullText = typeof message.content === "string"
