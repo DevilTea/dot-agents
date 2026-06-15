@@ -14,15 +14,7 @@ const GENERIC_RUNTIME_RE = /^(?:node|bun)(?:\.exe)?$/
 const ROLE_SAFE_CHARS_RE = /[^\w.-]+/g
 const TOOL_NAME = 'worker'
 
-const BASE_WORKER_PROMPT = `You are a lightweight pi worker spawned by the main agent.
 
-Rules:
-- Focus only on the assigned job and the configured role responsibility.
-- Work independently until the job is complete or blocked.
-- Use only allowed tools and commands.
-- Do not ask the user questions; report blockers to the main agent instead.
-- Finish with a concise Markdown result that states what was done, evidence gathered, and remaining risks.
-- Do not claim validation was performed unless you actually performed it.`
 
 interface WorkerDetails {
 	role: string
@@ -74,7 +66,7 @@ import { getMarkdownTheme } from '@earendil-works/pi-coding-agent'\n\nconst allo
 
 async function writePrompt(dir: string, role: string, roleConfig: WorkerRoleConfig): Promise<string> {
 	const path = join(dir, `worker-${role.replace(ROLE_SAFE_CHARS_RE, '_')}.md`)
-	await writeFile(path, `${BASE_WORKER_PROMPT}\n\nRole responsibility:\n${roleConfig.systemPrompt.trim()}\n`, { encoding: 'utf8', mode: 0o600 })
+	await writeFile(path, `${roleConfig.systemPrompt.trim()}\n`, { encoding: 'utf8', mode: 0o600 })
 	return path
 }
 
@@ -112,13 +104,14 @@ function formatRoleDescriptions(config: ResolvedDevilteaExtensionsConfig): strin
 			const model = role.model ?? 'current main-agent model'
 			const tools = role.allowedTools === null || role.allowedTools === undefined ? 'all tools' : role.allowedTools.join(', ')
 			const commands = role.allowedCommands === null || role.allowedCommands === undefined ? 'all bash commands' : role.allowedCommands.join(', ')
-			return `- ${name}: ${role.systemPrompt.trim()} Model: ${model}. Tools: ${tools}. Bash command prefixes: ${commands}.`
+			const description = role.description ?? role.systemPrompt.trim().split('\n')[0]
+			return `- ${name}: ${description} Model: ${model}. Tools: ${tools}. Bash command prefixes: ${commands}.`
 		})
 		.join('\n')
 }
 
 const WorkerParams = Type.Object({
-	role: Type.String({ description: 'Worker role name defined in config worker.roles.<name>' }),
+	role: Type.String({ description: 'Worker role name defined by discovered worker agent files' }),
 	job: Type.String({ description: 'Task for the worker, including clear completion criteria' }),
 	extraAllowedCommands: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: 'Additional allowed bash command prefixes merged with the role allowedCommands' })),
 }, { additionalProperties: false })

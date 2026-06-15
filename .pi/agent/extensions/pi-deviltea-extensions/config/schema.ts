@@ -136,9 +136,27 @@ export interface SyspromptManagerConfig {
 }
 
 export interface WorkerRoleConfig {
+	/** Human-readable role description used in tool descriptions. */
+	description?: string
 	/** Model id used by this worker. Null inherits the current main-agent model. */
 	model?: string | null
-	/** Role-specific responsibility prompt appended after the base worker prompt. */
+	/** Worker system prompt loaded from the Markdown body. */
+	systemPrompt: string
+	/** Allowed pi tools. Null allows all active tools. */
+	allowedTools?: string[] | null
+	/** Allowed bash command prefixes. Null allows all commands. */
+	allowedCommands?: string[] | null
+}
+
+/** Parsed agent file from a Markdown .md file in the agents directory. */
+export interface AgentFileConfig {
+	/** Role name (derived from filename stem). */
+	name: string
+	/** Human-readable description of the role. */
+	description?: string
+	/** Model id. Null inherits the current main-agent model. */
+	model?: string | null
+	/** System prompt taken from the Markdown body (after frontmatter). */
 	systemPrompt: string
 	/** Allowed pi tools. Null allows all active tools. */
 	allowedTools?: string[] | null
@@ -149,6 +167,8 @@ export interface WorkerRoleConfig {
 export interface WorkerConfig {
 	/** Enables or disables the worker tool registration. */
 	enabled?: boolean
+	/** Path to the agents directory containing Markdown agent definition files. Defaults to ~/.pi/agent/agents. */
+	agentsDir?: string
 	/** User-defined worker roles keyed by role name. */
 	roles?: Record<string, WorkerRoleConfig>
 }
@@ -303,7 +323,11 @@ export interface ResolvedSyspromptManagerConfig {
 export interface ResolvedWorkerConfig {
 	/** Enables or disables the worker tool registration. */
 	enabled: boolean
-	/** User-defined worker roles keyed by role name. */
+	/** Path to the agents directory containing Markdown agent definition files. */
+	agentsDir: string
+	/** Discovered agent files from the agents directory. */
+	agentFiles: AgentFileConfig[]
+	/** User-defined worker roles keyed by role name (merged with agent file roles). */
 	roles: Record<string, WorkerRoleConfig>
 }
 
@@ -404,6 +428,7 @@ export const SyspromptManagerConfigSchema = Type.Object({
 }, { additionalProperties: false })
 
 export const WorkerRoleConfigSchema = Type.Object({
+	description: Type.Optional(Type.String({ minLength: 1 })),
 	model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
 	systemPrompt: Type.String({ minLength: 1 }),
 	allowedTools: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Null()])),
@@ -412,6 +437,7 @@ export const WorkerRoleConfigSchema = Type.Object({
 
 export const WorkerConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
+	agentsDir: Type.Optional(Type.String({ minLength: 1 })),
 	roles: Type.Optional(Type.Record(Type.String({ minLength: 1 }), WorkerRoleConfigSchema)),
 }, { additionalProperties: false })
 
@@ -490,36 +516,9 @@ export const DEFAULT_SYSPROMPT_MANAGER_CONFIG: ResolvedSyspromptManagerConfig = 
 
 export const DEFAULT_WORKER_CONFIG: ResolvedWorkerConfig = {
 	enabled: true,
-	roles: {
-		Explorer: {
-			model: null,
-			systemPrompt: 'Readonly investigation worker for exploration, research, codebase inspection, and evidence gathering. Do not modify files, repository state, dependencies, external services, or persistent configuration.',
-			allowedTools: ['read', 'bash', 'grep', 'find', 'ls'],
-			allowedCommands: [
-				'ls',
-				'pwd',
-				'find',
-				'rg',
-				'grep',
-				'cat',
-				'head',
-				'tail',
-				'wc',
-				'git status',
-				'git diff',
-				'git log',
-				'git show',
-				'git branch',
-				'git ls-files',
-			],
-		},
-		Implementer: {
-			model: null,
-			systemPrompt: 'Read-write implementation worker for making code changes, editing files, and running relevant validation. Keep changes scoped to the assigned job and report modified files, checks run, and remaining risks.',
-			allowedTools: null,
-			allowedCommands: null,
-		},
-	},
+	agentsDir: '~/.pi/agent/agents',
+	agentFiles: [],
+	roles: {},
 }
 
 export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensionsConfig {
@@ -540,6 +539,6 @@ export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensi
 		smartCommit: { ...DEFAULT_SMART_COMMIT_CONFIG },
 		askQuestions: { ...DEFAULT_ASK_QUESTIONS_CONFIG },
 		syspromptManager: { ...DEFAULT_SYSPROMPT_MANAGER_CONFIG },
-		worker: { ...DEFAULT_WORKER_CONFIG, roles: { ...DEFAULT_WORKER_CONFIG.roles } },
+		worker: { ...DEFAULT_WORKER_CONFIG, agentFiles: [...DEFAULT_WORKER_CONFIG.agentFiles], roles: { ...DEFAULT_WORKER_CONFIG.roles } },
 	}
 }
