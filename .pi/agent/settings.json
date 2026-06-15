@@ -1,7 +1,9 @@
 {
-  "lastChangelogVersion": "0.79.1",
+  "lastChangelogVersion": "0.79.3",
   "packages": [
-    "npm:@m4riok/pi-ide-bridge"
+    "npm:@m4riok/pi-ide-bridge",
+    "npm:@bitcraft-apps/pi-web-tools",
+    "npm:pi-rtk-optimizer"
   ],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.4",
