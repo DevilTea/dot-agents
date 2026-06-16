@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, Editor, type EditorTheme, type Focusable, Key, matchesKey, type TUI, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { getModalBodySize, isCancelKey, isTabBackward, isTabForward, renderModal, renderSectionBox, renderSplitPane } from "../../shared/modal.js";
-import { FULLSCREEN_OVERLAY_OPTIONS } from "../../shared/overlay.js";
+import { Editor, type EditorComponent, type EditorTheme, Key, matchesKey, type TUI, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { formatHints, isCancelKey, isTabBackward, isTabForward, renderSectionBox } from "../../shared/modal.js";
 import { addViewportIndicators, getViewportWindow } from "../../shared/viewport.js";
 import { trimToWidth } from "../../shared/ui.js";
 import { renderInlineMarkdown, renderMarkdownLines } from "./markdown.js";
@@ -12,7 +11,14 @@ import type { Answer, InputBuffer, Question, QuestionnaireResult } from "./types
 type StepPane = "question" | "answer" | "currentAnswer";
 
 export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, questions: Question[]): Promise<QuestionnaireResult> {
-	return ctx.ui.custom((tui: TUI, theme: Theme, _kb: unknown, done: (result: QuestionnaireResult) => void) => {
+	const previousEditor = ctx.ui.getEditorComponent();
+	return new Promise<QuestionnaireResult>((resolve) => {
+		ctx.ui.setEditorComponent((tui: TUI) => {
+			const theme: Theme = ctx.ui.theme;
+			const done = (result: QuestionnaireResult) => {
+				ctx.ui.setEditorComponent(previousEditor);
+				resolve(result);
+			};
 			// ── State ──────────────────────────────────────────────
 			let currentQ = 0;
 			let optionIdx = 0;
@@ -181,7 +187,7 @@ export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, quest
 			function modalBodySize(width?: number): { width: number; height: number } {
 				const rows = typeof tui?.terminal?.rows === "number" ? tui.terminal.rows : 24;
 				const columns = typeof width === "number" ? width : typeof tui?.terminal?.columns === "number" ? tui.terminal.columns : 80;
-				return getModalBodySize("comfortable", columns, rows, true, 0.8);
+				return { width: Math.max(1, columns), height: Math.max(8, Math.floor(rows * 0.8) - 4) };
 			}
 
 			function getStepPaneHeights(width?: number, question: Question | undefined = currentQuestion()): {
@@ -279,7 +285,7 @@ export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, quest
 			}
 
 			function editorIsActive(question: Question | undefined = currentQuestion()): boolean {
-				return stepFocus === "answer" && currentQ !== questions.length && Boolean(inputMode || question?.type === "text");
+				return currentQ !== questions.length && Boolean(inputMode || question?.type === "text");
 			}
 
 			function syncEditorFocus(question: Question | undefined = currentQuestion()): void {
@@ -290,6 +296,72 @@ export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, quest
 				const rendered = editor.render(width);
 				const bodyLines = rendered.length > 2 ? rendered.slice(1, -1) : rendered;
 				return bodyLines.slice(0, contentRows);
+			}
+
+			function renderEditorBoundary(width: number): string {
+				return theme.fg("border", "─".repeat(Math.max(1, width)));
+			}
+
+			function renderProgressLine(isReview: boolean, width: number): string {
+				const answered = questions.filter(question => hasCurrentAnswer(question)).length;
+				const markers = questions.map((question, index) => {
+					const marker = hasCurrentAnswer(question) ? "●" : "○";
+					if (!isReview && index === currentQ) return theme.bg("selectedBg", theme.fg("text", ` ${marker} `));
+					return theme.fg(hasCurrentAnswer(question) ? "success" : "muted", marker);
+				}).join(" ");
+				const step = isReview ? "Review" : `Question ${currentQ + 1}/${questions.length}`;
+				const review = isReview ? theme.bg("selectedBg", theme.fg("text", " Review ")) : theme.fg("success", "Review");
+				return trimToWidth(`${theme.fg("muted", step)}  ${markers}  ${review}  ${theme.fg("dim", `${answered}/${questions.length} answered`)}`, width, "");
+			}
+
+			function renderSectionHeading(title: string, width: number, hiddenBefore = 0, hiddenAfter = 0): string {
+				const scroll = [
+					hiddenBefore > 0 ? `↑ ${hiddenBefore} more` : "",
+					hiddenAfter > 0 ? `↓ ${hiddenAfter} more` : "",
+				].filter(Boolean).join(" ─ ");
+				const label = scroll ? `─ ${title} ─ ${scroll} ` : `─ ${title} `;
+				return theme.fg("border", trimToWidth(`${label}${"─".repeat(Math.max(0, width))}`, width, ""));
+			}
+
+			function renderPromptStatus(hiddenBefore: number, hiddenAfter: number): string | undefined {
+				const parts = [hiddenBefore > 0 ? `↑ ${hiddenBefore} more` : "", hiddenAfter > 0 ? `↓ ${hiddenAfter} more` : ""].filter(Boolean);
+				return parts.length ? theme.fg("border", parts.join(" ─ ")) : undefined;
+			}
+
+			function indentLines(lines: string[]): string[] {
+				return lines.map(line => line ? `  ${line}` : "");
+			}
+
+			function buildOptionRows(question: Question, width: number): { rows: string[]; ranges: Array<{ start: number; end: number }> } {
+				const rows: string[] = [];
+				const ranges: Array<{ start: number; end: number }> = [];
+				for (let index = 0; index < question.options.length + 1; index++) {
+					const isCustom = index === question.options.length;
+					const opt = question.options[index];
+					const answer = answers.get(question.id);
+					const checked = isCustom
+						? hasCustomInputSelection(question)
+						: question.type === "multi" ? answer?.multiValues?.includes(opt.value) : (!answer?.wasCustom && answer?.value === opt.value);
+					const marker = question.type === "multi" ? (checked ? "■" : "□") : (checked ? "●" : "○");
+					const prefix = `${index === optionIdx ? theme.fg("accent", "> ") : "  "}${theme.fg(checked ? "success" : "muted", marker)} `;
+					const text = isCustom ? "Type something." : renderInlineMarkdown(sanitizeDisplayText(opt.label), theme);
+					const optionLines = wrapTextWithAnsi(theme.fg(checked ? "success" : "text", `${index + 1}. ${text}`), Math.max(1, width - 4));
+					const start = rows.length;
+					rows.push(`${prefix}${optionLines[0] ?? ""}`);
+					for (const line of optionLines.slice(1)) rows.push(`    ${line}`);
+					if (!isCustom && opt.description) {
+						for (const line of renderMarkdownLines(opt.description, Math.max(1, width - 4), theme, "dim")) rows.push(`    ${line}`);
+					}
+					ranges.push({ start, end: rows.length });
+				}
+				return { rows, ranges };
+			}
+
+			function ensureOptionVisibleInRows(ranges: Array<{ start: number; end: number }>, visibleRows: number): void {
+				const range = ranges[optionIdx];
+				if (!range) return;
+				if (range.start < answerScrollOffset) answerScrollOffset = range.start;
+				else if (range.end > answerScrollOffset + visibleRows) answerScrollOffset = Math.max(0, range.end - visibleRows);
 			}
 
 			function handleEditorInput(data: string): void {
@@ -535,42 +607,17 @@ export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, quest
 				if (isReviewStep) {
 					if (matchesKey(data, Key.enter)) submit(false);
 					else if (isCancelKey(data)) submit(true);
-					else if (isTabForward(data)) {
-						if (reviewFocus === "list") {
-							reviewFocus = "detail";
-							refresh();
-						} else {
-							setCurrentStep(currentQ + 1);
-						}
-					} else if (isTabBackward(data)) {
-						if (reviewFocus === "detail") {
-							reviewFocus = "list";
-							refresh();
-						} else {
-							setCurrentStep(currentQ - 1);
-						}
-					} else if (matchesKey(data, Key.up)) {
-						if (reviewFocus === "list") moveReview(-1);
-						else scrollReviewDetailsBy(-1);
-					} else if (matchesKey(data, Key.down)) {
-						if (reviewFocus === "list") moveReview(1);
-						else scrollReviewDetailsBy(1);
-					}
+					else if (isTabForward(data)) setCurrentStep(currentQ + 1);
+					else if (isTabBackward(data)) setCurrentStep(currentQ - 1);
+					else if (matchesKey(data, Key.up)) moveReview(-1);
+					else if (matchesKey(data, Key.down)) moveReview(1);
+					else if (matchesKey(data, Key.ctrl("u"))) scrollReviewDetailsBy(-Math.max(1, modalBodySize().height - 8));
+					else if (matchesKey(data, Key.ctrl("d"))) scrollReviewDetailsBy(Math.max(1, modalBodySize().height - 8));
 					return;
 				}
 
 				if (!q) return;
-				ensureStepFocus(q);
 				if (q.type === "text") ensureTextEditorReady(q);
-
-				if (!inputMode && isTabForward(data)) {
-					moveStepFocusOrTab(1);
-					return;
-				}
-				if (!inputMode && isTabBackward(data)) {
-					moveStepFocusOrTab(-1);
-					return;
-				}
 
 				if (inputMode) {
 					if (matchesKey(data, Key.escape)) {
@@ -589,82 +636,55 @@ export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, quest
 					return;
 				}
 
-				if (q.type === "text") {
-					if (stepFocus === "answer") {
-						if (matchesKey(data, Key.enter) || matchesKey(data, Key.return))
-							return;
-						handleEditorInput(data);
-						return;
-					}
-					if (matchesKey(data, Key.up)) {
-						scrollPromptLine(-1);
-						return;
-					}
-					if (matchesKey(data, Key.down)) {
-						scrollPromptLine(1);
-						return;
-					}
+				if (isTabForward(data)) {
+					setCurrentStep(currentQ + 1);
+					return;
+				}
+				if (isTabBackward(data)) {
+					setCurrentStep(currentQ - 1);
+					return;
+				}
+				if (matchesKey(data, Key.ctrl("u"))) {
+					scrollPromptBy(-Math.max(1, promptContentRows() - 1));
+					return;
+				}
+				if (matchesKey(data, Key.ctrl("d"))) {
+					scrollPromptBy(Math.max(1, promptContentRows() - 1));
+					return;
 				}
 
-				if (matchesKey(data, Key.pageUp)) {
-					if (stepFocus === "question") scrollPromptPage(-1);
-					else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
-					else if (stepFocus === "answer") scrollAnswerBy(-Math.max(1, answerMaxRows() - 3));
+				if (q.type === "text") {
+					if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) return;
+					handleEditorInput(data);
 					return;
 				}
-				if (matchesKey(data, Key.pageDown)) {
-					if (stepFocus === "question") scrollPromptPage(1);
-					else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
-					else if (stepFocus === "answer") scrollAnswerBy(Math.max(1, answerMaxRows() - 3));
-					return;
-				}
+
 				if (matchesKey(data, Key.home)) {
-					if (stepFocus === "question") {
-						promptScrollOffset = 0;
-						refresh();
-					} else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
-					else if (stepFocus === "answer") {
-						answerScrollOffset = 0;
-						setOptionIdx(q, 0);
-						refresh();
-					}
+					answerScrollOffset = 0;
+					setOptionIdx(q, 0);
+					refresh();
 					return;
 				}
 				if (matchesKey(data, Key.end)) {
-					if (stepFocus === "question") {
-						promptScrollOffset = Number.MAX_SAFE_INTEGER;
-						refresh();
-					} else if (stepFocus === "answer" && q.type === "text") handleEditorInput(data);
-					else if (stepFocus === "answer") {
-						setOptionIdx(q, Math.max(0, totalOptionCount(q) - 1));
-						ensureOptionVisible();
-						refresh();
-					}
+					setOptionIdx(q, Math.max(0, totalOptionCount(q) - 1));
+					answerScrollOffset = Number.MAX_SAFE_INTEGER;
+					refresh();
 					return;
 				}
-
 				if (matchesKey(data, Key.up)) {
-					if (stepFocus === "question") scrollPromptLine(-1);
-					else if (stepFocus === "answer" && q.type !== "text") {
-						scrollOrMoveOption(q, -1);
-						refresh();
-					}
+					setOptionIdx(q, (optionIdx - 1 + totalOptionCount(q)) % totalOptionCount(q));
+					refresh();
 					return;
 				}
 				if (matchesKey(data, Key.down)) {
-					if (stepFocus === "question") scrollPromptLine(1);
-					else if (stepFocus === "answer" && q.type !== "text") {
-						scrollOrMoveOption(q, 1);
-						refresh();
-					}
+					setOptionIdx(q, (optionIdx + 1) % totalOptionCount(q));
+					refresh();
 					return;
 				}
-
-				if ((matchesKey(data, Key.space) || matchesKey(data, Key.enter)) && stepFocus === "answer" && (q.type === "multi" || q.type === "single")) {
+				if (matchesKey(data, Key.space) || matchesKey(data, Key.enter)) {
 					toggleCurrentOption(q);
 					return;
 				}
-
 				if (isCancelKey(data)) submit(true);
 			}
 
@@ -672,162 +692,128 @@ export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, quest
 			function render(width: number): string[] {
 				const qRender = currentQuestion();
 				if (qRender?.type === "text") ensureTextEditorReady(qRender);
-				if (currentQ !== questions.length) ensureStepFocus(qRender);
 				syncEditorFocus(qRender);
 				const rows = typeof tui?.terminal?.rows === "number" ? tui.terminal.rows : 24;
 				if (cachedLines && cachedWidth === width && cachedRows === rows) return cachedLines;
 				const bodySize = modalBodySize(width);
 				const bodyWidth = bodySize.width;
-
+				const innerWidth = Math.max(1, bodyWidth - 2);
+				const q = currentQuestion();
+				const isConfirmTab = currentQ === questions.length;
 				const lines: string[] = [];
 
-				const q = currentQuestion();
-				const opts = q?.options || [];
-				const isConfirmTab = currentQ === questions.length;
-				const safePrompt = q ? sanitizeDisplayText(q.prompt) : "";
-
-				// Tab bar
-				const tabs: string[] = [];
-				for (let i = 0; i < questions.length; i++) {
-					const isActive = i === currentQ;
-					const isAnswered = hasCurrentAnswer(questions[i]);
-					const lbl = sanitizeDisplayText(questions[i].label);
-					const box = isAnswered ? "■" : "□";
-					const color = isAnswered ? "success" : "muted";
-					const text = ` ${box} ${lbl} `;
-					const styled = isActive
-						? theme.bg("selectedBg", theme.fg("text", text))
-						: theme.fg(color, text);
-					tabs.push(`${styled} `);
-				}
-				const isSubmitTab = currentQ === questions.length;
-				const submitText = " ● Review ";
-				const submitStyled = isSubmitTab
-					? theme.bg("selectedBg", theme.fg("text", submitText))
-					: theme.fg("success", submitText);
-				tabs.push(`${submitStyled}`);
-				lines.push("");
-
-				// Confirmation tab
 				if (isConfirmTab) {
 					reviewIdx = Math.max(0, Math.min(reviewIdx, questions.length - 1));
-					const listWidth = Math.min(34, Math.max(22, Math.floor(bodyWidth * 0.34)));
-					const detailWidth = Math.max(20, bodyWidth - listWidth - 3);
-					const reviewHeight = Math.max(6, bodySize.height - 2);
-					const listRows = questions.map((question, i) => {
-						const selected = i === reviewIdx;
-						const marker = hasCurrentAnswer(question) ? "■" : "□";
-						const focused = reviewFocus === "list" && selected;
-						const prefix = focused ? theme.fg("accent", "> ") : "  ";
-						return `${prefix}${theme.fg(hasCurrentAnswer(question) ? "success" : "muted", marker)} ${sanitizeDisplayText(question.label || question.id)}`;
-					});
 					const selectedQuestion = questions[reviewIdx];
+					const listRows = questions.flatMap((question, index) => {
+						const selected = index === reviewIdx;
+						const marker = hasCurrentAnswer(question) ? "■" : "□";
+						const prefix = selected ? theme.fg("accent", "> ") : "  ";
+						const answer = previewCurrentAnswer(question) || "No answer";
+						return wrapTextWithAnsi(`${prefix}${theme.fg(hasCurrentAnswer(question) ? "success" : "muted", marker)} ${theme.fg("text", sanitizeDisplayText(question.label || question.id))}: ${theme.fg(hasCurrentAnswer(question) ? "success" : "dim", answer)}`, innerWidth);
+					});
 					const detailRows: string[] = [];
-					const detailInnerWidth = Math.max(1, detailWidth - 4);
 					detailRows.push(theme.fg("muted", theme.bold(sanitizeDisplayText(selectedQuestion.label || selectedQuestion.id))));
 					detailRows.push(theme.fg("dim", `Type: ${selectedQuestion.type}`));
 					if (selectedQuestion.recommendedValue) detailRows.push(theme.fg("dim", `Recommended: ${sanitizeDisplayText(selectedQuestion.recommendedValue)}`));
 					detailRows.push("");
 					detailRows.push(theme.fg("muted", theme.bold("Prompt")));
-					detailRows.push(...renderMarkdownLines(selectedQuestion.prompt, detailInnerWidth, theme));
+					detailRows.push(...renderMarkdownLines(selectedQuestion.prompt, innerWidth, theme));
 					detailRows.push("");
 					detailRows.push(theme.fg("muted", theme.bold("Answer")));
-					detailRows.push(...renderMarkdownLines(previewCurrentAnswer(selectedQuestion), detailInnerWidth, theme, hasCurrentAnswer(selectedQuestion) ? "success" : "dim"));
-					const detailContentHeight = Math.max(1, reviewHeight - 2);
-					const detailViewport = getViewportWindow(detailRows, reviewDetailsScrollOffset, detailContentHeight, true);
+					detailRows.push(...renderMarkdownLines(previewCurrentAnswer(selectedQuestion) || "No answer", innerWidth, theme, hasCurrentAnswer(selectedQuestion) ? "success" : "dim"));
+					const listHeight = Math.min(Math.max(3, questions.length + 1), Math.max(3, Math.floor(bodySize.height * 0.4)));
+					const detailHeight = Math.max(1, bodySize.height - listHeight - 4);
+					const detailViewport = getViewportWindow(detailRows, reviewDetailsScrollOffset, detailHeight, true);
 					reviewDetailsScrollOffset = detailViewport.offset;
 					reviewDetailsMaxScroll = detailViewport.maxOffset;
-					const visibleDetails = addViewportIndicators(theme, detailViewport.visibleLines, Math.max(1, detailWidth - 4), detailViewport.hiddenBefore, detailViewport.hiddenAfter, true);
-					const splitRows = renderSplitPane(theme,
-						{ title: "Questions", width: listWidth, lines: listRows, focused: reviewFocus === "list" },
-						{ title: "Details", width: detailWidth, lines: visibleDetails, focused: reviewFocus === "detail" },
-						reviewHeight,
-					);
-					lines.push(...splitRows);
-				} else if (q) {
-					const regionWidth = bodyWidth;
-					const regionInnerWidth = Math.max(1, regionWidth - 4);
-					const { questionHeight, answerHeight, currentAnswerHeight } = getStepPaneHeights(width, q);
-					const promptLines = renderMarkdownLines(safePrompt, regionInnerWidth, theme);
-					appendFullOptionLines(promptLines, q, regionInnerWidth);
-					clampPromptScroll(promptLines.length, width);
-					const promptContentHeight = Math.max(1, questionHeight - 2);
-					const promptViewport = getViewportWindow(promptLines, promptScrollOffset, promptContentHeight, true);
-					promptScrollOffset = promptViewport.offset;
-					const visiblePrompt = addViewportIndicators(theme, promptViewport.visibleLines, regionInnerWidth, promptViewport.hiddenBefore, promptViewport.hiddenAfter, true);
-					const answerContentHeight = Math.max(1, answerHeight - 2);
+					lines.push(renderSectionHeading("Review", bodyWidth));
+					lines.push(...listRows.slice(0, listHeight));
 					lines.push("");
-					lines.push(...renderSectionBox(theme, stepFocus === "question", "Question", regionWidth, visiblePrompt, questionHeight));
+					lines.push(renderSectionHeading("Selected", bodyWidth, detailViewport.hiddenBefore, detailViewport.hiddenAfter));
+					lines.push(...detailViewport.visibleLines);
+				} else if (q) {
+					const promptLines = renderMarkdownLines(sanitizeDisplayText(q.prompt), innerWidth, theme);
+					const promptHeight = Math.max(1, Math.floor(bodySize.height * (q.type === "text" ? 0.28 : 0.34)));
+					clampPromptScroll(promptLines.length, width);
+					const promptViewport = getViewportWindow(promptLines, promptScrollOffset, promptHeight, true);
+					promptScrollOffset = promptViewport.offset;
+					lines.push(renderSectionHeading("Prompt", bodyWidth, promptViewport.hiddenBefore, promptViewport.hiddenAfter));
+					lines.push(...indentLines(promptViewport.visibleLines));
 					lines.push("");
 
 					if (q.type === "text") {
-						lines.push(...renderSectionBox(theme, stepFocus === "answer", "Answer", regionWidth, renderEditorBodyLines(regionInnerWidth, answerContentHeight), answerHeight));
-					} else if (optionIdx === opts.length && inputMode) {
-						answerScrollOffset = 0;
-						answerMaxScroll = 0;
-						lines.push(...renderSectionBox(theme, stepFocus === "answer", "Type Something", regionWidth, renderEditorBodyLines(regionInnerWidth, answerContentHeight), answerHeight));
-					} else {
-						const answerRows: string[] = [];
-						for (let i = 0; i < opts.length; i++) answerRows.push(renderCompactOptionLine(q, i, regionInnerWidth));
-						answerRows.push(renderCompactOptionLine(q, opts.length, regionInnerWidth));
-						const answerViewport = getViewportWindow(answerRows, answerScrollOffset, answerContentHeight, true);
-						answerScrollOffset = answerViewport.offset;
-						answerMaxScroll = answerViewport.maxOffset;
-						const visibleAnswer = addViewportIndicators(theme, answerViewport.visibleLines, regionInnerWidth, answerViewport.hiddenBefore, answerViewport.hiddenAfter, true);
-						lines.push(...renderSectionBox(theme, stepFocus === "answer", "Options", regionWidth, visibleAnswer, answerHeight));
-					}
-					if (q.type !== "text") {
+						const editorHeight = Math.max(4, bodySize.height - promptHeight - 4);
+						lines.push(renderSectionHeading("Answer", bodyWidth));
+						lines.push(...indentLines(renderEditorBodyLines(Math.max(1, innerWidth - 2), editorHeight)));
+					} else if (optionIdx === q.options.length && inputMode) {
+						const editorHeight = Math.max(4, bodySize.height - promptHeight - 7);
+						lines.push(renderSectionHeading("Type something", bodyWidth));
+						lines.push(...indentLines(renderEditorBodyLines(Math.max(1, innerWidth - 2), editorHeight)));
 						lines.push("");
-						const currentAnswerLines = wrapTextWithAnsi(
-							theme.fg(hasCurrentAnswer(q) ? "success" : "dim", previewCurrentAnswer(q)),
-							Math.max(1, regionWidth - 4),
-						);
-						lines.push(...renderSectionBox(theme, stepFocus === "currentAnswer", "Answer", regionWidth, currentAnswerLines, currentAnswerHeight));
+						lines.push(renderSectionHeading("Current answer", bodyWidth));
+						lines.push(`  ${theme.fg(hasCurrentAnswer(q) ? "success" : "dim", previewCurrentAnswer(q) || "No answer")}`);
+					} else {
+						const optionHeight = Math.max(4, bodySize.height - promptHeight - 5);
+						const { rows: optionRows, ranges } = buildOptionRows(q, innerWidth);
+						answerMaxScroll = Math.max(0, optionRows.length - optionHeight);
+						answerScrollOffset = Math.max(0, Math.min(answerScrollOffset, answerMaxScroll));
+						ensureOptionVisibleInRows(ranges, optionHeight);
+						const optionViewport = getViewportWindow(optionRows, answerScrollOffset, optionHeight, true);
+						answerScrollOffset = optionViewport.offset;
+						answerMaxScroll = optionViewport.maxOffset;
+						lines.push(renderSectionHeading("Options", bodyWidth, optionViewport.hiddenBefore, optionViewport.hiddenAfter));
+						lines.push(...indentLines(optionViewport.visibleLines));
+						lines.push("");
+						lines.push(renderSectionHeading("Current answer", bodyWidth));
+						lines.push(`  ${theme.fg(hasCurrentAnswer(q) ? "success" : "dim", previewCurrentAnswer(q) || "No answer")}`);
 					}
-					lines.push("");
 				}
 
-				const stepActionHint = q?.type === "text"
-					? stepFocus === "answer" ? "editor" : "scroll question"
-					: stepFocus === "answer" ? "move/select" : stepFocus === "question" ? "scroll question" : "read answer";
-				const frame = renderModal({
-					theme,
-					terminalRows: rows,
-					width,
-					size: "comfortable",
-					title: "Ask Questions",
-					meta: `${questions.length} question${questions.length === 1 ? "" : "s"}`,
-					tabs: [
-						...questions.map((question, index) => ({ id: question.id, label: question.label || question.id, complete: hasCurrentAnswer(question) })),
-						{ id: "review", label: "Review", complete: true },
-					],
-					activeTabId: isConfirmTab ? "review" : q?.id,
-					body: lines,
-					hints: isConfirmTab
+				const hints = isConfirmTab
+					? [
+						{ key: "↑↓", label: "move" },
+						{ key: "Ctrl+U/D", label: "scroll detail" },
+						{ key: "Tab", label: "step" },
+						{ key: "Enter", label: "submit" },
+						{ key: "Esc", label: "cancel" },
+					]
+					: inputMode
 						? [
-							{ key: "↑↓", label: reviewFocus === "list" ? "move" : "scroll" },
-							{ key: "Tab", label: "pane/step" },
-							{ key: "Enter", label: "submit" },
-							{ key: "Esc", label: "cancel" },
+							{ key: "↑↓", label: "editor" },
+							{ key: "Enter", label: "save input" },
+							{ key: "Esc", label: "discard input" },
 						]
-						: inputMode
+						: q?.type === "text"
 							? [
-								{ key: "↑↓", label: "editor" },
-								{ key: "Enter", label: "save input" },
-								{ key: "Esc", label: "discard input" },
+								{ key: "Type", label: "answer" },
+								{ key: "Ctrl+U/D", label: "scroll prompt" },
+								{ key: "Tab", label: "step" },
+								{ key: "Esc", label: "cancel" },
 							]
 							: [
-								{ key: "↑↓", label: stepActionHint },
-								{ key: "Tab", label: "pane/step" },
-								...(q?.type !== "text" && stepFocus === "answer" ? [{ key: "Space/Enter", label: "select" }] : []),
+								{ key: "↑↓", label: "move" },
+								{ key: "Space/Enter", label: "select" },
+								{ key: "Ctrl+U/D", label: "scroll prompt" },
+								{ key: "Tab", label: "step" },
 								{ key: "Esc", label: "cancel" },
-							],
-				});
-				cachedLines = frame.lines;
+							];
+				const rendered = [
+					renderEditorBoundary(width),
+					`${theme.fg("toolTitle", theme.bold("Ask Questions"))}  ${theme.fg("muted", `${questions.length} question${questions.length === 1 ? "" : "s"}`)}`,
+					renderProgressLine(isConfirmTab, width),
+					"",
+					...lines,
+					"",
+					formatHints(theme, hints),
+					renderEditorBoundary(width),
+				];
+				cachedLines = rendered;
 				cachedWidth = width;
 				cachedRows = rows;
-				return frame.lines;
+				return rendered;
 			}
+
 
 			return {
 				get focused() {
@@ -843,7 +829,10 @@ export function runQuestionnaire(_pi: ExtensionAPI, ctx: ExtensionContext, quest
 					editor.invalidate();
 				},
 				handleInput,
+				getText: () => "",
+				setText: (_text: string) => {},
 				dispose: () => {},
-			} satisfies Component & Focusable & { dispose: () => void };
-		}, FULLSCREEN_OVERLAY_OPTIONS);
+			} satisfies EditorComponent & { focused: boolean; dispose: () => void };
+		});
+	});
 }
