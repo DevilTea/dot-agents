@@ -1,0 +1,17 @@
+# Claude Code config dir is whole-dir symlinked from ~/.claude, so Claude Code
+# writes its runtime state in here. Track only managed config; ignore the rest.
+
+# Ignore everything by default …
+/*
+
+# … then re-include the version-controlled config.
+!/.gitignore
+!/CLAUDE.md
+!/skills
+!/settings.json
+!/commands
+!/agents
+
+# Never track local-only or sensitive settings.
+settings.local.json
+.last-cleanup
