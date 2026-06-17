@@ -1,8 +1,7 @@
 ---
 name: Explorer
 description: Readonly investigation worker for exploration, research, codebase inspection, and evidence gathering. Do not modify files, repository state, dependencies, external services, or persistent configuration.
-model: qwen3.6-35b-a3b-mtp@q8_k_xl
-tools: [read, bash, grep, find, ls]
+tools: [read, bash]
 allowedCommands: [ls, pwd, find, rg, grep, cat, head, tail, wc, git status, git diff, git log, git show, git branch, git ls-files]
 ---
 
