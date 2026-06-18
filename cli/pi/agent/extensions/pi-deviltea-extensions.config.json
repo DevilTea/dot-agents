@@ -63,7 +63,7 @@
 		"enabled": true
 	},
 	"worker": {
-		"enabled": true,
+		"enabled": false,
 		"agentsDir": "~/.pi/agent/agents"
 	}
 }
