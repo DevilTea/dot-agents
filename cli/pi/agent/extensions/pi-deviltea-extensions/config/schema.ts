@@ -135,6 +135,14 @@ export interface SyspromptManagerConfig {
 	enabled?: boolean
 }
 
+/**
+ * Configuration for the step-mode task runtime feature.
+ */
+export interface StepModeConfig {
+	/** Enables or disables the feature registration. */
+	enabled?: boolean
+}
+
 export interface WorkerRoleConfig {
 	/** Human-readable role description used in tool descriptions. */
 	description?: string
@@ -189,6 +197,8 @@ export interface DevilteaExtensionsConfig {
 	askQuestions?: AskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
 	syspromptManager?: SyspromptManagerConfig
+	/** Settings for the step-mode task runtime feature. */
+	stepMode?: StepModeConfig
 	/** Settings for the lightweight worker tool feature. */
 	worker?: WorkerConfig
 }
@@ -320,6 +330,11 @@ export interface ResolvedSyspromptManagerConfig {
 	enabled: boolean
 }
 
+export interface ResolvedStepModeConfig {
+	/** Enables or disables the feature registration. */
+	enabled: boolean
+}
+
 export interface ResolvedWorkerConfig {
 	/** Enables or disables the worker tool registration. */
 	enabled: boolean
@@ -347,6 +362,8 @@ export interface ResolvedDevilteaExtensionsConfig {
 	askQuestions: ResolvedAskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
 	syspromptManager: ResolvedSyspromptManagerConfig
+	/** Settings for the step-mode task runtime feature. */
+	stepMode: ResolvedStepModeConfig
 	/** Settings for the lightweight worker tool feature. */
 	worker: ResolvedWorkerConfig
 }
@@ -427,6 +444,10 @@ export const SyspromptManagerConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false })
 
+export const StepModeConfigSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false })
+
 export const WorkerRoleConfigSchema = Type.Object({
 	description: Type.Optional(Type.String({ minLength: 1 })),
 	model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -448,6 +469,7 @@ export const DevilteaExtensionsConfigSchema = Type.Object({
 	smartCommit: Type.Optional(SmartCommitConfigSchema),
 	askQuestions: Type.Optional(AskQuestionsConfigSchema),
 	syspromptManager: Type.Optional(SyspromptManagerConfigSchema),
+	stepMode: Type.Optional(StepModeConfigSchema),
 	worker: Type.Optional(WorkerConfigSchema),
 }, { additionalProperties: false })
 
@@ -514,6 +536,10 @@ export const DEFAULT_SYSPROMPT_MANAGER_CONFIG: ResolvedSyspromptManagerConfig = 
 	enabled: true,
 }
 
+export const DEFAULT_STEP_MODE_CONFIG: ResolvedStepModeConfig = {
+	enabled: true,
+}
+
 export const DEFAULT_WORKER_CONFIG: ResolvedWorkerConfig = {
 	enabled: true,
 	agentsDir: '~/.pi/agent/agents',
@@ -539,6 +565,7 @@ export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensi
 		smartCommit: { ...DEFAULT_SMART_COMMIT_CONFIG },
 		askQuestions: { ...DEFAULT_ASK_QUESTIONS_CONFIG },
 		syspromptManager: { ...DEFAULT_SYSPROMPT_MANAGER_CONFIG },
+		stepMode: { ...DEFAULT_STEP_MODE_CONFIG },
 		worker: { ...DEFAULT_WORKER_CONFIG, agentFiles: [...DEFAULT_WORKER_CONFIG.agentFiles], roles: { ...DEFAULT_WORKER_CONFIG.roles } },
 	}
 }

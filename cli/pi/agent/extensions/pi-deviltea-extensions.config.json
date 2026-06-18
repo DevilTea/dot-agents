@@ -62,6 +62,9 @@
 	"askQuestions": {
 		"enabled": true
 	},
+	"stepMode": {
+		"enabled": true
+	},
 	"worker": {
 		"enabled": false,
 		"agentsDir": "~/.pi/agent/agents"

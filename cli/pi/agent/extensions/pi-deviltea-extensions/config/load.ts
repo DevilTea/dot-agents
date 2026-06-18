@@ -1,5 +1,5 @@
 import type { TSchema } from 'typebox'
-import type { AgentFileConfig, AskQuestionsConfig, CustomFooterConfig, DevilteaExtensionsConfig, EditorSelectionHelperConfig, ModelSwitcherConfig, ResolvedDevilteaExtensionsConfig, SmartCommitConfig, SyspromptManagerConfig, WorkerConfig, WorkerRoleConfig } from './schema.js'
+import type { AgentFileConfig, AskQuestionsConfig, CustomFooterConfig, DevilteaExtensionsConfig, EditorSelectionHelperConfig, ModelSwitcherConfig, ResolvedDevilteaExtensionsConfig, SmartCommitConfig, StepModeConfig, SyspromptManagerConfig, WorkerConfig, WorkerRoleConfig } from './schema.js'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -105,6 +105,15 @@ function mergeAskQuestions(base: ResolvedDevilteaExtensionsConfig['askQuestions'
 }
 
 function mergeSyspromptManager(base: ResolvedDevilteaExtensionsConfig['syspromptManager'], override?: SyspromptManagerConfig): ResolvedDevilteaExtensionsConfig['syspromptManager'] {
+	if (!override)
+		return base
+	return {
+		...base,
+		...override,
+	}
+}
+
+function mergeStepMode(base: ResolvedDevilteaExtensionsConfig['stepMode'], override?: StepModeConfig): ResolvedDevilteaExtensionsConfig['stepMode'] {
 	if (!override)
 		return base
 	return {
@@ -280,6 +289,7 @@ function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: De
 		smartCommit: mergeSmartCommit(base.smartCommit, override.smartCommit),
 		askQuestions: mergeAskQuestions(base.askQuestions, override.askQuestions),
 		syspromptManager: mergeSyspromptManager(base.syspromptManager, override.syspromptManager),
+		stepMode: mergeStepMode(base.stepMode, override.stepMode),
 		worker: mergeWorker(base.worker, override.worker),
 	}
 }
@@ -299,6 +309,7 @@ function serializeDefaultConfig(): DevilteaExtensionsConfig {
 		smartCommit: config.smartCommit,
 		askQuestions: config.askQuestions,
 		syspromptManager: config.syspromptManager,
+		stepMode: config.stepMode,
 		worker: {
 			enabled: config.worker.enabled,
 			agentsDir: config.worker.agentsDir,
