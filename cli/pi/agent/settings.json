@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.79.6",
+  "lastChangelogVersion": "0.79.9",
   "packages": [
     "npm:@m4riok/pi-ide-bridge",
     "npm:@bitcraft-apps/pi-web-tools",
