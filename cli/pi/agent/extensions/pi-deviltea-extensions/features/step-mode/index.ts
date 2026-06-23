@@ -1,12 +1,13 @@
 import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
-import type { StepModeState, TaskContext, TaskStep } from './types.js'
-import { Box, Text } from '@earendil-works/pi-tui'
+import type { StepModeTodoItem } from './display.js'
+import type { StepModeRunStatus, StepModeState, StepWorkerEventDraft, TaskContext, TaskStep } from './types.js'
+import { Text } from '@earendil-works/pi-tui'
 import { Type } from 'typebox'
-import { renderStatus, renderToolCallTitle } from '../../shared/ui.js'
+import { renderToolCallTitle } from '../../shared/ui.js'
+import { orderedStepsForTask, renderTodoList, stepCountLabel, todoItemsForTask } from './display.js'
 import { StepModeStepInspector } from './inspect-step.js'
-import { STEP_MODE_MESSAGE_TYPE } from './policy.js'
-import { renderStateProgress, renderToggleStatus } from './progress.js'
+import { renderStateProgress } from './progress.js'
 import {
 	addUserFollowupStep,
 	applyUserReplyToBlockedStep,
@@ -27,16 +28,15 @@ import { executeStepWithWorker } from './worker.js'
 const STATUS_KEY = 'step-mode'
 const WIDGET_KEY = 'step-mode-progress'
 const STEP_MODE_RUN_TOOL = 'step_mode_run'
-const WHITESPACE_PATTERN = /\s+/g
 
 let activeInspector: StepModeStepInspector | null = null
 
 interface StepModeToolDetails {
-	status: 'running' | 'completed' | 'waiting' | 'failed'
+	status: StepModeRunStatus
 	input: string
 	taskId?: string
-	activeStep?: string
-	progressText: string
+	runGroupId?: string
+	steps: StepModeTodoItem[]
 	summary?: string
 }
 
@@ -44,6 +44,15 @@ interface RunTaskOutcome {
 	status: 'completed' | 'waiting' | 'failed' | 'stopped'
 	summary: string
 	progressText: string
+}
+
+interface StepModeToolRenderState {
+	stepCountLabel?: string
+}
+
+interface StepModeToolRenderContext {
+	state: StepModeToolRenderState
+	invalidate: () => void
 }
 
 function messageContentText(content: unknown): string {
@@ -60,15 +69,6 @@ function messageContentText(content: unknown): string {
 			return ''
 		})
 		.join('\n')
-}
-
-function sendStepModeMessage(pi: ExtensionAPI, content: string, details?: Record<string, unknown>): void {
-	pi.sendMessage({
-		customType: STEP_MODE_MESSAGE_TYPE,
-		content,
-		display: true,
-		details,
-	}, { triggerTurn: false })
 }
 
 function ensureStepModeToolActive(pi: ExtensionAPI): void {
@@ -103,6 +103,30 @@ function updateUi(ctx: ExtensionContext, state: StepModeState, running: boolean)
 	activeInspector?.requestRender()
 }
 
+function appendStepWorkerEvent(task: TaskContext, step: TaskStep, draft: StepWorkerEventDraft): void {
+	const events = step.workerEvents ?? []
+	const previous = events.at(-1)
+	if (previous && previous.kind === 'thinking' && draft.kind === 'thinking' && previous.label === 'delta' && draft.label === 'delta' && previous.attempt === draft.attempt) {
+		previous.text = `${previous.text ?? ''}${draft.text ?? ''}`
+		previous.timestamp = draft.timestamp ?? Date.now()
+		task.updatedAt = Math.max(task.updatedAt + 1, previous.timestamp)
+		step.workerEvents = events
+		return
+	}
+
+	const timestamp = draft.timestamp ?? Date.now()
+	events.push({
+		seq: (previous?.seq ?? 0) + 1,
+		timestamp,
+		attempt: draft.attempt,
+		kind: draft.kind,
+		label: draft.label,
+		text: draft.text,
+	})
+	step.workerEvents = events
+	task.updatedAt = Math.max(task.updatedAt + 1, timestamp)
+}
+
 function blockForUserInput(state: StepModeState, task: TaskContext, step: TaskStep): RunTaskOutcome {
 	step.status = 'blocked'
 	step.error = 'Waiting for user input.'
@@ -123,33 +147,53 @@ function blockForUserInput(state: StepModeState, task: TaskContext, step: TaskSt
 	}
 }
 
-function activeStepTitle(task: TaskContext): string | undefined {
-	const runningStep = task.steps.find(step => step.status === 'running')
-	if (runningStep)
-		return runningStep.title
-	const activeScope = pickActiveScope(task)
-	return activeScope ? pickStepInScope(task, activeScope)?.title : undefined
+function syncRunGroup(state: StepModeState, runGroupId: string, task: TaskContext, input: string, status: StepModeRunStatus): void {
+	const timestamp = Math.max(Date.now(), task.updatedAt)
+	let group = state.runGroups.find(candidate => candidate.id === runGroupId)
+	if (!group) {
+		group = {
+			id: runGroupId,
+			taskId: task.id,
+			input,
+			status,
+			startedAt: timestamp,
+			updatedAt: timestamp,
+			stepIds: [],
+		}
+		state.runGroups.push(group)
+	}
+	group.taskId = task.id
+	group.input = input
+	group.status = status
+	group.updatedAt = timestamp
+	group.stepIds = orderedStepsForTask(task)
+		.map(step => step.id)
+	if (status !== 'running')
+		group.completedAt = timestamp
+}
+
+function makeToolDetails(task: TaskContext, input: string, status: StepModeRunStatus, summary?: string, runGroupId?: string): StepModeToolDetails {
+	return {
+		status,
+		input,
+		taskId: task.id,
+		runGroupId,
+		steps: todoItemsForTask(task),
+		summary,
+	}
 }
 
 function publishToolUpdate(
 	onUpdate: AgentToolUpdateCallback<StepModeToolDetails> | undefined,
-	state: StepModeState,
 	task: TaskContext,
 	input: string,
-	status: StepModeToolDetails['status'],
+	status: StepModeRunStatus,
 	summary?: string,
+	runGroupId?: string,
 ): void {
-	const progressText = renderStateProgress(state)
-	const details: StepModeToolDetails = {
-		status,
-		input,
-		taskId: task.id,
-		activeStep: activeStepTitle(task),
-		progressText,
-		summary,
-	}
+	const details = makeToolDetails(task, input, status, summary, runGroupId)
 	onUpdate?.({
-		content: [{ type: 'text', text: summary ?? progressText }],
+		content: [{ type: 'text', text: renderTodoList(input, details.steps) }],
 		details,
 	})
 }
@@ -160,8 +204,16 @@ async function runTask(
 	state: StepModeState,
 	task: TaskContext,
 	input: string,
+	runGroupId: string,
 	onUpdate: AgentToolUpdateCallback<StepModeToolDetails> | undefined,
 ): Promise<RunTaskOutcome> {
+	const saveProgress = (status: StepModeRunStatus, summary?: string, uiRunning = true) => {
+		syncRunGroup(state, runGroupId, task, input, status)
+		persistStepModeState(pi, state)
+		updateUi(extensionCtx, state, uiRunning)
+		publishToolUpdate(onUpdate, task, input, status, summary, runGroupId)
+	}
+
 	let executedSteps = 0
 	while (true) {
 		const scope = pickActiveScope(task)
@@ -171,29 +223,26 @@ async function runTask(
 		const step = pickStepInScope(task, scope)
 		if (!step) {
 			const changed = completeScopeIfPossible(task, scope)
-			persistStepModeState(pi, state)
-			updateUi(extensionCtx, state, true)
-			publishToolUpdate(onUpdate, state, task, input, 'running')
+			saveProgress('running')
 			if (!changed)
 				break
 			continue
 		}
 
 		markStepRunning(task, step)
-		persistStepModeState(pi, state)
-		updateUi(extensionCtx, state, true)
-		publishToolUpdate(onUpdate, state, task, input, 'running')
+		saveProgress('running')
 
 		if (step.kind === 'ask_user') {
 			const outcome = blockForUserInput(state, task, step)
-			persistStepModeState(pi, state)
-			updateUi(extensionCtx, state, false)
-			publishToolUpdate(onUpdate, state, task, input, 'waiting', outcome.summary)
+			saveProgress('waiting', outcome.summary, false)
 			return outcome
 		}
 
 		try {
-			const result = await executeStepWithWorker(extensionCtx, task, scope, step)
+			const result = await executeStepWithWorker(extensionCtx, task, scope, step, (event) => {
+				appendStepWorkerEvent(task, step, event)
+				updateUi(extensionCtx, state, true)
+			})
 			applyWorkerResult(task, scope, step, result)
 		}
 		catch (error) {
@@ -201,16 +250,12 @@ async function runTask(
 		}
 
 		executedSteps += 1
-		persistStepModeState(pi, state)
-		updateUi(extensionCtx, state, true)
-		publishToolUpdate(onUpdate, state, task, input, 'running')
+		saveProgress('running')
 
 		if (executedSteps >= task.limits.maxTotalSteps)
 			break
 	}
 
-	persistStepModeState(pi, state)
-	updateUi(extensionCtx, state, false)
 	const summary = summarizeTask(task)
 	const progressText = renderStateProgress(state)
 	let status: RunTaskOutcome['status'] = 'stopped'
@@ -221,12 +266,10 @@ async function runTask(
 	else if (!pickActiveScope(task))
 		status = 'completed'
 
-	if (status === 'completed' && task.scopes.every(scope => scope.status === 'completed')) {
+	if (status === 'completed' && task.scopes.every(scope => scope.status === 'completed'))
 		state.activeTaskId = null
-		persistStepModeState(pi, state)
-		updateUi(extensionCtx, state, false)
-	}
 
+	saveProgress(status, summary, false)
 	return { status, summary, progressText }
 }
 
@@ -247,12 +290,13 @@ function shouldInterceptInput(state: StepModeState, text: string, source: string
 
 function buildStepModeToolPrompt(input: string): string {
 	return [
-		'Step Mode is enabled.',
-		`Call the ${STEP_MODE_RUN_TOOL} tool exactly once.`,
+		'Step Mode is enabled for this turn.',
+		`Call the ${STEP_MODE_RUN_TOOL} tool exactly once as your first assistant action.`,
 		'The tool argument must be an object with one string field named input.',
+		'Set input to the original user input below.',
 		'Do not put a JSON object inside the input string.',
 		'',
-		'input:',
+		'Original user input:',
 		input,
 		'',
 		'Do not answer directly before the tool call.',
@@ -277,24 +321,12 @@ function normalizeRunInput(input: string): string {
 	return input
 }
 
-function preview(text: string, maxChars = 80): string {
-	const normalized = text.replace(WHITESPACE_PATTERN, ' ')
-		.trim()
-	if (normalized.length <= maxChars)
-		return normalized
-	return `${normalized.slice(0, maxChars - 1)}…`
-}
-
-function renderToolStatus(details: StepModeToolDetails | undefined, isPartial: boolean, theme: Parameters<typeof renderStatus>[0]): string {
-	if (isPartial || details?.status === 'running')
-		return renderStatus(theme, 'warning', 'Running')
-	if (details?.status === 'completed')
-		return renderStatus(theme, 'success', 'Completed')
-	if (details?.status === 'waiting')
-		return renderStatus(theme, 'warning', 'Waiting for user input')
-	if (details?.status === 'failed')
-		return renderStatus(theme, 'error', 'Failed')
-	return renderStatus(theme, 'muted', 'Finished')
+function syncToolRenderState(context: StepModeToolRenderContext, steps: StepModeTodoItem[]): void {
+	const nextLabel = stepCountLabel(steps)
+	if (context.state.stepCountLabel === nextLabel)
+		return
+	context.state.stepCountLabel = nextLabel
+	context.invalidate()
 }
 
 function formatToolResultForMainAgent(outcome: RunTaskOutcome): string {
@@ -319,7 +351,7 @@ export default function stepMode(pi: ExtensionAPI, _config: ResolvedDevilteaExte
 
 	async function openStepInspector(ctx: ExtensionContext): Promise<void> {
 		if (!ctx.hasUI) {
-			ctx.ui.notify('step-mode:inspect-step requires interactive UI', 'warning')
+			ctx.ui.notify('step-mode:inspect requires interactive UI', 'warning')
 			return
 		}
 		if (activeInspector) {
@@ -343,12 +375,6 @@ export default function stepMode(pi: ExtensionAPI, _config: ResolvedDevilteaExte
 		ctx.ui.setEditorComponent(previousEditor)
 	}
 
-	pi.registerMessageRenderer(STEP_MODE_MESSAGE_TYPE, (message, _options, theme) => {
-		const box = new Box(1, 1, text => theme.bg('customMessageBg', text))
-		box.addChild(new Text(messageContentText(message.content), 0, 0))
-		return box
-	})
-
 	pi.registerTool({
 		name: STEP_MODE_RUN_TOOL,
 		label: 'Step Mode',
@@ -362,9 +388,10 @@ export default function stepMode(pi: ExtensionAPI, _config: ResolvedDevilteaExte
 		parameters: Type.Object({
 			input: Type.String({ description: 'The original user input to process through step-mode.' }),
 		}, { additionalProperties: false }),
-		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+		async execute(toolCallId, params, _signal, onUpdate, ctx) {
 			const stepModeUpdate = onUpdate as AgentToolUpdateCallback<StepModeToolDetails> | undefined
 			const input = normalizeRunInput(params.input)
+			const runGroupId = toolCallId
 			running = true
 			try {
 				let task = getActiveTask(state)
@@ -380,18 +407,12 @@ export default function stepMode(pi: ExtensionAPI, _config: ResolvedDevilteaExte
 					addUserFollowupStep(task, input.trim())
 				}
 
+				syncRunGroup(state, runGroupId, task, input, 'running')
 				persistStepModeState(pi, state)
 				updateUi(ctx, state, true)
-				publishToolUpdate(stepModeUpdate, state, task, input, 'running')
-				const outcome = await runTask(pi, ctx, state, task, input, stepModeUpdate)
-				const details: StepModeToolDetails = {
-					status: outcome.status === 'stopped' ? 'running' : outcome.status,
-					input,
-					taskId: task.id,
-					activeStep: activeStepTitle(task),
-					progressText: outcome.progressText,
-					summary: outcome.summary,
-				}
+				publishToolUpdate(stepModeUpdate, task, input, 'running', undefined, runGroupId)
+				const outcome = await runTask(pi, ctx, state, task, input, runGroupId, stepModeUpdate)
+				const details = makeToolDetails(task, input, outcome.status, outcome.summary, runGroupId)
 				return {
 					content: [{ type: 'text', text: formatToolResultForMainAgent(outcome) }],
 					details,
@@ -402,30 +423,17 @@ export default function stepMode(pi: ExtensionAPI, _config: ResolvedDevilteaExte
 				updateUi(ctx, state, false)
 			}
 		},
-		renderCall(args, theme) {
-			return new Text(renderToolCallTitle(theme, 'Step Mode', preview(String(args.input ?? ''))), 0, 0)
+		renderCall(_args, theme, context) {
+			const renderContext = context as StepModeToolRenderContext
+			const countLabel = renderContext.state.stepCountLabel ?? '(0/0)'
+			return new Text(renderToolCallTitle(theme, 'Step Mode', countLabel), 0, 0)
 		},
-		renderResult(result, { expanded, isPartial }, theme) {
+		renderResult(result, _options, _theme, context) {
 			const details = result.details as StepModeToolDetails | undefined
-			const status = renderToolStatus(details, isPartial, theme)
-			const contentText = messageContentText(result.content)
-			if (!expanded) {
-				const lines = [
-					status,
-					details?.activeStep ? theme.fg('muted', `Active step: ${details.activeStep}`) : undefined,
-					details?.summary ? theme.fg('dim', preview(details.summary, 160)) : undefined,
-				].filter((line): line is string => Boolean(line))
-				return new Text(lines.join('\n'), 0, 0)
-			}
-
-			const lines = [status]
-			if (details?.summary)
-				lines.push('', 'Summary:', details.summary)
-			if (details?.progressText)
-				lines.push('', 'Progress:', details.progressText)
-			else if (!details?.summary && contentText)
-				lines.push('', contentText)
-			return new Text(lines.join('\n'), 0, 0)
+			if (!details)
+				return new Text(messageContentText(result.content), 0, 0)
+			syncToolRenderState(context as StepModeToolRenderContext, details.steps)
+			return new Text(renderTodoList(details.input, details.steps), 0, 0)
 		},
 	})
 
@@ -452,12 +460,11 @@ export default function stepMode(pi: ExtensionAPI, _config: ResolvedDevilteaExte
 				ensureStepModeToolActive(pi)
 			persistStepModeState(pi, state)
 			updateUi(ctx, state, running)
-			sendStepModeMessage(pi, renderToggleStatus(state))
 		},
 	})
 
-	pi.registerCommand('step-mode:inspect-step', {
-		description: 'Open the step-mode worker step inspector in the editor area',
+	pi.registerCommand('step-mode:inspect', {
+		description: 'Open the step-mode tool-call step inspector in the editor area',
 		handler: async (_args, ctx) => {
 			state = restoreStepModeState(ctx)
 			updateUi(ctx, state, running)
@@ -470,7 +477,7 @@ export default function stepMode(pi: ExtensionAPI, _config: ResolvedDevilteaExte
 			return { action: 'continue' }
 
 		if (running) {
-			ctx.ui.notify('Step mode is already running a task. Use /step-mode:inspect-step to inspect steps.', 'warning')
+			ctx.ui.notify('Step mode is already running a task. Use /step-mode:inspect to inspect steps.', 'warning')
 			return { action: 'handled' }
 		}
 

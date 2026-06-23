@@ -8,11 +8,38 @@ export type StepKind = 'research' | 'inspect' | 'plan' | 'implement' | 'validate
 
 export type StepStatus = 'pending' | 'running' | 'waiting_child_scope' | 'completed' | 'failed' | 'skipped' | 'blocked'
 
+export type StepModeRunStatus = 'running' | 'completed' | 'waiting' | 'failed' | 'stopped'
+
+export type StepWorkerEventKind = 'lifecycle' | 'thinking' | 'tool_call' | 'tool_result' | 'stderr'
+
+export interface StepWorkerEvent {
+	seq: number
+	timestamp: number
+	attempt: number
+	kind: StepWorkerEventKind
+	label: string
+	text?: string
+}
+
+export type StepWorkerEventDraft = Omit<StepWorkerEvent, 'seq' | 'timestamp'> & Partial<Pick<StepWorkerEvent, 'timestamp'>>
+
+export interface StepModeRunGroup {
+	id: string
+	taskId: string
+	input: string
+	status: StepModeRunStatus
+	startedAt: number
+	updatedAt: number
+	completedAt?: number
+	stepIds: string[]
+}
+
 export interface StepModeState {
 	enabled: boolean
 	paused: boolean
 	activeTaskId: string | null
 	taskCtxById: Record<string, TaskContext>
+	runGroups: StepModeRunGroup[]
 }
 
 export interface TaskContext {
@@ -65,6 +92,7 @@ export interface TaskStep {
 	resultDigest?: string
 	error?: string
 	acceptanceCriteria?: string[]
+	workerEvents?: StepWorkerEvent[]
 }
 
 export interface StepDraft {

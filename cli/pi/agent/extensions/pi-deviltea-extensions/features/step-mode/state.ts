@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import type { StepModeState, TaskContext } from './types.js'
+import type { StepModeRunGroup, StepModeState, TaskContext } from './types.js'
 import { STEP_MODE_STATE_ENTRY } from './policy.js'
 
 interface SessionEntryLike {
@@ -21,6 +21,19 @@ function isTaskContext(value: unknown): value is TaskContext {
 		&& Array.isArray(value.steps)
 }
 
+function isRunGroup(value: unknown): value is StepModeRunGroup {
+	if (!isRecord(value))
+		return false
+	return typeof value.id === 'string'
+		&& typeof value.taskId === 'string'
+		&& typeof value.input === 'string'
+		&& typeof value.status === 'string'
+		&& typeof value.startedAt === 'number'
+		&& typeof value.updatedAt === 'number'
+		&& Array.isArray(value.stepIds)
+		&& value.stepIds.every(stepId => typeof stepId === 'string')
+}
+
 function parseState(value: unknown): StepModeState | null {
 	if (!isRecord(value))
 		return null
@@ -37,11 +50,16 @@ function parseState(value: unknown): StepModeState | null {
 			taskCtxById[taskId] = task
 	}
 
+	const runGroups = Array.isArray(value.runGroups)
+		? value.runGroups.filter(isRunGroup)
+		: []
+
 	return {
 		enabled: value.enabled,
 		paused: value.paused,
 		activeTaskId: value.activeTaskId,
 		taskCtxById,
+		runGroups,
 	}
 }
 
@@ -51,6 +69,7 @@ export function createStepModeState(): StepModeState {
 		paused: false,
 		activeTaskId: null,
 		taskCtxById: {},
+		runGroups: [],
 	}
 }
 
