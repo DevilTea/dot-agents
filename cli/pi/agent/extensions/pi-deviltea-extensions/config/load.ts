@@ -1,7 +1,7 @@
 import type { TSchema } from 'typebox'
-import type { AgentFileConfig, AskQuestionsConfig, CustomFooterConfig, DevilteaExtensionsConfig, EditorSelectionHelperConfig, ModelSwitcherConfig, ResolvedDevilteaExtensionsConfig, SmartCommitConfig, StepModeConfig, SyspromptManagerConfig, WorkerConfig, WorkerRoleConfig } from './schema.js'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import type { AskQuestionsConfig, CustomFooterConfig, DevilteaExtensionsConfig, EditorSelectionHelperConfig, ModelSwitcherConfig, ResolvedDevilteaExtensionsConfig, SmartCommitConfig, SyspromptManagerConfig } from './schema.js'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Check, Errors } from 'typebox/value'
 import {
@@ -113,172 +113,6 @@ function mergeSyspromptManager(base: ResolvedDevilteaExtensionsConfig['sysprompt
 	}
 }
 
-function mergeStepMode(base: ResolvedDevilteaExtensionsConfig['stepMode'], override?: StepModeConfig): ResolvedDevilteaExtensionsConfig['stepMode'] {
-	if (!override)
-		return base
-	return {
-		...base,
-		...override,
-	}
-}
-
-function mergeWorker(base: ResolvedDevilteaExtensionsConfig['worker'], override?: WorkerConfig): ResolvedDevilteaExtensionsConfig['worker'] {
-	if (!override)
-		return base
-	return {
-		...base,
-		...override,
-		agentsDir: override.agentsDir ?? base.agentsDir,
-		agentFiles: [...base.agentFiles],
-		roles: {
-			...base.roles,
-			...(override.roles ?? {}),
-		},
-	}
-}
-
-/**
- * Parse YAML frontmatter from a Markdown string.
- * Returns { frontmatter: Record<string, unknown>, body: string } or null if no frontmatter.
- */
-function parseFrontmatter(content: string): { frontmatter: Record<string, unknown>, body: string } | null {
-	const normalized = content.replace(/^\uFEFF/, '')
-	const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(normalized)
-	if (!match)
-		return null
-	const body = normalized.slice(match[0].length).trimStart()
-	const frontmatter: Record<string, unknown> = {}
-	for (const line of match[1].split(/\r?\n/)) {
-		const trimmed = line.trim()
-		if (!trimmed || trimmed.startsWith('#'))
-			continue
-		const colonIdx = trimmed.indexOf(':')
-		if (colonIdx === -1)
-			continue
-		const key = trimmed.slice(0, colonIdx).trim()
-		frontmatter[key] = parseFrontmatterValue(trimmed.slice(colonIdx + 1).trim())
-	}
-	return { frontmatter, body }
-}
-
-function parseFrontmatterValue(value: string): unknown {
-	if (value === 'null' || value === '~')
-		return null
-	if (value === 'true')
-		return true
-	if (value === 'false')
-		return false
-	if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
-		return value.slice(1, -1)
-	if (value.startsWith('[') && value.endsWith(']')) {
-		const inner = value.slice(1, -1).trim()
-		if (!inner)
-			return []
-		return inner.split(',').map(item => String(parseFrontmatterValue(item.trim())))
-	}
-	return value
-}
-
-/**
- * Recursively discover .md files in a directory.
- */
-function discoverMdFiles(dir: string): string[] {
-	const results: string[] = []
-	if (!existsSync(dir) || !statSync(dir).isDirectory())
-		return results
-	for (const entry of readdirSync(dir, { withFileTypes: true })) {
-		const fullPath = join(dir, entry.name)
-		if (entry.isDirectory()) {
-			results.push(...discoverMdFiles(fullPath))
-		}
-		else if (entry.isFile() && entry.name.endsWith('.md')) {
-			results.push(fullPath)
-		}
-	}
-	return results
-}
-
-/**
- * Parse a single agent file into an AgentFileConfig.
- */
-function parseAgentFile(filePath: string): AgentFileConfig | null {
-	try {
-		const content = readFileSync(filePath, 'utf8')
-		const parsed = parseFrontmatter(content)
-		if (!parsed)
-			return null
-		const fm = parsed.frontmatter
-		const name = typeof fm['name'] === 'string' && fm['name'].trim() ? fm['name'].trim() : basename(filePath, '.md')
-		const description = typeof fm['description'] === 'string' && fm['description'].trim() ? fm['description'].trim() : undefined
-		const model = typeof fm['model'] === 'string' && fm['model'].trim() ? fm['model'].trim() : null
-		const tools = fm['tools']
-		const allowedTools = Array.isArray(tools) ? tools.map(String).filter(Boolean) : null
-		const commands = fm['allowedCommands']
-		const allowedCommands = Array.isArray(commands) ? commands.map(String).filter(Boolean) : null
-		return {
-			name,
-			description,
-			model,
-			systemPrompt: parsed.body,
-			allowedTools,
-			allowedCommands,
-		}
-	}
-	catch {
-		return null
-	}
-}
-
-function expandHome(path: string): string {
-	if (path === '~')
-		return process.env.HOME || path
-	if (path.startsWith('~/'))
-		return join(process.env.HOME || '~', path.slice(2))
-	return path
-}
-
-function resolveAgentsDir(path: string): string {
-	return resolve(expandHome(path))
-}
-
-/**
- * Discover and parse agent files from the agents directory.
- * Returns an array of AgentFileConfig objects.
- */
-function discoverAgentFiles(agentsDir: string): AgentFileConfig[] {
-	const mdFiles = discoverMdFiles(agentsDir)
-	const agents: AgentFileConfig[] = []
-	for (const filePath of mdFiles) {
-		const agent = parseAgentFile(filePath)
-		if (agent)
-			agents.push(agent)
-	}
-	return agents
-}
-
-/**
- * Merge discovered agent files into the roles record.
- * Inline config roles take precedence over agent file roles.
- */
-function mergeAgentFilesIntoRoles(agentFiles: AgentFileConfig[], inlineRoles: Record<string, WorkerRoleConfig>): Record<string, WorkerRoleConfig> {
-	const roles: Record<string, WorkerRoleConfig> = {}
-	// First, add all agent file roles
-	for (const agent of agentFiles) {
-		roles[agent.name] = {
-			description: agent.description,
-			model: agent.model,
-			systemPrompt: agent.systemPrompt,
-			allowedTools: agent.allowedTools,
-			allowedCommands: agent.allowedCommands,
-		}
-	}
-	// Then, override with inline config roles (they take precedence)
-	for (const [name, role] of Object.entries(inlineRoles)) {
-		roles[name] = role
-	}
-	return roles
-}
-
 function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: DevilteaExtensionsConfig): ResolvedDevilteaExtensionsConfig {
 	if (!override)
 		return base
@@ -289,8 +123,6 @@ function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: De
 		smartCommit: mergeSmartCommit(base.smartCommit, override.smartCommit),
 		askQuestions: mergeAskQuestions(base.askQuestions, override.askQuestions),
 		syspromptManager: mergeSyspromptManager(base.syspromptManager, override.syspromptManager),
-		stepMode: mergeStepMode(base.stepMode, override.stepMode),
-		worker: mergeWorker(base.worker, override.worker),
 	}
 }
 
@@ -309,11 +141,6 @@ function serializeDefaultConfig(): DevilteaExtensionsConfig {
 		smartCommit: config.smartCommit,
 		askQuestions: config.askQuestions,
 		syspromptManager: config.syspromptManager,
-		stepMode: config.stepMode,
-		worker: {
-			enabled: config.worker.enabled,
-			agentsDir: config.worker.agentsDir,
-		},
 	}
 }
 
@@ -337,14 +164,6 @@ export function loadDevilteaExtensionsConfig(): ResolvedDevilteaExtensionsConfig
 	)
 	const config = mergeBundleConfig(createDefaultDevilteaExtensionsConfig(), rawConfig)
 
-	// Discover and parse agent files from the agents directory
-	const agentsDir = resolveAgentsDir(config.worker.agentsDir)
-	const agentFiles = discoverAgentFiles(agentsDir)
-	config.worker.agentsDir = agentsDir
-
-	// Merge agent files into roles (inline config takes precedence)
-	config.worker.agentFiles = agentFiles
-	config.worker.roles = mergeAgentFilesIntoRoles(agentFiles, config.worker.roles)
 
 	validateResolvedConfig(config)
 	return config

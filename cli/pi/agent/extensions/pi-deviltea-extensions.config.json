@@ -62,11 +62,7 @@
 	"askQuestions": {
 		"enabled": true
 	},
-	"stepMode": {
+	"syspromptManager": {
 		"enabled": true
-	},
-	"worker": {
-		"enabled": false,
-		"agentsDir": "~/.pi/agent/agents"
 	}
 }

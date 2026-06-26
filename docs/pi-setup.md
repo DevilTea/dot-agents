@@ -26,9 +26,6 @@ ln -s ../../../skills    ~/.agents/cli/pi/agent/skills      # ~/.pi/agent/skills
 - `AGENTS.md` — pi loads `AGENTS.md`/`CLAUDE.md` from its agent dir as global context.
 - `skills` — pi loads user skills from `~/.pi/agent/skills` and follows symlinks.
 
-`cli/pi/agent/APPEND_SYSTEM.md` holds pi-specific guidance (main agent as
-orchestrator, delegate to `worker`); it is separate from the shared rules.
-
 ## Prerequisites
 
 - Node.js >= v22

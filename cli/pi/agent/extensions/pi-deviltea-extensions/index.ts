@@ -9,9 +9,7 @@ import askQuestions from './features/ask-questions/index.js'
 import editorSelectionHelper from './features/editor-selection-helper/index.js'
 import modelSwitcher from './features/model-switcher/index.js'
 import smartCommit from './features/smart-commit/index.js'
-import stepMode from './features/step-mode/index.js'
 import syspromptManager from './features/sysprompt-manager/index.js'
-import worker from './features/worker/index.js'
 
 type FeatureName = keyof ResolvedDevilteaExtensionsConfig
 type ExtensionRegistrar = (pi: ExtensionAPI, config: ResolvedDevilteaExtensionsConfig) => void
@@ -23,9 +21,7 @@ const extensions: Array<{ name: FeatureName, register: ExtensionRegistrar }> = [
 	{ name: 'editorSelectionHelper', register: editorSelectionHelper },
 	{ name: 'modelSwitcher', register: modelSwitcher },
 	{ name: 'smartCommit', register: smartCommit },
-	{ name: 'stepMode', register: stepMode },
 	{ name: 'syspromptManager', register: syspromptManager },
-	{ name: 'worker', register: worker },
 ]
 
 export default function devilteaExtensions(pi: ExtensionAPI) {

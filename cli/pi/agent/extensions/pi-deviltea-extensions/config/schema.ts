@@ -136,52 +136,6 @@ export interface SyspromptManagerConfig {
 }
 
 /**
- * Configuration for the step-mode task runtime feature.
- */
-export interface StepModeConfig {
-	/** Enables or disables the feature registration. */
-	enabled?: boolean
-}
-
-export interface WorkerRoleConfig {
-	/** Human-readable role description used in tool descriptions. */
-	description?: string
-	/** Model id used by this worker. Null inherits the current main-agent model. */
-	model?: string | null
-	/** Worker system prompt loaded from the Markdown body. */
-	systemPrompt: string
-	/** Allowed pi tools. Null allows all active tools. */
-	allowedTools?: string[] | null
-	/** Allowed bash command prefixes. Null allows all commands. */
-	allowedCommands?: string[] | null
-}
-
-/** Parsed agent file from a Markdown .md file in the agents directory. */
-export interface AgentFileConfig {
-	/** Role name (derived from filename stem). */
-	name: string
-	/** Human-readable description of the role. */
-	description?: string
-	/** Model id. Null inherits the current main-agent model. */
-	model?: string | null
-	/** System prompt taken from the Markdown body (after frontmatter). */
-	systemPrompt: string
-	/** Allowed pi tools. Null allows all active tools. */
-	allowedTools?: string[] | null
-	/** Allowed bash command prefixes. Null allows all commands. */
-	allowedCommands?: string[] | null
-}
-
-export interface WorkerConfig {
-	/** Enables or disables the worker tool registration. */
-	enabled?: boolean
-	/** Path to the agents directory containing Markdown agent definition files. Defaults to ~/.pi/agent/agents. */
-	agentsDir?: string
-	/** User-defined worker roles keyed by role name. */
-	roles?: Record<string, WorkerRoleConfig>
-}
-
-/**
  * Top-level configuration object stored in `pi-deviltea-extensions.config.json`.
  */
 export interface DevilteaExtensionsConfig {
@@ -197,10 +151,6 @@ export interface DevilteaExtensionsConfig {
 	askQuestions?: AskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
 	syspromptManager?: SyspromptManagerConfig
-	/** Settings for the step-mode task runtime feature. */
-	stepMode?: StepModeConfig
-	/** Settings for the lightweight worker tool feature. */
-	worker?: WorkerConfig
 }
 
 /**
@@ -330,22 +280,6 @@ export interface ResolvedSyspromptManagerConfig {
 	enabled: boolean
 }
 
-export interface ResolvedStepModeConfig {
-	/** Enables or disables the feature registration. */
-	enabled: boolean
-}
-
-export interface ResolvedWorkerConfig {
-	/** Enables or disables the worker tool registration. */
-	enabled: boolean
-	/** Path to the agents directory containing Markdown agent definition files. */
-	agentsDir: string
-	/** Discovered agent files from the agents directory. */
-	agentFiles: AgentFileConfig[]
-	/** User-defined worker roles keyed by role name (merged with agent file roles). */
-	roles: Record<string, WorkerRoleConfig>
-}
-
 /**
  * Fully resolved top-level configuration object used internally by the extension bundle.
  */
@@ -362,10 +296,6 @@ export interface ResolvedDevilteaExtensionsConfig {
 	askQuestions: ResolvedAskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
 	syspromptManager: ResolvedSyspromptManagerConfig
-	/** Settings for the step-mode task runtime feature. */
-	stepMode: ResolvedStepModeConfig
-	/** Settings for the lightweight worker tool feature. */
-	worker: ResolvedWorkerConfig
 }
 
 export const EditorSelectionHelperBindingsSchema = Type.Object({
@@ -444,24 +374,6 @@ export const SyspromptManagerConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false })
 
-export const StepModeConfigSchema = Type.Object({
-	enabled: Type.Optional(Type.Boolean()),
-}, { additionalProperties: false })
-
-export const WorkerRoleConfigSchema = Type.Object({
-	description: Type.Optional(Type.String({ minLength: 1 })),
-	model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-	systemPrompt: Type.String({ minLength: 1 }),
-	allowedTools: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Null()])),
-	allowedCommands: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Null()])),
-}, { additionalProperties: false })
-
-export const WorkerConfigSchema = Type.Object({
-	enabled: Type.Optional(Type.Boolean()),
-	agentsDir: Type.Optional(Type.String({ minLength: 1 })),
-	roles: Type.Optional(Type.Record(Type.String({ minLength: 1 }), WorkerRoleConfigSchema)),
-}, { additionalProperties: false })
-
 export const DevilteaExtensionsConfigSchema = Type.Object({
 	editorSelectionHelper: Type.Optional(EditorSelectionHelperConfigSchema),
 	customFooter: Type.Optional(CustomFooterConfigSchema),
@@ -469,8 +381,6 @@ export const DevilteaExtensionsConfigSchema = Type.Object({
 	smartCommit: Type.Optional(SmartCommitConfigSchema),
 	askQuestions: Type.Optional(AskQuestionsConfigSchema),
 	syspromptManager: Type.Optional(SyspromptManagerConfigSchema),
-	stepMode: Type.Optional(StepModeConfigSchema),
-	worker: Type.Optional(WorkerConfigSchema),
 }, { additionalProperties: false })
 
 export const DEFAULT_EDITOR_SELECTION_HELPER_CONFIG: ResolvedEditorSelectionHelperConfig = {
@@ -536,17 +446,6 @@ export const DEFAULT_SYSPROMPT_MANAGER_CONFIG: ResolvedSyspromptManagerConfig = 
 	enabled: true,
 }
 
-export const DEFAULT_STEP_MODE_CONFIG: ResolvedStepModeConfig = {
-	enabled: true,
-}
-
-export const DEFAULT_WORKER_CONFIG: ResolvedWorkerConfig = {
-	enabled: true,
-	agentsDir: '~/.pi/agent/agents',
-	agentFiles: [],
-	roles: {},
-}
-
 export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensionsConfig {
 	return {
 		editorSelectionHelper: {
@@ -565,7 +464,5 @@ export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensi
 		smartCommit: { ...DEFAULT_SMART_COMMIT_CONFIG },
 		askQuestions: { ...DEFAULT_ASK_QUESTIONS_CONFIG },
 		syspromptManager: { ...DEFAULT_SYSPROMPT_MANAGER_CONFIG },
-		stepMode: { ...DEFAULT_STEP_MODE_CONFIG },
-		worker: { ...DEFAULT_WORKER_CONFIG, agentFiles: [...DEFAULT_WORKER_CONFIG.agentFiles], roles: { ...DEFAULT_WORKER_CONFIG.roles } },
 	}
 }
