@@ -52,6 +52,13 @@ export const ReducerSchema = Type.Union([
 	Type.Object({ type: Type.Literal('worker'), prompt: Type.String() }),
 ])
 
+const NonEmptyStringSchema = Type.String({ minLength: 1 })
+const StrictReducerSchema = Type.Union([
+	Type.Object({ type: Type.Literal('append_outputs') }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('merge_json') }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('worker'), prompt: NonEmptyStringSchema }, { additionalProperties: false }),
+])
+
 export type Reducer = Static<typeof ReducerSchema>
 
 export const QueueItemStatusSchema = Type.Union([
@@ -167,3 +174,58 @@ export interface SnapshotRestoreResult {
 	warnings: string[]
 	disabledReason?: string
 }
+
+export const QueueItemDraftSchema = Type.Object({
+	input: JsonValueSchema,
+	contract: Type.Object({
+		goal: NonEmptyStringSchema,
+		outputShape: NonEmptyStringSchema,
+		completionCriteria: Type.Array(NonEmptyStringSchema, { minItems: 1 }),
+		constraints: Type.Optional(Type.Array(NonEmptyStringSchema)),
+		outOfScope: Type.Optional(Type.Array(NonEmptyStringSchema)),
+	}, { additionalProperties: false }),
+	canExpand: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false })
+
+export type QueueItemDraft = Static<typeof QueueItemDraftSchema>
+
+export const UserInteractionRequestSchema = Type.Union([
+	Type.Object({ type: Type.Literal('choice'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('clarification'), question: NonEmptyStringSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('confirmation'), prompt: NonEmptyStringSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('approval'), prompt: NonEmptyStringSchema, artifact: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('preference'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('input_request'), prompt: NonEmptyStringSchema, inputShape: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('review'), prompt: NonEmptyStringSchema, artifact: JsonValueSchema }, { additionalProperties: false }),
+])
+
+export type UserInteractionRequest = Static<typeof UserInteractionRequestSchema>
+
+export const KnowledgeUpdateProposalSchema = Type.Union([
+	Type.Object({ type: Type.Literal('fact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), confidence: Type.Number({ minimum: 0, maximum: 1 }) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('rule'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('decision'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), decidedAt: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('event'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), occurredAt: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('artifact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, artifactPath: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
+])
+
+export type KnowledgeUpdateProposal = Static<typeof KnowledgeUpdateProposalSchema>
+
+const KnowledgeUpdatesSchema = Type.Optional(Type.Array(KnowledgeUpdateProposalSchema))
+
+export const WorkerResultSchema = Type.Union([
+	Type.Object({ type: Type.Literal('resolved'), output: JsonValueSchema, knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('expand'), children: Type.Array(QueueItemDraftSchema, { minItems: 1 }), reducer: Type.Optional(StrictReducerSchema), knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('blocked'), reason: NonEmptyStringSchema, requiredInfo: Type.Optional(Type.Array(NonEmptyStringSchema)), knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('requires_user_interaction'), request: UserInteractionRequestSchema, knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('failed'), error: NonEmptyStringSchema, recoverySuggestion: Type.Optional(NonEmptyStringSchema), knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
+])
+
+export type WorkerResult = Static<typeof WorkerResultSchema>
+
+export const RetrieverResultSchema = Type.Object({
+	selectedRecordIds: Type.Array(NonEmptyStringSchema),
+	rationale: Type.Optional(Type.String()),
+}, { additionalProperties: false })
+
+export type RetrieverResult = Static<typeof RetrieverResultSchema>
