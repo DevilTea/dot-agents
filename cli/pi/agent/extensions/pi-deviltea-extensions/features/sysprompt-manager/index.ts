@@ -1,6 +1,7 @@
 import type { ExtensionAPI, Theme } from '@earendil-works/pi-coding-agent'
+import type { EditorComponent, TUI } from '@earendil-works/pi-tui'
 import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
-import { Key, matchesKey, visibleWidth, type EditorComponent, type TUI } from '@earendil-works/pi-tui'
+import { Key, matchesKey, visibleWidth } from '@earendil-works/pi-tui'
 import { isCancelKey } from '../../shared/modal.js'
 import { fitToWidth, trimToWidth } from '../../shared/ui.js'
 
@@ -9,7 +10,7 @@ const SCROLL_DOWN = Key.down
 const SCROLL_PAGE_UP = Key.ctrl('u')
 const SCROLL_PAGE_DOWN = Key.ctrl('d')
 
-const ANSI_ESCAPE = /\x1b\[[0-9;]*m/g
+const ANSI_ESCAPE = new RegExp(`${String.fromCodePoint(0x1B)}\\[[0-9;]*m`, 'g')
 
 function stripAnsi(text: string): string {
 	return text.replace(ANSI_ESCAPE, '')
@@ -32,8 +33,10 @@ function wrapLine(text: string, width: number): string[] {
 			cut--
 		if (cut === 0)
 			cut = width // force cut
-		result.push(remaining.slice(0, cut).trimEnd())
-		remaining = remaining.slice(cut).trimStart()
+		result.push(remaining.slice(0, cut)
+			.trimEnd())
+		remaining = remaining.slice(cut)
+			.trimStart()
 	}
 	return result
 }
@@ -103,7 +106,6 @@ class SystemPromptViewer implements EditorComponent {
 		if (matchesKey(data, SCROLL_PAGE_DOWN)) {
 			this.scrollOffset += this.contentRows
 			this.tui.requestRender()
-			return
 		}
 	}
 
@@ -157,7 +159,8 @@ export default function syspromptManager(pi: ExtensionAPI, _config: ResolvedDevi
 				await new Promise<void>((resolve) => {
 					ctx.ui.setEditorComponent((tui: TUI) => new SystemPromptViewer(tui, ctx.ui.theme, lines, resolve))
 				})
-			} finally {
+			}
+			finally {
 				ctx.ui.setEditorComponent(previousEditor)
 			}
 		},

@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
-import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
 import type { KeyId } from '@earendil-works/pi-tui'
+import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
 
 import { copyToClipboard } from '@earendil-works/pi-coding-agent'
 import {
@@ -469,27 +469,6 @@ function patchEditor(config: ResolvedSelectionEditorConfig): boolean {
 	return true
 }
 
-function restoreEditorPatch(): void {
-	const prototype = Editor.prototype as Editor & { [PATCH_SYMBOL]?: EditorPatch }
-	const original = prototype[PATCH_SYMBOL]
-	if (!original)
-		return
-	Editor.prototype.handleInput = original.handleInput
-	Editor.prototype.render = original.render
-	Editor.prototype.setText = original.setText
-	Editor.prototype.insertTextAtCursor = original.insertTextAtCursor
-	delete prototype[PATCH_SYMBOL]
-}
-
 export default function editorSelectionHelper(_pi: ExtensionAPI, bundleConfig: ResolvedDevilteaExtensionsConfig): void {
-	const patched = patchEditor(bundleConfig.editorSelectionHelper)
-
-	// pi.on('session_start', (_event, ctx) => {
-	// 	ctx.ui.setStatus('editor-selection-helper', patched ? 'native editor patched' : 'native editor patch active')
-	// })
-
-	// pi.on('session_shutdown', (_event, ctx) => {
-	// 	restoreEditorPatch()
-	// 	ctx.ui.setStatus('editor-selection-helper', undefined)
-	// })
+	patchEditor(bundleConfig.editorSelectionHelper)
 }
