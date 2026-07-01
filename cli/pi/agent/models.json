@@ -8,30 +8,44 @@
         "CF-Access-Client-Id": "$CF_ACCESS_CLIENT_ID",
         "CF-Access-Client-Secret": "$CF_ACCESS_CLIENT_SECRET"
       },
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
       "models": [
-        {
-          "id": "qwen3.6-35b-a3b-mtp@q6_k_xl",
-          "name": "Qwen3.6 [MOE] [Q6]",
-          "reasoning": true,
-          "input": [
-            "text",
-            "image"
-          ],
-          "contextWindow": 196608
-        },
         {
           "id": "qwen3.6-35b-a3b-mtp@q8_k_xl",
           "name": "Qwen3.6 [MOE] [Q8]",
-          "reasoning": true,
           "input": [
             "text",
             "image"
           ],
-          "contextWindow": 196608
+          "contextWindow": 196608,
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "xhigh": null
+          },
+          "compat": {
+            "thinkingFormat": "qwen-chat-template"
+          }
+        },
+        {
+          "id": "qwen3.6-27b-mtp@iq4_xs",
+          "name": "Qwen3.6 [DENSE] [IQ4]",
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 196608,
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "xhigh": null
+          },
+          "compat": {
+            "thinkingFormat": "qwen-chat-template"
+          }
         }
       ]
     }
