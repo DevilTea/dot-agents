@@ -134,10 +134,16 @@ export const KnowledgeRecordSchema = Type.Object({
 	]),
 	scope: Type.String(),
 	summary: Type.String(),
+	createdAt: Type.String(),
+	sourceItemId: Type.Optional(Type.String()),
 	data: Type.Optional(JsonValueSchema),
+	confidence: Type.Optional(Type.Number()),
+	appliesWhen: Type.Optional(Type.String()),
+	rationale: Type.Optional(Type.String()),
+	decidedAt: Type.Optional(Type.String()),
+	occurredAt: Type.Optional(Type.String()),
 	artifactPath: Type.Optional(Type.String()),
 	ref: Type.Optional(Type.String()),
-	createdAt: Type.String(),
 })
 
 export type KnowledgeRecord = Static<typeof KnowledgeRecordSchema>
@@ -202,11 +208,11 @@ export const UserInteractionRequestSchema = Type.Union([
 export type UserInteractionRequest = Static<typeof UserInteractionRequestSchema>
 
 export const KnowledgeUpdateProposalSchema = Type.Union([
-	Type.Object({ type: Type.Literal('fact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), confidence: Type.Number({ minimum: 0, maximum: 1 }) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('rule'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('fact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('rule'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), appliesWhen: Type.Optional(NonEmptyStringSchema), rationale: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
 	Type.Object({ type: Type.Literal('decision'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), decidedAt: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
 	Type.Object({ type: Type.Literal('event'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), occurredAt: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('artifact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, artifactPath: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('artifact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, artifactPath: Type.Optional(NonEmptyStringSchema), ref: Type.Optional(NonEmptyStringSchema), data: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
 ])
 
 export type KnowledgeUpdateProposal = Static<typeof KnowledgeUpdateProposalSchema>
