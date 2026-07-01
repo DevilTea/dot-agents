@@ -67,6 +67,24 @@ export class QueuedWorkflowOrchestrator {
 		void this.runLoop(ctx)
 	}
 
+	answerInteraction(ctx: ExtensionContext, itemId: string, answer: string): void {
+		const state = this.getState(ctx)
+		const item = state.items[itemId]
+		if (!item || item.status !== 'waiting_user')
+			return
+		const updatedAt = now()
+		this.state = {
+			...state,
+			items: {
+				...state.items,
+				[itemId]: { ...item, input: appendUserResponse(item.input, answer), status: 'pending', userInteraction: undefined, updatedAt },
+			},
+			updatedAt,
+		}
+		this.persist()
+		void this.runLoop(ctx)
+	}
+
 	status(ctx: ExtensionContext): string {
 		const state = this.getState(ctx)
 		const counts = Object.values(state.items)
@@ -328,6 +346,14 @@ function markWaitingUser(state: QueuedWorkflowState, itemId: string, request: Us
 		items: { ...state.items, [itemId]: { ...item, status: 'waiting_user', userInteraction: request, updatedAt } },
 		updatedAt,
 	}
+}
+
+function appendUserResponse(input: QueueItem['input'], answer: string): QueueItem['input'] {
+	if (typeof input === 'object' && input !== null && !Array.isArray(input) && input.kind === 'user_request') {
+		const responses = Array.isArray(input.userResponses) ? input.userResponses : []
+		return { ...input, userResponses: [...responses, answer] }
+	}
+	return { originalInput: input, userResponses: [answer] }
 }
 
 function now(): string {

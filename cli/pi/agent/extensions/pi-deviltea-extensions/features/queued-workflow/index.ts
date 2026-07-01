@@ -3,14 +3,47 @@ import type { ResolvedDevilteaExtensionsConfig } from '../../config/schema.js'
 import type { QueueInputImage } from './domain/schema.js'
 import { resolveRuntimeConfig } from './runtime/config.js'
 import { QueuedWorkflowOrchestrator } from './runtime/orchestrator.js'
+import { QueuedWorkflowEditor } from './ui/editor.js'
 
 const WHITESPACE_PATTERN = /\s+/
 
 export default function queuedWorkflow(pi: ExtensionAPI, bundleConfig: ResolvedDevilteaExtensionsConfig): void {
 	const orchestrator = new QueuedWorkflowOrchestrator(pi, resolveRuntimeConfig(bundleConfig.queuedWorkflow))
+	let previousEditor: ReturnType<ExtensionContext['ui']['getEditorComponent']> | undefined
+	let currentEditor: QueuedWorkflowEditor | undefined
+	let dashboardInstalled = false
+
+	const installDashboard = (ctx: ExtensionContext) => {
+		if (dashboardInstalled)
+			return
+		previousEditor = ctx.ui.getEditorComponent()
+		ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+			currentEditor = new QueuedWorkflowEditor(tui, theme, keybindings, {
+				ctx,
+				onSlashFallback: (text) => {
+					ctx.ui.setEditorComponent(previousEditor)
+					dashboardInstalled = false
+					ctx.ui.notify(`Slash command fallback: ${text}. Press Enter again to run it.`, 'warning')
+				},
+				orchestrator,
+			})
+			return currentEditor
+		})
+		dashboardInstalled = true
+	}
+
+	const restoreEditor = (ctx: ExtensionContext) => {
+		if (!dashboardInstalled)
+			return
+		ctx.ui.setEditorComponent(previousEditor)
+		currentEditor = undefined
+		dashboardInstalled = false
+	}
 
 	pi.on('session_start', (_event, ctx) => {
 		orchestrator.restore(ctx)
+		if (orchestrator.getState(ctx).enabled)
+			installDashboard(ctx)
 	})
 
 	pi.on('session_shutdown', () => {
@@ -22,7 +55,11 @@ export default function queuedWorkflow(pi: ExtensionAPI, bundleConfig: ResolvedD
 	pi.registerCommand('qw', {
 		description: 'Toggle or control Queued Workflow. Usage: /qw [resume|status|show <itemId> [--verbose]|retry <itemId> [--recursive]]',
 		handler: async (args, ctx) => {
-			handleCommand(orchestrator, args, ctx)
+			handleCommand(orchestrator, args, ctx, {
+				currentEditor: () => currentEditor,
+				installDashboard,
+				restoreEditor,
+			})
 		},
 	})
 }
@@ -42,17 +79,33 @@ function handleInput(orchestrator: QueuedWorkflowOrchestrator, event: InputEvent
 	return { action: 'handled' }
 }
 
-function handleCommand(orchestrator: QueuedWorkflowOrchestrator, args: string, ctx: ExtensionContext): void {
+interface DashboardControls {
+	currentEditor: () => QueuedWorkflowEditor | undefined
+	installDashboard: (ctx: ExtensionContext) => void
+	restoreEditor: (ctx: ExtensionContext) => void
+}
+
+function handleCommand(orchestrator: QueuedWorkflowOrchestrator, args: string, ctx: ExtensionContext, dashboard: DashboardControls): void {
 	const parts = args.trim()
 		.split(WHITESPACE_PATTERN)
 		.filter(Boolean)
 	const command = parts[0]
 	if (!command) {
+		if (orchestrator.getState(ctx).enabled && dashboard.currentEditor()
+			?.hasDraft()) {
+			ctx.ui.notify('Queued Workflow draft is not empty. Submit or clear it before disabling.', 'warning')
+			return
+		}
+		const wasEnabled = orchestrator.getState(ctx).enabled
 		orchestrator.toggle(ctx)
+		if (wasEnabled)
+			dashboard.restoreEditor(ctx)
+		else dashboard.installDashboard(ctx)
 		return
 	}
 	if (command === 'resume') {
 		orchestrator.enable(ctx, true)
+		dashboard.installDashboard(ctx)
 		return
 	}
 	if (command === 'status') {
