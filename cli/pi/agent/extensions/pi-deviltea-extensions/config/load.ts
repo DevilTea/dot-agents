@@ -1,5 +1,5 @@
 import type { TSchema } from 'typebox'
-import type { AskQuestionsConfig, CustomFooterConfig, DevilteaExtensionsConfig, EditorSelectionHelperConfig, ModelSwitcherConfig, ResolvedDevilteaExtensionsConfig, SmartCommitConfig, SyspromptManagerConfig } from './schema.js'
+import type { AskQuestionsConfig, CustomFooterConfig, DevilteaExtensionsConfig, EditorSelectionHelperConfig, ModelSwitcherConfig, QueuedWorkflowConfig, ResolvedDevilteaExtensionsConfig, SmartCommitConfig, SyspromptManagerConfig } from './schema.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -95,6 +95,23 @@ function mergeSmartCommit(base: ResolvedDevilteaExtensionsConfig['smartCommit'],
 	}
 }
 
+function mergeQueuedWorkflow(base: ResolvedDevilteaExtensionsConfig['queuedWorkflow'], override?: QueuedWorkflowConfig): ResolvedDevilteaExtensionsConfig['queuedWorkflow'] {
+	if (!override)
+		return base
+	return {
+		...base,
+		...override,
+		worker: {
+			...base.worker,
+			...(override.worker ?? {}),
+		},
+		knowledge: {
+			...base.knowledge,
+			...(override.knowledge ?? {}),
+		},
+	}
+}
+
 function mergeAskQuestions(base: ResolvedDevilteaExtensionsConfig['askQuestions'], override?: AskQuestionsConfig): ResolvedDevilteaExtensionsConfig['askQuestions'] {
 	if (!override)
 		return base
@@ -121,6 +138,7 @@ function mergeBundleConfig(base: ResolvedDevilteaExtensionsConfig, override?: De
 		customFooter: mergeCustomFooter(base.customFooter, override.customFooter),
 		modelSwitcher: mergeModelSwitcher(base.modelSwitcher, override.modelSwitcher),
 		smartCommit: mergeSmartCommit(base.smartCommit, override.smartCommit),
+		queuedWorkflow: mergeQueuedWorkflow(base.queuedWorkflow, override.queuedWorkflow),
 		askQuestions: mergeAskQuestions(base.askQuestions, override.askQuestions),
 		syspromptManager: mergeSyspromptManager(base.syspromptManager, override.syspromptManager),
 	}
@@ -139,6 +157,7 @@ function serializeDefaultConfig(): DevilteaExtensionsConfig {
 		customFooter: config.customFooter,
 		modelSwitcher: config.modelSwitcher,
 		smartCommit: config.smartCommit,
+		queuedWorkflow: config.queuedWorkflow,
 		askQuestions: config.askQuestions,
 		syspromptManager: config.syspromptManager,
 	}
@@ -163,7 +182,6 @@ export function loadDevilteaExtensionsConfig(): ResolvedDevilteaExtensionsConfig
 		DEVILTEA_EXTENSIONS_CONFIG_PATH,
 	)
 	const config = mergeBundleConfig(createDefaultDevilteaExtensionsConfig(), rawConfig)
-
 
 	validateResolvedConfig(config)
 	return config

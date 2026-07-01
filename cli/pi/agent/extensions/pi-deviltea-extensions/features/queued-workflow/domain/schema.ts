@@ -65,6 +65,7 @@ export const QueueItemStatusSchema = Type.Union([
 	Type.Literal('pending'),
 	Type.Literal('running'),
 	Type.Literal('expanded'),
+	Type.Literal('waiting_user'),
 	Type.Literal('resolved'),
 	Type.Literal('failed'),
 	Type.Literal('blocked'),
@@ -101,6 +102,18 @@ export const ItemRunRecordSchema = Type.Object({
 
 export type ItemRunRecord = Static<typeof ItemRunRecordSchema>
 
+export const UserInteractionRequestSchema = Type.Union([
+	Type.Object({ type: Type.Literal('choice'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('clarification'), question: NonEmptyStringSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('confirmation'), prompt: NonEmptyStringSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('approval'), prompt: NonEmptyStringSchema, artifact: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('preference'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('input_request'), prompt: NonEmptyStringSchema, inputShape: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('review'), prompt: NonEmptyStringSchema, artifact: JsonValueSchema }, { additionalProperties: false }),
+])
+
+export type UserInteractionRequest = Static<typeof UserInteractionRequestSchema>
+
 export const QueueItemSchema = Type.Object({
 	id: Type.String(),
 	rootId: Type.String(),
@@ -113,6 +126,7 @@ export const QueueItemSchema = Type.Object({
 	output: Type.Optional(JsonValueSchema),
 	error: Type.Optional(Type.String()),
 	block: Type.Optional(Type.String()),
+	userInteraction: Type.Optional(UserInteractionRequestSchema),
 	constraints: Type.Array(Type.String()),
 	outOfScope: Type.Array(Type.String()),
 	canExpand: Type.Boolean(),
@@ -194,18 +208,6 @@ export const QueueItemDraftSchema = Type.Object({
 }, { additionalProperties: false })
 
 export type QueueItemDraft = Static<typeof QueueItemDraftSchema>
-
-export const UserInteractionRequestSchema = Type.Union([
-	Type.Object({ type: Type.Literal('choice'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('clarification'), question: NonEmptyStringSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('confirmation'), prompt: NonEmptyStringSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('approval'), prompt: NonEmptyStringSchema, artifact: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('preference'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('input_request'), prompt: NonEmptyStringSchema, inputShape: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('review'), prompt: NonEmptyStringSchema, artifact: JsonValueSchema }, { additionalProperties: false }),
-])
-
-export type UserInteractionRequest = Static<typeof UserInteractionRequestSchema>
 
 export const KnowledgeUpdateProposalSchema = Type.Union([
 	Type.Object({ type: Type.Literal('fact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })) }, { additionalProperties: false }),

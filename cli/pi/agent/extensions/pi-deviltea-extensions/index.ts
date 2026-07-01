@@ -8,6 +8,7 @@ import {
 import askQuestions from './features/ask-questions/index.js'
 import editorSelectionHelper from './features/editor-selection-helper/index.js'
 import modelSwitcher from './features/model-switcher/index.js'
+import queuedWorkflow from './features/queued-workflow/index.js'
 import smartCommit from './features/smart-commit/index.js'
 import syspromptManager from './features/sysprompt-manager/index.js'
 
@@ -20,6 +21,7 @@ const extensions: Array<{ name: FeatureName, register: ExtensionRegistrar }> = [
 	{ name: 'askQuestions', register: askQuestions },
 	{ name: 'editorSelectionHelper', register: editorSelectionHelper },
 	{ name: 'modelSwitcher', register: modelSwitcher },
+	{ name: 'queuedWorkflow', register: queuedWorkflow },
 	{ name: 'smartCommit', register: smartCommit },
 	{ name: 'syspromptManager', register: syspromptManager },
 ]

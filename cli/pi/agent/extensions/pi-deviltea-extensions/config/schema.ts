@@ -120,6 +120,26 @@ export interface SmartCommitConfig {
 }
 
 /**
+ * Configuration for the queued workflow feature.
+ */
+export interface QueuedWorkflowConfig {
+	/** Enables or disables queued workflow command/input registration. */
+	enabled?: boolean
+	worker?: {
+		piCommand?: string
+		idleWarningMs?: number
+		workerKillGraceMs?: number
+		stdoutTailMaxChars?: number
+		stderrTailMaxChars?: number
+	}
+	knowledge?: {
+		retrieverEnabled?: boolean
+		maxRecords?: number
+		maxJsonChars?: number
+	}
+}
+
+/**
  * Configuration for the ask_questions tool feature.
  */
 export interface AskQuestionsConfig {
@@ -147,6 +167,8 @@ export interface DevilteaExtensionsConfig {
 	modelSwitcher?: ModelSwitcherConfig
 	/** Settings for the smart commit feature. */
 	smartCommit?: SmartCommitConfig
+	/** Settings for the queued workflow feature. */
+	queuedWorkflow?: QueuedWorkflowConfig
 	/** Settings for the ask_questions feature. */
 	askQuestions?: AskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
@@ -265,6 +287,26 @@ export interface ResolvedSmartCommitConfig {
 }
 
 /**
+ * Fully resolved configuration for the queued workflow feature.
+ */
+export interface ResolvedQueuedWorkflowConfig {
+	/** Enables or disables queued workflow command/input registration. */
+	enabled: boolean
+	worker: {
+		piCommand: string
+		idleWarningMs: number
+		workerKillGraceMs: number
+		stdoutTailMaxChars: number
+		stderrTailMaxChars: number
+	}
+	knowledge: {
+		retrieverEnabled: boolean
+		maxRecords: number
+		maxJsonChars: number
+	}
+}
+
+/**
  * Fully resolved configuration for the ask_questions tool feature.
  */
 export interface ResolvedAskQuestionsConfig {
@@ -292,6 +334,8 @@ export interface ResolvedDevilteaExtensionsConfig {
 	modelSwitcher: ResolvedModelSwitcherConfig
 	/** Settings for the smart commit feature. */
 	smartCommit: ResolvedSmartCommitConfig
+	/** Settings for the queued workflow feature. */
+	queuedWorkflow: ResolvedQueuedWorkflowConfig
 	/** Settings for the ask_questions feature. */
 	askQuestions: ResolvedAskQuestionsConfig
 	/** Settings for the system prompt viewer feature. */
@@ -366,6 +410,22 @@ export const SmartCommitConfigSchema = Type.Object({
 	confirmBeforeApply: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false })
 
+export const QueuedWorkflowConfigSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean()),
+	worker: Type.Optional(Type.Object({
+		piCommand: Type.Optional(Type.String({ minLength: 1 })),
+		idleWarningMs: Type.Optional(Type.Integer({ minimum: 1 })),
+		workerKillGraceMs: Type.Optional(Type.Integer({ minimum: 0 })),
+		stdoutTailMaxChars: Type.Optional(Type.Integer({ minimum: 1 })),
+		stderrTailMaxChars: Type.Optional(Type.Integer({ minimum: 1 })),
+	}, { additionalProperties: false })),
+	knowledge: Type.Optional(Type.Object({
+		retrieverEnabled: Type.Optional(Type.Boolean()),
+		maxRecords: Type.Optional(Type.Integer({ minimum: 1 })),
+		maxJsonChars: Type.Optional(Type.Integer({ minimum: 1 })),
+	}, { additionalProperties: false })),
+}, { additionalProperties: false })
+
 export const AskQuestionsConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false })
@@ -379,6 +439,7 @@ export const DevilteaExtensionsConfigSchema = Type.Object({
 	customFooter: Type.Optional(CustomFooterConfigSchema),
 	modelSwitcher: Type.Optional(ModelSwitcherConfigSchema),
 	smartCommit: Type.Optional(SmartCommitConfigSchema),
+	queuedWorkflow: Type.Optional(QueuedWorkflowConfigSchema),
 	askQuestions: Type.Optional(AskQuestionsConfigSchema),
 	syspromptManager: Type.Optional(SyspromptManagerConfigSchema),
 }, { additionalProperties: false })
@@ -438,6 +499,22 @@ export const DEFAULT_SMART_COMMIT_CONFIG: ResolvedSmartCommitConfig = {
 	confirmBeforeApply: true,
 }
 
+export const DEFAULT_QUEUED_WORKFLOW_CONFIG: ResolvedQueuedWorkflowConfig = {
+	enabled: false,
+	worker: {
+		piCommand: 'pi',
+		idleWarningMs: 300_000,
+		workerKillGraceMs: 5_000,
+		stdoutTailMaxChars: 20_000,
+		stderrTailMaxChars: 20_000,
+	},
+	knowledge: {
+		retrieverEnabled: true,
+		maxRecords: 20,
+		maxJsonChars: 12_000,
+	},
+}
+
 export const DEFAULT_ASK_QUESTIONS_CONFIG: ResolvedAskQuestionsConfig = {
 	enabled: true,
 }
@@ -462,6 +539,11 @@ export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensi
 			saveDefaults: { ...DEFAULT_MODEL_SWITCHER_CONFIG.saveDefaults },
 		},
 		smartCommit: { ...DEFAULT_SMART_COMMIT_CONFIG },
+		queuedWorkflow: {
+			...DEFAULT_QUEUED_WORKFLOW_CONFIG,
+			worker: { ...DEFAULT_QUEUED_WORKFLOW_CONFIG.worker },
+			knowledge: { ...DEFAULT_QUEUED_WORKFLOW_CONFIG.knowledge },
+		},
 		askQuestions: { ...DEFAULT_ASK_QUESTIONS_CONFIG },
 		syspromptManager: { ...DEFAULT_SYSPROMPT_MANAGER_CONFIG },
 	}
