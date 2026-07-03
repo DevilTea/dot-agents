@@ -1,68 +1,44 @@
-import type { QueuedWorkflowState, QueueInputImage, QueueItem, RootInput } from './schema.js'
-import { createQueueItemId } from './ids.js'
-
-export const ROOT_GOAL = 'Complete the user\'s queued workflow request.'
-export const ROOT_OUTPUT_SHAPE = 'A JSON-serializable final result that directly satisfies the user request. Use strings for prose deliverables, objects/arrays for structured deliverables.'
-export const ROOT_COMPLETION_CRITERIA = [
-	'The output directly addresses the queued user request.',
-	'The output includes all information needed for the user to understand the result.',
-	'If work cannot continue without user input, return requires_user_interaction instead of guessing.',
-	'If the task cannot be completed, return blocked or failed with a clear reason.',
-]
-export const ROOT_CONSTRAINTS = [
-	'Do not interact with the user directly.',
-	'Return only a valid WorkerResult JSON object as the final assistant message.',
-]
+import type { QueuedWorkflowState, QueueInputImage, RootItem } from './schema.js'
+import { createRootId } from './ids.js'
 
 export function createEmptyQueuedWorkflowState(now: string, enabled = false): QueuedWorkflowState {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 3,
 		enabled,
-		items: {},
+		roots: {},
 		rootOrder: [],
 		warnings: [],
-		knowledge: { records: [] },
+		notes: [],
 		createdAt: now,
 		updatedAt: now,
 	}
 }
 
-export function createRootItemFromInput(
+/** Roots carry the user's text verbatim as their goal and always start in the plan phase. */
+export function createRootFromInput(
 	text: string,
 	images: QueueInputImage[] | undefined,
 	now: string,
-	id = createQueueItemId(),
-): QueueItem {
-	const input: RootInput = images?.length
-		? { kind: 'user_request', text, images }
-		: { kind: 'user_request', text }
-
+	id = createRootId(),
+): RootItem {
 	return {
 		id,
-		rootId: id,
-		status: 'pending',
-		input,
-		contract: {
-			goal: ROOT_GOAL,
-			outputShape: ROOT_OUTPUT_SHAPE,
-			completionCriteria: ROOT_COMPLETION_CRITERIA,
-			constraints: ROOT_CONSTRAINTS,
-		},
-		children: [],
-		constraints: ROOT_CONSTRAINTS,
-		outOfScope: [],
-		canExpand: true,
+		status: 'planning',
+		goal: text,
+		images: images?.length ? images : undefined,
+		steps: [],
+		answers: [],
 		runs: [],
 		createdAt: now,
 		updatedAt: now,
 	}
 }
 
-export function enqueueRootItem(state: QueuedWorkflowState, item: QueueItem, now = item.createdAt): QueuedWorkflowState {
+export function enqueueRoot(state: QueuedWorkflowState, root: RootItem, now = root.createdAt): QueuedWorkflowState {
 	return {
 		...state,
-		items: { ...state.items, [item.id]: item },
-		rootOrder: [...state.rootOrder, item.id],
+		roots: { ...state.roots, [root.id]: root },
+		rootOrder: [...state.rootOrder, root.id],
 		updatedAt: now,
 	}
 }
@@ -71,10 +47,29 @@ export function setEnabled(state: QueuedWorkflowState, enabled: boolean, now: st
 	return { ...state, enabled, updatedAt: now }
 }
 
-export function updateItem(state: QueuedWorkflowState, item: QueueItem, now = item.updatedAt): QueuedWorkflowState {
-	return {
-		...state,
-		items: { ...state.items, [item.id]: item },
-		updatedAt: now,
+export interface ResolvedId {
+	id?: string
+	matches: string[]
+	kind?: 'root' | 'step'
+	rootId?: string
+}
+
+/**
+ * Resolve a full root/step id or a unique id prefix (the dashboard displays shortened ids).
+ * Returns the resolved id when exactly one matches, plus all matches for error reporting.
+ */
+export function resolveItemId(state: QueuedWorkflowState, idOrPrefix: string): ResolvedId {
+	const all: Array<{ id: string, kind: 'root' | 'step', rootId: string }> = []
+	for (const root of Object.values(state.roots)) {
+		all.push({ id: root.id, kind: 'root', rootId: root.id })
+		for (const step of root.steps)
+			all.push({ id: step.id, kind: 'step', rootId: root.id })
 	}
+	const exact = all.find(entry => entry.id === idOrPrefix)
+	if (exact)
+		return { id: exact.id, matches: [exact.id], kind: exact.kind, rootId: exact.rootId }
+	const matches = all.filter(entry => entry.id.startsWith(idOrPrefix))
+	if (matches.length === 1)
+		return { id: matches[0]!.id, matches: [matches[0]!.id], kind: matches[0]!.kind, rootId: matches[0]!.rootId }
+	return { matches: matches.map(entry => entry.id) }
 }

@@ -14,6 +14,8 @@ export const JsonValueSchema = Type.Cyclic({
 
 export type JsonValue = Static<typeof JsonValueSchema>
 
+const NonEmptyStringSchema = Type.String({ minLength: 1 })
+
 export const QueueInputImageSchema = Type.Object({
 	id: Type.String(),
 	source: Type.Union([Type.Literal('input_event'), Type.Literal('artifact')]),
@@ -27,56 +29,9 @@ export const QueueInputImageSchema = Type.Object({
 
 export type QueueInputImage = Static<typeof QueueInputImageSchema>
 
-export const RootInputSchema = Type.Object({
-	kind: Type.Literal('user_request'),
-	text: Type.String(),
-	images: Type.Optional(Type.Array(QueueInputImageSchema)),
-	userResponses: Type.Optional(Type.Array(Type.String())),
-})
-
-export type RootInput = Static<typeof RootInputSchema>
-
-export const QueueContractSchema = Type.Object({
-	goal: Type.String(),
-	outputShape: Type.String(),
-	completionCriteria: Type.Array(Type.String()),
-	constraints: Type.Array(Type.String()),
-	outOfScope: Type.Optional(Type.Array(Type.String())),
-})
-
-export type QueueContract = Static<typeof QueueContractSchema>
-
-export const ReducerSchema = Type.Union([
-	Type.Object({ type: Type.Literal('append_outputs') }),
-	Type.Object({ type: Type.Literal('merge_json') }),
-	Type.Object({ type: Type.Literal('worker'), prompt: Type.String() }),
-])
-
-const NonEmptyStringSchema = Type.String({ minLength: 1 })
-const StrictReducerSchema = Type.Union([
-	Type.Object({ type: Type.Literal('append_outputs') }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('merge_json') }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('worker'), prompt: NonEmptyStringSchema }, { additionalProperties: false }),
-])
-
-export type Reducer = Static<typeof ReducerSchema>
-
-export const QueueItemStatusSchema = Type.Union([
-	Type.Literal('pending'),
-	Type.Literal('running'),
-	Type.Literal('expanded'),
-	Type.Literal('waiting_user'),
-	Type.Literal('resolved'),
-	Type.Literal('failed'),
-	Type.Literal('blocked'),
-])
-
-export type QueueItemStatus = Static<typeof QueueItemStatusSchema>
-
 export const RunPhaseSchema = Type.Union([
-	Type.Literal('worker'),
-	Type.Literal('reducer'),
-	Type.Literal('retriever'),
+	Type.Literal('plan'),
+	Type.Literal('step'),
 ])
 
 export type RunPhase = Static<typeof RunPhaseSchema>
@@ -102,87 +57,102 @@ export const ItemRunRecordSchema = Type.Object({
 
 export type ItemRunRecord = Static<typeof ItemRunRecordSchema>
 
-export const UserInteractionRequestSchema = Type.Union([
-	Type.Object({ type: Type.Literal('choice'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('clarification'), question: NonEmptyStringSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('confirmation'), prompt: NonEmptyStringSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('approval'), prompt: NonEmptyStringSchema, artifact: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('preference'), prompt: NonEmptyStringSchema, options: Type.Array(NonEmptyStringSchema, { minItems: 1 }) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('input_request'), prompt: NonEmptyStringSchema, inputShape: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('review'), prompt: NonEmptyStringSchema, artifact: JsonValueSchema }, { additionalProperties: false }),
+/** Every finished step reports the same shape: a human-readable summary plus optional pointers. */
+export const StepOutputSchema = Type.Object({
+	summary: Type.String(),
+	path: Type.Optional(Type.String()),
+	data: Type.Optional(JsonValueSchema),
+})
+
+export type StepOutput = Static<typeof StepOutputSchema>
+
+export const StepStatusSchema = Type.Union([
+	Type.Literal('pending'),
+	Type.Literal('running'),
+	Type.Literal('waiting'),
+	Type.Literal('done'),
+	Type.Literal('failed'),
 ])
 
-export type UserInteractionRequest = Static<typeof UserInteractionRequestSchema>
+export type StepStatus = Static<typeof StepStatusSchema>
 
-export const QueueItemSchema = Type.Object({
+/**
+ * One atomic action in a root's checklist. Steps execute strictly in order; a step may append
+ * follow-up steps (inserted right after itself) when execution reveals more work.
+ */
+export const StepSchema = Type.Object({
 	id: Type.String(),
-	rootId: Type.String(),
-	parentId: Type.Optional(Type.String()),
-	status: QueueItemStatusSchema,
-	input: JsonValueSchema,
-	contract: QueueContractSchema,
-	children: Type.Array(Type.String()),
-	reducer: Type.Optional(ReducerSchema),
-	output: Type.Optional(JsonValueSchema),
+	status: StepStatusSchema,
+	/** Self-contained instruction for this single action. */
+	task: Type.String(),
+	context: Type.Optional(Type.String()),
+	expected: Type.Optional(Type.String()),
+	/** 'plan' when created by the planner, otherwise the id of the step that spawned it. */
+	origin: Type.String(),
+	output: Type.Optional(StepOutputSchema),
 	error: Type.Optional(Type.String()),
-	block: Type.Optional(Type.String()),
-	userInteraction: Type.Optional(UserInteractionRequestSchema),
-	constraints: Type.Array(Type.String()),
-	outOfScope: Type.Array(Type.String()),
-	canExpand: Type.Boolean(),
+	question: Type.Optional(Type.String()),
+	options: Type.Optional(Type.Array(NonEmptyStringSchema)),
+	answers: Type.Array(Type.String()),
 	runs: Type.Array(ItemRunRecordSchema),
 	createdAt: Type.String(),
 	updatedAt: Type.String(),
 })
 
-export type QueueItem = Static<typeof QueueItemSchema>
+export type Step = Static<typeof StepSchema>
 
-export const KnowledgeRecordSchema = Type.Object({
+export const RootStatusSchema = Type.Union([
+	Type.Literal('planning'),
+	Type.Literal('waiting'),
+	Type.Literal('active'),
+	Type.Literal('done'),
+	Type.Literal('failed'),
+])
+
+export type RootStatus = Static<typeof RootStatusSchema>
+
+/**
+ * A user request. Roots never execute work directly: the plan phase always breaks the goal into
+ * at least one atomic step, and only steps run workers with write access.
+ */
+export const RootItemSchema = Type.Object({
 	id: Type.String(),
-	type: Type.Union([
-		Type.Literal('fact'),
-		Type.Literal('rule'),
-		Type.Literal('event'),
-		Type.Literal('decision'),
-		Type.Literal('artifact'),
-	]),
-	scope: Type.String(),
-	summary: Type.String(),
+	status: RootStatusSchema,
+	/** The user's request text, verbatim. */
+	goal: Type.String(),
+	images: Type.Optional(Type.Array(QueueInputImageSchema)),
+	steps: Type.Array(StepSchema),
+	output: Type.Optional(StepOutputSchema),
+	error: Type.Optional(Type.String()),
+	/** Planner clarification, when the plan phase returned ask. */
+	question: Type.Optional(Type.String()),
+	options: Type.Optional(Type.Array(NonEmptyStringSchema)),
+	answers: Type.Array(Type.String()),
+	/** Plan-phase runs; step runs live on the steps. */
+	runs: Type.Array(ItemRunRecordSchema),
 	createdAt: Type.String(),
-	sourceItemId: Type.Optional(Type.String()),
-	data: Type.Optional(JsonValueSchema),
-	confidence: Type.Optional(Type.Number()),
-	appliesWhen: Type.Optional(Type.String()),
-	rationale: Type.Optional(Type.String()),
-	decidedAt: Type.Optional(Type.String()),
-	occurredAt: Type.Optional(Type.String()),
-	artifactPath: Type.Optional(Type.String()),
-	ref: Type.Optional(Type.String()),
+	updatedAt: Type.String(),
 })
 
-export type KnowledgeRecord = Static<typeof KnowledgeRecordSchema>
-
-export const KnowledgeStateSchema = Type.Object({
-	records: Type.Array(KnowledgeRecordSchema),
-})
-
-export type KnowledgeState = Static<typeof KnowledgeStateSchema>
+export type RootItem = Static<typeof RootItemSchema>
 
 export const ActiveRunSchema = Type.Object({
-	itemId: Type.String(),
+	rootId: Type.String(),
+	stepId: Type.Optional(Type.String()),
 	phase: RunPhaseSchema,
 })
 
 export type ActiveRun = Static<typeof ActiveRunSchema>
 
 export const QueuedWorkflowStateSchema = Type.Object({
-	schemaVersion: Type.Literal(1),
+	schemaVersion: Type.Literal(3),
 	enabled: Type.Boolean(),
-	items: Type.Record(Type.String(), QueueItemSchema),
+	roots: Type.Record(Type.String(), RootItemSchema),
 	rootOrder: Type.Array(Type.String()),
 	activeRun: Type.Optional(ActiveRunSchema),
 	warnings: Type.Array(Type.String()),
-	knowledge: KnowledgeStateSchema,
+	/** Shared durable facts, deduped and capped; a bounded tail is embedded in every prompt. */
+	notes: Type.Array(Type.String()),
 	createdAt: Type.String(),
 	updatedAt: Type.String(),
 })
@@ -195,45 +165,36 @@ export interface SnapshotRestoreResult {
 	disabledReason?: string
 }
 
-export const QueueItemDraftSchema = Type.Object({
-	input: JsonValueSchema,
-	contract: Type.Object({
-		goal: NonEmptyStringSchema,
-		outputShape: NonEmptyStringSchema,
-		completionCriteria: Type.Array(NonEmptyStringSchema, { minItems: 1 }),
-		constraints: Type.Optional(Type.Array(NonEmptyStringSchema)),
-		outOfScope: Type.Optional(Type.Array(NonEmptyStringSchema)),
-	}, { additionalProperties: false }),
-	canExpand: Type.Optional(Type.Boolean()),
+export const StepDraftSchema = Type.Object({
+	task: NonEmptyStringSchema,
+	context: Type.Optional(NonEmptyStringSchema),
+	expected: Type.Optional(NonEmptyStringSchema),
 }, { additionalProperties: false })
 
-export type QueueItemDraft = Static<typeof QueueItemDraftSchema>
+export type StepDraft = Static<typeof StepDraftSchema>
 
-export const KnowledgeUpdateProposalSchema = Type.Union([
-	Type.Object({ type: Type.Literal('fact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('rule'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), appliesWhen: Type.Optional(NonEmptyStringSchema), rationale: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('decision'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), decidedAt: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('event'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, data: Type.Optional(JsonValueSchema), occurredAt: Type.Optional(NonEmptyStringSchema) }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('artifact'), scope: NonEmptyStringSchema, summary: NonEmptyStringSchema, artifactPath: Type.Optional(NonEmptyStringSchema), ref: Type.Optional(NonEmptyStringSchema), data: Type.Optional(JsonValueSchema) }, { additionalProperties: false }),
+const NotesSchema = Type.Optional(Type.Array(NonEmptyStringSchema))
+
+/**
+ * The plan phase's protocol: it can only produce steps (at least one), ask the user, or fail.
+ * There is no way to report the goal as completed directly — decomposition is structural.
+ */
+export const PlanResultSchema = Type.Union([
+	Type.Object({ type: Type.Literal('plan'), steps: Type.Array(StepDraftSchema, { minItems: 1 }), notes: NotesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('ask'), question: NonEmptyStringSchema, options: Type.Optional(Type.Array(NonEmptyStringSchema, { minItems: 1 })), notes: NotesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('fail'), error: NonEmptyStringSchema, hint: Type.Optional(NonEmptyStringSchema), notes: NotesSchema }, { additionalProperties: false }),
 ])
 
-export type KnowledgeUpdateProposal = Static<typeof KnowledgeUpdateProposalSchema>
+export type PlanResult = Static<typeof PlanResultSchema>
 
-const KnowledgeUpdatesSchema = Type.Optional(Type.Array(KnowledgeUpdateProposalSchema))
-
-export const WorkerResultSchema = Type.Union([
-	Type.Object({ type: Type.Literal('resolved'), output: JsonValueSchema, knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('expand'), children: Type.Array(QueueItemDraftSchema, { minItems: 1 }), reducer: Type.Optional(StrictReducerSchema), knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('blocked'), reason: NonEmptyStringSchema, requiredInfo: Type.Optional(Type.Array(NonEmptyStringSchema)), knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('requires_user_interaction'), request: UserInteractionRequestSchema, knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal('failed'), error: NonEmptyStringSchema, recoverySuggestion: Type.Optional(NonEmptyStringSchema), knowledgeUpdates: KnowledgeUpdatesSchema }, { additionalProperties: false }),
+/**
+ * A step worker executes exactly one step. `next` carries follow-up steps discovered during
+ * execution; they are inserted immediately after the current step.
+ */
+export const StepResultSchema = Type.Union([
+	Type.Object({ type: Type.Literal('done'), summary: NonEmptyStringSchema, path: Type.Optional(NonEmptyStringSchema), data: Type.Optional(JsonValueSchema), next: Type.Optional(Type.Array(StepDraftSchema)), notes: NotesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('ask'), question: NonEmptyStringSchema, options: Type.Optional(Type.Array(NonEmptyStringSchema, { minItems: 1 })), notes: NotesSchema }, { additionalProperties: false }),
+	Type.Object({ type: Type.Literal('fail'), error: NonEmptyStringSchema, hint: Type.Optional(NonEmptyStringSchema), notes: NotesSchema }, { additionalProperties: false }),
 ])
 
-export type WorkerResult = Static<typeof WorkerResultSchema>
-
-export const RetrieverResultSchema = Type.Object({
-	selectedRecordIds: Type.Array(NonEmptyStringSchema),
-	rationale: Type.Optional(Type.String()),
-}, { additionalProperties: false })
-
-export type RetrieverResult = Static<typeof RetrieverResultSchema>
+export type StepResult = Static<typeof StepResultSchema>

@@ -59,6 +59,23 @@
 		"commitTimeoutMs": 180000,
 		"confirmBeforeApply": true
 	},
+	"queuedWorkflow": {
+		"enabled": true,
+		"worker": {
+			"piCommand": "pi",
+			"idleWarningMs": 300000,
+			"workerKillGraceMs": 5000,
+			"stdoutTailMaxChars": 20000,
+			"stderrTailMaxChars": 20000
+		},
+		"notes": {
+			"maxCount": 100,
+			"maxPromptChars": 4000
+		},
+		"planner": {
+			"toolAccess": "none"
+		}
+	},
 	"askQuestions": {
 		"enabled": true
 	},

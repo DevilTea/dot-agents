@@ -1,8 +1,10 @@
-import type { RetrieverResult, WorkerResult } from '../domain/schema.js'
+import type { PlanResult, StepResult } from '../domain/schema.js'
 import { Check, Errors } from 'typebox/value'
-import { RetrieverResultSchema, WorkerResultSchema } from '../domain/schema.js'
+import { PlanResultSchema, StepResultSchema } from '../domain/schema.js'
 
 export type JsonEvent = Record<string, unknown>
+
+const FENCE_PATTERN = /^```[\w-]*\n([\s\S]*)\n```$/
 
 export function parseJsonLine(line: string): JsonEvent {
 	const preview = line.slice(0, 120)
@@ -18,23 +20,18 @@ export function parseJsonLine(line: string): JsonEvent {
 	return parsed as JsonEvent
 }
 
-export function parseWorkerResultFromJsonEvents(events: JsonEvent[], options?: { allowedTypes?: string[] }): WorkerResult {
-	const text = extractFinalAssistantText(events)
-	const parsed = parseFinalJsonObject(text)
-	if (!Check(WorkerResultSchema, parsed))
-		throw new Error(`invalid WorkerResult: ${schemaDetails(WorkerResultSchema, parsed)}`)
-	const result = parsed as WorkerResult
-	if (options?.allowedTypes && !options.allowedTypes.includes(result.type))
-		throw new Error(`WorkerResult type '${result.type}' is not allowed`)
-	return result
+export function parsePlanResultFromJsonEvents(events: JsonEvent[]): PlanResult {
+	const parsed = extractJsonObject(extractFinalAssistantText(events))
+	if (!Check(PlanResultSchema, parsed))
+		throw new Error(`invalid plan result: ${schemaDetails(PlanResultSchema, parsed)}`)
+	return parsed as PlanResult
 }
 
-export function parseRetrieverResultFromJsonEvents(events: JsonEvent[]): RetrieverResult {
-	const text = extractFinalAssistantText(events)
-	const parsed = parseFinalJsonObject(text)
-	if (!Check(RetrieverResultSchema, parsed))
-		throw new Error(`invalid RetrieverResult: ${schemaDetails(RetrieverResultSchema, parsed)}`)
-	return parsed as RetrieverResult
+export function parseStepResultFromJsonEvents(events: JsonEvent[]): StepResult {
+	const parsed = extractJsonObject(extractFinalAssistantText(events))
+	if (!Check(StepResultSchema, parsed))
+		throw new Error(`invalid step result: ${schemaDetails(StepResultSchema, parsed)}`)
+	return parsed as StepResult
 }
 
 export function extractFinalAssistantText(events: JsonEvent[]): string {
@@ -49,27 +46,44 @@ export function extractFinalAssistantText(events: JsonEvent[]): string {
 	if (!assistant)
 		throw new Error('missing final assistant message')
 	const content = (assistant as { content?: unknown }).content
-	if (!Array.isArray(content) || content.length !== 1)
-		throw new Error('final assistant content must contain exactly one block')
-	const block = content[0]
-	if (typeof block !== 'object' || block === null || (block as { type?: unknown }).type !== 'text' || typeof (block as { text?: unknown }).text !== 'string')
-		throw new Error('final assistant content block must be text')
-	return (block as { text: string }).text
+	if (!Array.isArray(content))
+		throw new Error('final assistant content must be an array')
+	// Reasoning models emit thinking blocks alongside the answer, and some models split the
+	// answer across several text blocks; join every text block and let JSON extraction sort it out.
+	const texts = content
+		.filter((block): block is { type: 'text', text: string } =>
+			typeof block === 'object' && block !== null && (block as { type?: unknown }).type === 'text' && typeof (block as { text?: unknown }).text === 'string')
+		.map(block => block.text)
+	if (texts.length === 0)
+		throw new Error('final assistant content has no text block')
+	return texts.join('\n')
 }
 
-function parseFinalJsonObject(text: string): unknown {
-	if (text.trim() !== text)
-		throw new Error('final assistant text must not have leading or trailing whitespace')
-	if (text.includes('```'))
-		throw new Error('final assistant text must not use Markdown code fences')
-	if (!text.startsWith('{') || !text.endsWith('}'))
-		throw new Error('final assistant text must be a raw JSON object')
+/**
+ * Tolerant extraction: accept a bare JSON object, a fenced ```json block, or an object embedded
+ * in surrounding prose. Validation stays strict at the schema layer; only the transport is lenient,
+ * because local models routinely wrap their answer despite instructions.
+ */
+export function extractJsonObject(text: string): unknown {
+	const trimmed = text.trim()
+	const unfenced = FENCE_PATTERN.exec(trimmed)?.[1]?.trim() ?? trimmed
+	const candidate = unfenced.startsWith('{') && unfenced.endsWith('}')
+		? unfenced
+		: sliceEmbeddedObject(unfenced)
 	try {
-		return JSON.parse(text)
+		return JSON.parse(candidate)
 	}
 	catch (error) {
-		throw new Error(`invalid final JSON: ${(error as Error).message}`)
+		throw new Error(`final assistant message does not contain a valid JSON object: ${(error as Error).message}; preview: ${trimmed.slice(0, 160)}`)
 	}
+}
+
+function sliceEmbeddedObject(text: string): string {
+	const start = text.indexOf('{')
+	const end = text.lastIndexOf('}')
+	if (start === -1 || end <= start)
+		throw new Error(`final assistant message does not contain a JSON object; preview: ${text.slice(0, 160)}`)
+	return text.slice(start, end + 1)
 }
 
 function schemaDetails(schema: unknown, value: unknown): string {

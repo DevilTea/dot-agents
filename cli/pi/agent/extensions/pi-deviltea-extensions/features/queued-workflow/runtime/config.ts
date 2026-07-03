@@ -6,10 +6,13 @@ export interface QueuedWorkflowRuntimeConfig {
 	worker: Pick<RunWorkerProcessOptions<unknown>, 'piCommand' | 'idleWarningMs' | 'workerKillGraceMs' | 'stdoutTailMaxChars' | 'stderrTailMaxChars'> & {
 		cli?: WorkerCliOptions
 	}
-	knowledge: {
-		retrieverEnabled: boolean
-		maxRecords: number
-		maxJsonChars: number
+	notes: {
+		maxCount: number
+		maxPromptChars: number
+	}
+	planner: {
+		/** 'none': tool-free single-shot planning (default). 'read_only': read tools stay available. */
+		toolAccess: 'none' | 'read_only'
 	}
 }
 
@@ -21,7 +24,9 @@ export function resolveRuntimeConfig(config: ResolvedQueuedWorkflowConfig): Queu
 			workerKillGraceMs: config.worker.workerKillGraceMs,
 			stdoutTailMaxChars: config.worker.stdoutTailMaxChars,
 			stderrTailMaxChars: config.worker.stderrTailMaxChars,
+			cli: config.worker.cli,
 		},
-		knowledge: { ...config.knowledge },
+		notes: { ...config.notes },
+		planner: { ...config.planner },
 	}
 }

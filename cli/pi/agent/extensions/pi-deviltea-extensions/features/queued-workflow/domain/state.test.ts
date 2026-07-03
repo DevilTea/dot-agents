@@ -1,158 +1,176 @@
-import type { QueuedWorkflowState, QueueItem } from './schema.js'
+import type { QueuedWorkflowState } from './schema.js'
 import { describe, expect, it } from 'vitest'
-import { addKnowledgeRecord, createEmptyKnowledgeState } from './knowledge.js'
-import { applyDeterministicReducer } from './reducers.js'
+import { addNotes, notesForPrompt } from './notes.js'
 import { restoreSnapshot } from './restore.js'
 import { retryItem } from './retry.js'
-import { blockItem, expandItem, failItem, getNextPendingItem, resolveItem } from './scheduler.js'
-import { createEmptyQueuedWorkflowState, createRootItemFromInput, enqueueRootItem, ROOT_COMPLETION_CRITERIA, ROOT_CONSTRAINTS, ROOT_GOAL, ROOT_OUTPUT_SHAPE } from './state.js'
-import { assertCanExpandWithWorkerResult, inheritChildExpansion, isJsonValue } from './validation.js'
+import { answerQuestion, applyPlan, completeStep, failStep, getNextWork, markPlanWaiting, markStepWaiting } from './scheduler.js'
+import { createEmptyQueuedWorkflowState, createRootFromInput, enqueueRoot, resolveItemId } from './state.js'
 
 const NOW = '2026-01-01T00:00:00.000Z'
 const LATER = '2026-01-01T00:01:00.000Z'
 
-function childOf(parent: QueueItem, id: string, overrides: Partial<QueueItem> = {}): QueueItem {
-	return {
-		id,
-		rootId: parent.rootId,
-		parentId: parent.id,
-		status: 'pending',
-		input: { task: id },
-		contract: parent.contract,
-		children: [],
-		constraints: parent.constraints,
-		outOfScope: parent.outOfScope,
-		canExpand: parent.canExpand,
-		runs: [],
-		createdAt: NOW,
-		updatedAt: NOW,
-		...overrides,
-	}
+function planned(goal = 'ship it', id = 'qwi_root', tasks = ['first', 'second']): QueuedWorkflowState {
+	const root = createRootFromInput(goal, undefined, NOW, id)
+	const state = enqueueRoot(createEmptyQueuedWorkflowState(NOW, true), root)
+	return applyPlan(state, id, tasks.map(task => ({ task })), NOW)
 }
 
-function stateWithRoot(id = 'root'): { state: QueuedWorkflowState, root: QueueItem } {
-	const root = createRootItemFromInput('ship it', undefined, NOW, id)
-	return { root, state: enqueueRootItem(createEmptyQueuedWorkflowState(NOW, true), root) }
+function stepIds(state: QueuedWorkflowState, rootId: string): string[] {
+	return state.roots[rootId]!.steps.map(step => step.id)
 }
 
-describe('queued workflow domain state', () => {
-	it('creates root items with the fixed generic contract', () => {
-		const item = createRootItemFromInput('hello', [{ id: 'img', source: 'input_event', path: '/tmp/a.png' }], NOW, 'root')
-
-		expect(item.input)
-			.toEqual({ kind: 'user_request', text: 'hello', images: [{ id: 'img', source: 'input_event', path: '/tmp/a.png' }] })
-		expect(item.contract.goal)
-			.toBe(ROOT_GOAL)
-		expect(item.contract.outputShape)
-			.toBe(ROOT_OUTPUT_SHAPE)
-		expect(item.contract.completionCriteria)
-			.toEqual(ROOT_COMPLETION_CRITERIA)
-		expect(item.contract.constraints)
-			.toEqual(ROOT_CONSTRAINTS)
-		expect(item.canExpand)
-			.toBe(true)
-		expect(item.runs)
+describe('queued workflow domain state (plan/step model)', () => {
+	it('creates roots that always start in the plan phase with the goal verbatim', () => {
+		const root = createRootFromInput('hello', [{ id: 'img', source: 'input_event', path: '/tmp/a.png' }], NOW)
+		expect(root.status)
+			.toBe('planning')
+		expect(root.goal)
+			.toBe('hello')
+		expect(root.steps)
 			.toEqual([])
 	})
 
-	it('schedules roots FIFO and expanded children depth-first', () => {
-		const rootA = createRootItemFromInput('a', undefined, NOW, 'a')
-		const rootB = createRootItemFromInput('b', undefined, NOW, 'b')
-		let state = enqueueRootItem(enqueueRootItem(createEmptyQueuedWorkflowState(NOW, true), rootA), rootB)
-		state = expandItem(state, 'a', [childOf(rootA, 'a1'), childOf(rootA, 'a2')], LATER)
-		state = expandItem(state, 'a1', [childOf({ ...rootA, id: 'a1', parentId: 'a' }, 'a1x')], LATER)
+	it('schedules the plan phase first, then steps strictly in order', () => {
+		const root = createRootFromInput('goal', undefined, NOW, 'qwi_a')
+		let state = enqueueRoot(createEmptyQueuedWorkflowState(NOW, true), root)
+		expect(getNextWork(state))
+			.toEqual({ kind: 'plan', rootId: 'qwi_a' })
 
-		expect(getNextPendingItem(state)?.id)
-			.toBe('a1x')
-		state = resolveItem(state, 'a1x', 'done', LATER)
-		expect(getNextPendingItem(state)?.id)
-			.toBe('a2')
+		state = applyPlan(state, 'qwi_a', [{ task: 'one' }, { task: 'two' }], LATER)
+		const [first, second] = stepIds(state, 'qwi_a')
+		expect(getNextWork(state))
+			.toEqual({ kind: 'step', rootId: 'qwi_a', stepId: first })
+		state = completeStep(state, 'qwi_a', first!, { summary: 'ok' }, [], LATER)
+		expect(getNextWork(state))
+			.toEqual({ kind: 'step', rootId: 'qwi_a', stepId: second })
 	})
 
-	it('propagates failed and blocked child statuses to the parent', () => {
-		const { root, state } = stateWithRoot()
-		const expanded = expandItem(state, root.id, [childOf(root, 'child')], LATER)
-
-		expect(failItem(expanded, 'child', 'boom', LATER).items[root.id]?.status)
-			.toBe('failed')
-		expect(blockItem(expanded, 'child', 'need input', LATER).items[root.id]?.status)
-			.toBe('blocked')
+	it('inserts follow-up steps right after the step that spawned them', () => {
+		let state = planned('goal', 'qwi_a', ['one', 'two'])
+		const [first] = stepIds(state, 'qwi_a')
+		state = completeStep(state, 'qwi_a', first!, { summary: 'ok' }, [{ task: 'discovered' }], LATER)
+		const tasks = state.roots.qwi_a!.steps.map(step => step.task)
+		expect(tasks)
+			.toEqual(['one', 'discovered', 'two'])
+		expect(state.roots.qwi_a!.steps[1]!.origin)
+			.toBe(first)
 	})
 
-	it('applies deterministic reducers', () => {
-		const { root, state } = stateWithRoot()
-		const expanded = expandItem(state, root.id, [
-			childOf(root, 'left', { status: 'resolved', output: { a: 1 } }),
-			childOf(root, 'right', { status: 'resolved', output: { b: true } }),
-		], LATER)
-		expanded.items[root.id] = { ...expanded.items[root.id]!, reducer: { type: 'merge_json' } }
-
-		expect(applyDeterministicReducer(expanded, root.id, LATER).items[root.id]?.output)
-			.toEqual({ a: 1, b: true })
-
-		expanded.items[root.id] = { ...expanded.items[root.id]!, reducer: { type: 'append_outputs' } }
-		expect(applyDeterministicReducer(expanded, root.id, LATER).items[root.id]?.output)
+	it('completes the root when every step is done, surfacing the final step result', () => {
+		let state = planned('goal', 'qwi_a', ['one', 'two'])
+		const [first, second] = stepIds(state, 'qwi_a')
+		state = completeStep(state, 'qwi_a', first!, { summary: 'part' }, [], LATER)
+		state = completeStep(state, 'qwi_a', second!, { path: '/tmp/final.md', summary: '完成整合' }, [], LATER)
+		const root = state.roots.qwi_a!
+		expect(root.status)
+			.toBe('done')
+		expect(root.output?.summary)
+			.toBe('完成整合')
+		expect(root.output?.path)
+			.toBe('/tmp/final.md')
+		expect(root.output?.data)
 			.toEqual([
-				{ itemId: 'left', output: { a: 1 } },
-				{ itemId: 'right', output: { b: true } },
+				{ summary: 'part', task: 'one' },
+				{ path: '/tmp/final.md', summary: '完成整合', task: 'two' },
 			])
 	})
 
-	it('retries leaves, parents, and recursive expanded subtrees according to policy', () => {
-		const { root, state } = stateWithRoot()
-		let expanded = expandItem(state, root.id, [childOf(root, 'child', { status: 'failed', error: 'no' })], LATER)
-		expanded = { ...expanded, items: { ...expanded.items, [root.id]: { ...expanded.items[root.id]!, status: 'failed', error: 'child failed', output: 'old' } } }
+	it('skips roots whose plan or current step waits for the user', () => {
+		let state = planned('goal a', 'qwi_a', ['one'])
+		const rootB = createRootFromInput('goal b', undefined, NOW, 'qwi_b')
+		state = enqueueRoot(state, rootB)
+		const [first] = stepIds(state, 'qwi_a')
+		state = markStepWaiting(state, 'qwi_a', first!, 'which env?', ['dev', 'prod'], LATER)
 
-		expect(retryItem(expanded, 'child', false, LATER).items.child?.status)
-			.toBe('pending')
-		const parentRetry = retryItem(expanded, root.id, false, LATER).items[root.id]!
-		expect(parentRetry.status)
-			.toBe('expanded')
-		expect(parentRetry.children)
-			.toEqual(['child'])
+		expect(getNextWork(state))
+			.toEqual({ kind: 'plan', rootId: 'qwi_b' })
 
-		const recursiveRetry = retryItem(expanded, root.id, true, LATER).items[root.id]!
-		expect(recursiveRetry.status)
-			.toBe('pending')
-		expect(recursiveRetry.children)
-			.toEqual([])
-		expect(recursiveRetry.output)
+		state = answerQuestion(state, first!, 'dev', LATER)
+		expect(state.roots.qwi_a!.steps[0]!.answers)
+			.toEqual(['dev'])
+		expect(getNextWork(state))
+			.toEqual({ kind: 'step', rootId: 'qwi_a', stepId: first })
+	})
+
+	it('answers a waiting plan by re-planning with accumulated answers', () => {
+		const root = createRootFromInput('goal', undefined, NOW, 'qwi_a')
+		let state = enqueueRoot(createEmptyQueuedWorkflowState(NOW, true), root)
+		state = markPlanWaiting(state, 'qwi_a', 'scope?', undefined, LATER)
+		expect(getNextWork(state))
 			.toBeUndefined()
+		state = answerQuestion(state, 'qwi_a', 'everything', LATER)
+		expect(state.roots.qwi_a!.status)
+			.toBe('planning')
+		expect(state.roots.qwi_a!.answers)
+			.toEqual(['everything'])
+	})
+
+	it('fails the root when a step fails, and retry resets exactly the failed step', () => {
+		let state = planned('goal', 'qwi_a', ['one', 'two'])
+		const [first] = stepIds(state, 'qwi_a')
+		state = failStep(state, 'qwi_a', first!, 'boom', LATER)
+		expect(state.roots.qwi_a!.status)
+			.toBe('failed')
+
+		const retried = retryItem(state, first!, false, LATER)
+		expect(retried.roots.qwi_a!.status)
+			.toBe('active')
+		expect(retried.roots.qwi_a!.steps[0]!.status)
+			.toBe('pending')
+		expect(retried.roots.qwi_a!.steps[1]!.status)
+			.toBe('pending')
+
+		const replanned = retryItem(state, 'qwi_a', true, LATER)
+		expect(replanned.roots.qwi_a!.status)
+			.toBe('planning')
+		expect(replanned.roots.qwi_a!.steps)
+			.toEqual([])
+	})
+
+	it('resolves root and step ids by exact match or unique prefix', () => {
+		const state = planned('goal', 'qwi_367f0c41-ee1f', ['one'])
+		const stepId = stepIds(state, 'qwi_367f0c41-ee1f')[0]!
+		expect(resolveItemId(state, 'qwi_367').id)
+			.toBe('qwi_367f0c41-ee1f')
+		expect(resolveItemId(state, 'qwi_367').kind)
+			.toBe('root')
+		expect(resolveItemId(state, stepId).kind)
+			.toBe('step')
+		expect(resolveItemId(state, 'nope').matches)
+			.toHaveLength(0)
 	})
 
 	it('normalizes active runs during restore without auto-resuming', () => {
-		const { root, state } = stateWithRoot()
-		const running = {
+		let state = planned('goal', 'qwi_a', ['one'])
+		const [first] = stepIds(state, 'qwi_a')
+		state = {
 			...state,
-			activeRun: { itemId: root.id, phase: 'worker' as const },
-			items: { [root.id]: { ...root, status: 'running' as const } },
+			activeRun: { phase: 'step', rootId: 'qwi_a', stepId: first },
+			roots: { ...state.roots, qwi_a: { ...state.roots.qwi_a!, steps: state.roots.qwi_a!.steps.map(step => ({ ...step, status: 'running' as const })) } },
 		}
-
-		const restored = restoreSnapshot(running, LATER)
+		const restored = restoreSnapshot(state, LATER)
 		expect(restored.state.activeRun)
 			.toBeUndefined()
-		expect(restored.state.items[root.id]?.status)
+		expect(restored.state.roots.qwi_a!.steps[0]!.status)
 			.toBe('pending')
-		expect(restored.warnings[0])
-			.toContain('orphaned worker run')
+		expect(restored.warnings.at(-1))
+			.toContain('orphaned step run')
 	})
 
-	it('keeps basic append-only knowledge helpers deterministic', () => {
-		let knowledge = createEmptyKnowledgeState()
-		knowledge = addKnowledgeRecord(knowledge, { type: 'fact', scope: 'session', summary: 'A' }, NOW)
-		knowledge = addKnowledgeRecord(knowledge, { type: 'fact', scope: 'session', summary: 'A' }, LATER)
-		expect(knowledge.records)
-			.toHaveLength(1)
+	it('rejects snapshots from other schema versions', () => {
+		const restored = restoreSnapshot({ schemaVersion: 2, items: {} }, LATER)
+		expect(restored.disabledReason)
+			.toContain('Unsupported')
 	})
 
-	it('validates JSON values and expansion invariants', () => {
-		expect(isJsonValue({ a: [1, null, 'x'] }))
-			.toBe(true)
-		expect(isJsonValue({ bad: undefined }))
-			.toBe(false)
-		expect(inheritChildExpansion({ ...createRootItemFromInput('x', undefined, NOW, 'root'), canExpand: false }, true))
-			.toBe(false)
-		expect(() => assertCanExpandWithWorkerResult({ ...createRootItemFromInput('x', undefined, NOW, 'root'), canExpand: false }, { type: 'expand' }))
-			.toThrow('cannot expand')
+	it('dedupes and caps notes, and budgets them for prompts', () => {
+		let notes = addNotes([], ['a fact', 'A  Fact', '  ', 'another'], 10)
+		expect(notes)
+			.toEqual(['a fact', 'another'])
+		notes = addNotes(notes, ['third'], 2)
+		expect(notes)
+			.toEqual(['another', 'third'])
+		expect(notesForPrompt(['aaaa', 'bbbb', 'cccc'], 9))
+			.toEqual(['bbbb', 'cccc'])
 	})
 })

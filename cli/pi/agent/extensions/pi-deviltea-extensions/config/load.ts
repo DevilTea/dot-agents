@@ -105,9 +105,13 @@ function mergeQueuedWorkflow(base: ResolvedDevilteaExtensionsConfig['queuedWorkf
 			...base.worker,
 			...(override.worker ?? {}),
 		},
-		knowledge: {
-			...base.knowledge,
-			...(override.knowledge ?? {}),
+		notes: {
+			...base.notes,
+			...(override.notes ?? {}),
+		},
+		planner: {
+			...base.planner,
+			...(override.planner ?? {}),
 		},
 	}
 }

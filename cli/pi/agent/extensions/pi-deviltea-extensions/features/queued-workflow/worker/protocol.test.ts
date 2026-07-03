@@ -1,63 +1,59 @@
+import type { JsonEvent } from './protocol.js'
 import { describe, expect, it } from 'vitest'
-import { parseJsonLine, parseRetrieverResultFromJsonEvents, parseWorkerResultFromJsonEvents } from './protocol.js'
+import { extractJsonObject, parsePlanResultFromJsonEvents, parseStepResultFromJsonEvents } from './protocol.js'
 
-function event(text: string) {
-	return [{ type: 'agent_end', messages: [{ role: 'user', content: [] }, { role: 'assistant', content: [{ type: 'text', text }] }] }]
+function end(content: Array<Record<string, unknown>>): JsonEvent {
+	return { messages: [{ content, role: 'assistant' }], type: 'agent_end' }
 }
 
+const DONE = '{"type":"done","summary":"ok"}'
+
 describe('queued workflow worker protocol', () => {
-	it('parses valid WorkerResult resolved', () => {
-		expect(parseWorkerResultFromJsonEvents(event('{"type":"resolved","output":{"ok":true}}')).type)
-			.toBe('resolved')
+	it('parses bare JSON results for both phases', () => {
+		expect(parseStepResultFromJsonEvents([end([{ text: DONE, type: 'text' }])]))
+			.toEqual({ summary: 'ok', type: 'done' })
+		expect(parsePlanResultFromJsonEvents([end([{ text: '{"type":"plan","steps":[{"task":"one"}]}', type: 'text' }])]))
+			.toEqual({ steps: [{ task: 'one' }], type: 'plan' })
 	})
 
-	it('parses valid expand with child draft', () => {
-		const result = parseWorkerResultFromJsonEvents(event('{"type":"expand","children":[{"input":{"task":"x"},"contract":{"goal":"g","outputShape":"o","completionCriteria":["done"]}}]}'))
-		expect(result.type)
-			.toBe('expand')
+	it('tolerates thinking blocks, code fences, and surrounding prose', () => {
+		expect(parseStepResultFromJsonEvents([end([{ thinking: 'hmm', type: 'thinking' }, { text: DONE, type: 'text' }])]))
+			.toEqual({ summary: 'ok', type: 'done' })
+		expect(extractJsonObject(`\`\`\`json\n${DONE}\n\`\`\``))
+			.toEqual({ summary: 'ok', type: 'done' })
+		expect(extractJsonObject(`Here is the result:\n${DONE}\nDone!`))
+			.toEqual({ summary: 'ok', type: 'done' })
 	})
 
-	it('parses valid RetrieverResult', () => {
-		expect(parseRetrieverResultFromJsonEvents(event('{"selectedRecordIds":["k1"],"rationale":"because"}')).selectedRecordIds)
-			.toEqual(['k1'])
+	it('joins multiple text blocks before extraction', () => {
+		expect(parseStepResultFromJsonEvents([end([{ text: '{"type":"done",', type: 'text' }, { text: '"summary":"ok"}', type: 'text' }])]))
+			.toEqual({ summary: 'ok', type: 'done' })
 	})
 
-	it('rejects invalid JSONL line', () => {
-		expect(() => parseJsonLine('{no'))
-			.toThrow(/invalid JSONL line/)
+	it('accepts follow-up steps on done results', () => {
+		const result = parseStepResultFromJsonEvents([end([{ text: '{"type":"done","summary":"ok","next":[{"task":"follow up"}]}', type: 'text' }])])
+		expect(result)
+			.toEqual({ next: [{ task: 'follow up' }], summary: 'ok', type: 'done' })
 	})
 
-	it.each([
-		['missing agent_end', [], /agent_end/],
-		['multiple agent_end', [{ type: 'agent_end', messages: [] }, { type: 'agent_end', messages: [] }], /exactly one/],
-		['missing assistant message', [{ type: 'agent_end', messages: [{ role: 'user' }] }], /missing final assistant/],
-		['multiple content blocks', [{ type: 'agent_end', messages: [{ role: 'assistant', content: [{ type: 'text', text: '{}' }, { type: 'text', text: '{}' }] }] }], /exactly one block/],
-	])('rejects %s', (_name, events, pattern) => {
-		expect(() => parseWorkerResultFromJsonEvents(events))
-			.toThrow(pattern)
+	it('structurally rejects a plan with zero steps and a plan that claims completion', () => {
+		expect(() => parsePlanResultFromJsonEvents([end([{ text: '{"type":"plan","steps":[]}', type: 'text' }])]))
+			.toThrow('invalid plan result')
+		expect(() => parsePlanResultFromJsonEvents([end([{ text: DONE, type: 'text' }])]))
+			.toThrow('invalid plan result')
 	})
 
-	it('rejects code fence and leading whitespace', () => {
-		expect(() => parseWorkerResultFromJsonEvents(event('```json\n{}\n```')))
-			.toThrow(/code fences/)
-		expect(() => parseWorkerResultFromJsonEvents(event(' {"type":"resolved","output":1}')))
-			.toThrow(/leading or trailing/)
+	it('rejects text with no JSON object and schema violations', () => {
+		expect(() => extractJsonObject('no json here'))
+			.toThrow('does not contain a JSON object')
+		expect(() => parseStepResultFromJsonEvents([end([{ text: '{"type":"done"}', type: 'text' }])]))
+			.toThrow('invalid step result')
 	})
 
-	it('rejects invalid final JSON', () => {
-		expect(() => parseWorkerResultFromJsonEvents(event('{bad}')))
-			.toThrow(/invalid final JSON/)
-	})
-
-	it('rejects unknown WorkerResult fields and disallowed reducer type', () => {
-		expect(() => parseWorkerResultFromJsonEvents(event('{"type":"resolved","output":1,"extra":true}')))
-			.toThrow(/invalid WorkerResult/)
-		expect(() => parseWorkerResultFromJsonEvents(event('{"type":"expand","children":[{"input":{},"contract":{"goal":"g","outputShape":"o","completionCriteria":["c"]}}]}'), { allowedTypes: ['resolved'] }))
-			.toThrow(/not allowed/)
-	})
-
-	it('rejects invalid RetrieverResult id', () => {
-		expect(() => parseRetrieverResultFromJsonEvents(event('{"selectedRecordIds":[""]}')))
-			.toThrow(/invalid RetrieverResult/)
+	it('requires exactly one agent_end with a final assistant text block', () => {
+		expect(() => parseStepResultFromJsonEvents([]))
+			.toThrow('agent_end')
+		expect(() => parseStepResultFromJsonEvents([end([])]))
+			.toThrow('no text block')
 	})
 })

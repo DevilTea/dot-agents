@@ -1,61 +1,57 @@
-import type { QueuedWorkflowState, QueueItem } from './schema.js'
+import type { QueuedWorkflowState, RootItem } from './schema.js'
 
-export function retryItem(state: QueuedWorkflowState, itemId: string, recursive: boolean, now: string): QueuedWorkflowState {
-	const item = requireItem(state, itemId)
-	if (item.status !== 'failed' && item.status !== 'blocked') {
-		throw new Error(`Only failed or blocked items can be retried: ${itemId}`)
+/**
+ * Retry semantics:
+ * - a failed step: reset it to pending and reactivate its root (later steps are untouched).
+ * - a failed root: same as retrying its failed step; if the plan phase failed, re-plan.
+ * - recursive on a root: wipe the checklist and re-plan from scratch.
+ */
+export function retryItem(state: QueuedWorkflowState, id: string, recursive: boolean, now: string): QueuedWorkflowState {
+	const root = state.roots[id]
+	if (root)
+		return retryRoot(state, root, recursive, now)
+
+	for (const candidate of Object.values(state.roots)) {
+		const step = candidate.steps.find(entry => entry.id === id)
+		if (!step)
+			continue
+		if (step.status !== 'failed')
+			throw new Error(`Only failed steps can be retried: ${id}`)
+		return writeRoot(state, resetFailedStep(candidate, id, now), now)
 	}
-
-	const items = { ...state.items }
-	if (recursive)
-		resetSubtree(items, itemId, now)
-	else items[itemId] = resetSingleItemForRetry(item, now)
-
-	return { ...state, items, updatedAt: now }
+	throw new Error(`Unknown queued workflow item: ${id}`)
 }
 
-function resetSubtree(items: Record<string, QueueItem>, itemId: string, now: string): void {
-	const item = requireRecordItem(items, itemId)
-	for (const childId of item.children) resetSubtree(items, childId, now)
-
-	const reset = resetSingleItemForRetry(item, now)
-	if (item.children.length > 0) {
-		reset.status = 'pending'
-		reset.children = []
-		reset.reducer = undefined
-	}
-	items[itemId] = reset
-}
-
-function resetSingleItemForRetry(item: QueueItem, now: string): QueueItem {
-	if (item.children.length > 0) {
-		return {
-			...item,
-			status: 'expanded',
+function retryRoot(state: QueuedWorkflowState, root: RootItem, recursive: boolean, now: string): QueuedWorkflowState {
+	if (root.status !== 'failed')
+		throw new Error(`Only failed roots can be retried: ${root.id}`)
+	if (recursive || root.steps.length === 0) {
+		return writeRoot(state, {
+			...root,
+			status: 'planning',
+			steps: recursive ? [] : root.steps,
 			error: undefined,
-			block: undefined,
 			output: undefined,
 			updatedAt: now,
-		}
+		}, now)
 	}
+	const failedStep = root.steps.find(step => step.status === 'failed')
+	if (!failedStep)
+		return writeRoot(state, { ...root, status: 'planning', steps: [], error: undefined, updatedAt: now }, now)
+	return writeRoot(state, resetFailedStep(root, failedStep.id, now), now)
+}
 
+function resetFailedStep(root: RootItem, stepId: string, now: string): RootItem {
+	const steps = root.steps.map(step => step.id === stepId
+		? { ...step, status: 'pending' as const, error: undefined, output: undefined, updatedAt: now }
+		: step)
+	return { ...root, status: 'active', steps, error: undefined, updatedAt: now }
+}
+
+function writeRoot(state: QueuedWorkflowState, root: RootItem, now: string): QueuedWorkflowState {
 	return {
-		...item,
-		status: 'pending',
-		error: undefined,
-		block: undefined,
-		output: undefined,
+		...state,
+		roots: { ...state.roots, [root.id]: root },
 		updatedAt: now,
 	}
-}
-
-function requireItem(state: QueuedWorkflowState, itemId: string): QueueItem {
-	return requireRecordItem(state.items, itemId)
-}
-
-function requireRecordItem(items: Record<string, QueueItem>, itemId: string): QueueItem {
-	const item = items[itemId]
-	if (!item)
-		throw new Error(`Unknown queue item: ${itemId}`)
-	return item
 }

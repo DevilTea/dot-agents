@@ -1,9 +1,9 @@
-import type { QueuedWorkflowState, QueueItem, SnapshotRestoreResult } from './schema.js'
+import type { QueuedWorkflowState, RootItem, SnapshotRestoreResult } from './schema.js'
 import { createEmptyQueuedWorkflowState } from './state.js'
 
 export function restoreSnapshot(snapshot: unknown, now: string): SnapshotRestoreResult {
-	if (!isObject(snapshot) || snapshot.schemaVersion !== 1) {
-		const disabledReason = 'Unsupported queued workflow snapshot schema version'
+	if (!isObject(snapshot) || snapshot.schemaVersion !== 3) {
+		const disabledReason = 'Unsupported queued workflow snapshot schema version; starting with an empty queue'
 		return {
 			state: { ...createEmptyQueuedWorkflowState(now, false), warnings: [disabledReason] },
 			warnings: [disabledReason],
@@ -13,33 +13,35 @@ export function restoreSnapshot(snapshot: unknown, now: string): SnapshotRestore
 
 	const state = snapshot as QueuedWorkflowState
 	const warnings = [...(Array.isArray(state.warnings) ? state.warnings : [])]
-	const items: Record<string, QueueItem> = {}
-	for (const [itemId, item] of Object.entries(state.items ?? {})) {
-		items[itemId] = normalizeRestoredItem(item, state.activeRun?.itemId === itemId ? state.activeRun.phase : undefined, now, warnings)
-	}
+	const roots: Record<string, RootItem> = {}
+	for (const [rootId, root] of Object.entries(state.roots ?? {}))
+		roots[rootId] = normalizeRestoredRoot(root, state.activeRun?.rootId === rootId ? state.activeRun : undefined, now, warnings)
 
 	return {
 		state: {
 			...state,
 			enabled: Boolean(state.enabled),
-			items,
+			roots,
 			rootOrder: Array.isArray(state.rootOrder) ? state.rootOrder : [],
 			activeRun: undefined,
 			warnings,
-			knowledge: state.knowledge ?? { records: [] },
+			notes: Array.isArray(state.notes) ? state.notes : [],
 			updatedAt: now,
 		},
 		warnings,
 	}
 }
 
-function normalizeRestoredItem(item: QueueItem, activePhase: 'worker' | 'reducer' | 'retriever' | undefined, now: string, warnings: string[]): QueueItem {
-	if (!activePhase)
-		return item
-	warnings.push(`Reset orphaned ${activePhase} run for item ${item.id}`)
-	if (activePhase === 'reducer')
-		return { ...item, status: 'expanded', updatedAt: now }
-	return { ...item, status: item.status === 'running' ? 'pending' : item.status, updatedAt: now }
+function normalizeRestoredRoot(root: RootItem, activeRun: { stepId?: string, phase: 'plan' | 'step' } | undefined, now: string, warnings: string[]): RootItem {
+	if (!activeRun)
+		return root
+	warnings.push(`Reset orphaned ${activeRun.phase} run for ${activeRun.stepId ?? root.id}`)
+	if (!activeRun.stepId)
+		return { ...root, updatedAt: now }
+	const steps = root.steps.map(step => step.id === activeRun.stepId && step.status === 'running'
+		? { ...step, status: 'pending' as const, updatedAt: now }
+		: step)
+	return { ...root, steps, updatedAt: now }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

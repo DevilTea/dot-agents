@@ -8,7 +8,7 @@ import { QueuedWorkflowEditor } from './ui/editor.js'
 const WHITESPACE_PATTERN = /\s+/
 
 export default function queuedWorkflow(pi: ExtensionAPI, bundleConfig: ResolvedDevilteaExtensionsConfig): void {
-	const orchestrator = new QueuedWorkflowOrchestrator(pi, resolveRuntimeConfig(bundleConfig.queuedWorkflow))
+	const orchestrator = new QueuedWorkflowOrchestrator(resolveRuntimeConfig(bundleConfig.queuedWorkflow))
 	let previousEditor: ReturnType<ExtensionContext['ui']['getEditorComponent']> | undefined
 	let currentEditor: QueuedWorkflowEditor | undefined
 	let dashboardInstalled = false
@@ -18,9 +18,13 @@ export default function queuedWorkflow(pi: ExtensionAPI, bundleConfig: ResolvedD
 			return
 		previousEditor = ctx.ui.getEditorComponent()
 		ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+			// The factory can be re-invoked (e.g. on theme change); dispose the prior instance's subscription.
+			currentEditor?.dispose()
 			currentEditor = new QueuedWorkflowEditor(tui, theme, keybindings, {
 				ctx,
 				onSlashFallback: (text) => {
+					currentEditor?.dispose()
+					currentEditor = undefined
 					ctx.ui.setEditorComponent(previousEditor)
 					dashboardInstalled = false
 					ctx.ui.notify(`Slash command fallback: ${text}. Press Enter again to run it.`, 'warning')
@@ -35,6 +39,7 @@ export default function queuedWorkflow(pi: ExtensionAPI, bundleConfig: ResolvedD
 	const restoreEditor = (ctx: ExtensionContext) => {
 		if (!dashboardInstalled)
 			return
+		currentEditor?.dispose()
 		ctx.ui.setEditorComponent(previousEditor)
 		currentEditor = undefined
 		dashboardInstalled = false
@@ -53,7 +58,7 @@ export default function queuedWorkflow(pi: ExtensionAPI, bundleConfig: ResolvedD
 	pi.on('input', (event, ctx) => handleInput(orchestrator, event, ctx))
 
 	pi.registerCommand('qw', {
-		description: 'Toggle or control Queued Workflow. Usage: /qw [resume|status|show <itemId> [--verbose]|retry <itemId> [--recursive]]',
+		description: 'Toggle or control Queued Workflow. Usage: /qw [resume|status|show <id> [--verbose]|retry <id> [--recursive]] (ids accept unique prefixes, e.g. qwi_367f0c41)',
 		handler: async (args, ctx) => {
 			handleCommand(orchestrator, args, ctx, {
 				currentEditor: () => currentEditor,

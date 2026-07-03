@@ -2,6 +2,8 @@ export interface WorkerCliOptions {
 	provider?: string
 	model?: string
 	thinking?: string
+	/** Disable all tools: the run becomes a single-shot generation with no tool loop. */
+	noTools?: boolean
 	tools?: { allowlist?: string[], exclude?: string[] }
 	disableExtensions?: boolean
 	extraExtensions?: string[]
@@ -13,6 +15,8 @@ export function buildWorkerCliArgs(options: { promptArtifactPath: string, cli?: 
 	addTrimmed(args, '--provider', cli.provider)
 	addTrimmed(args, '--model', cli.model)
 	addTrimmed(args, '--thinking', cli.thinking)
+	if (cli.noTools)
+		args.push('--no-tools')
 
 	const allowlist = normalizeList(cli.tools?.allowlist, 'tools allowlist')
 	const exclude = normalizeList(cli.tools?.exclude, 'tools exclude')

@@ -131,11 +131,25 @@ export interface QueuedWorkflowConfig {
 		workerKillGraceMs?: number
 		stdoutTailMaxChars?: number
 		stderrTailMaxChars?: number
+		/** Overrides the model used by workers. When omitted, workers inherit the session's current model. */
+		cli?: {
+			provider?: string
+			model?: string
+			thinking?: string
+		}
 	}
-	knowledge?: {
-		retrieverEnabled?: boolean
-		maxRecords?: number
-		maxJsonChars?: number
+	/** Shared notes embedded into every worker prompt. */
+	notes?: {
+		maxCount?: number
+		maxPromptChars?: number
+	}
+	/** Plan phase settings. */
+	planner?: {
+		/**
+		 * 'none' (default): the plan run has no tools at all — a single-shot generation, immune to
+		 * flaky tool-call formats on local models. 'read_only': read tools stay available.
+		 */
+		toolAccess?: 'none' | 'read_only'
 	}
 }
 
@@ -298,11 +312,22 @@ export interface ResolvedQueuedWorkflowConfig {
 		workerKillGraceMs: number
 		stdoutTailMaxChars: number
 		stderrTailMaxChars: number
+		/** Overrides the model used by workers. When omitted, workers inherit the session's current model. */
+		cli?: {
+			provider?: string
+			model?: string
+			thinking?: string
+		}
 	}
-	knowledge: {
-		retrieverEnabled: boolean
-		maxRecords: number
-		maxJsonChars: number
+	/** Shared notes embedded into every worker prompt. */
+	notes: {
+		maxCount: number
+		maxPromptChars: number
+	}
+	/** Plan phase settings. */
+	planner: {
+		/** 'none': tool-free single-shot planning (default). 'read_only': read tools stay available. */
+		toolAccess: 'none' | 'read_only'
 	}
 }
 
@@ -418,11 +443,18 @@ export const QueuedWorkflowConfigSchema = Type.Object({
 		workerKillGraceMs: Type.Optional(Type.Integer({ minimum: 0 })),
 		stdoutTailMaxChars: Type.Optional(Type.Integer({ minimum: 1 })),
 		stderrTailMaxChars: Type.Optional(Type.Integer({ minimum: 1 })),
+		cli: Type.Optional(Type.Object({
+			provider: Type.Optional(Type.String({ minLength: 1 })),
+			model: Type.Optional(Type.String({ minLength: 1 })),
+			thinking: Type.Optional(Type.String({ minLength: 1 })),
+		}, { additionalProperties: false })),
 	}, { additionalProperties: false })),
-	knowledge: Type.Optional(Type.Object({
-		retrieverEnabled: Type.Optional(Type.Boolean()),
-		maxRecords: Type.Optional(Type.Integer({ minimum: 1 })),
-		maxJsonChars: Type.Optional(Type.Integer({ minimum: 1 })),
+	notes: Type.Optional(Type.Object({
+		maxCount: Type.Optional(Type.Integer({ minimum: 1 })),
+		maxPromptChars: Type.Optional(Type.Integer({ minimum: 1 })),
+	}, { additionalProperties: false })),
+	planner: Type.Optional(Type.Object({
+		toolAccess: Type.Optional(Type.Union([Type.Literal('none'), Type.Literal('read_only')])),
 	}, { additionalProperties: false })),
 }, { additionalProperties: false })
 
@@ -508,10 +540,12 @@ export const DEFAULT_QUEUED_WORKFLOW_CONFIG: ResolvedQueuedWorkflowConfig = {
 		stdoutTailMaxChars: 20_000,
 		stderrTailMaxChars: 20_000,
 	},
-	knowledge: {
-		retrieverEnabled: true,
-		maxRecords: 20,
-		maxJsonChars: 12_000,
+	notes: {
+		maxCount: 100,
+		maxPromptChars: 4_000,
+	},
+	planner: {
+		toolAccess: 'none',
 	},
 }
 
@@ -542,7 +576,8 @@ export function createDefaultDevilteaExtensionsConfig(): ResolvedDevilteaExtensi
 		queuedWorkflow: {
 			...DEFAULT_QUEUED_WORKFLOW_CONFIG,
 			worker: { ...DEFAULT_QUEUED_WORKFLOW_CONFIG.worker },
-			knowledge: { ...DEFAULT_QUEUED_WORKFLOW_CONFIG.knowledge },
+			notes: { ...DEFAULT_QUEUED_WORKFLOW_CONFIG.notes },
+			planner: { ...DEFAULT_QUEUED_WORKFLOW_CONFIG.planner },
 		},
 		askQuestions: { ...DEFAULT_ASK_QUESTIONS_CONFIG },
 		syspromptManager: { ...DEFAULT_SYSPROMPT_MANAGER_CONFIG },

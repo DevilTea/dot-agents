@@ -1,24 +1,57 @@
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import type { QueuedWorkflowState, QueueInputImage, QueueItem, QueueItemDraft, UserInteractionRequest, WorkerResult } from '../domain/schema.js'
+import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
+import type { NextWork } from '../domain/scheduler.js'
+import type { PlanResult, QueuedWorkflowState, QueueInputImage, RootItem, RunPhase, Step, StepResult } from '../domain/schema.js'
+import type { WorkerCliOptions } from '../worker/cli.js'
+import type { WorkerProgress } from '../worker/runner.js'
 import type { QueuedWorkflowRuntimeConfig } from './config.js'
 import { dirname, join } from 'node:path'
-import { createQueueItemId } from '../domain/ids.js'
-import { applyKnowledgeUpdateProposals, buildKnowledgeSlice, buildKnowledgeSliceAfterRetrieverFailure, buildKnowledgeSliceFromRetrieverResult } from '../domain/knowledge.js'
-import { applyDeterministicReducer } from '../domain/reducers.js'
+import { addNotes, notesForPrompt } from '../domain/notes.js'
 import { retryItem } from '../domain/retry.js'
-import { blockItem, expandItem, failItem, getNextPendingItem, markItemRunning, resolveItem } from '../domain/scheduler.js'
-import { createRootItemFromInput, enqueueRootItem, setEnabled } from '../domain/state.js'
-import { runItemWorker, runReducerWorker, runRetrieverWorker } from '../worker/runner.js'
-import { persistQueuedWorkflowState, restoreQueuedWorkflowState } from './persistence.js'
+import { answerQuestion, appendRun, applyPlan, completeStep, failPlan, failStep, getNextWork, markPlanRunning, markPlanWaiting, markStepRunning, markStepWaiting, resetInterrupted } from '../domain/scheduler.js'
+import { createRootFromInput, enqueueRoot, resolveItemId, setEnabled } from '../domain/state.js'
+import { runPlanWorker, runStepWorker } from '../worker/runner.js'
+import { persistQueuedWorkflowState, resolveStateFile, restoreQueuedWorkflowState } from './persistence.js'
+
+export interface WorkerLiveProgress extends WorkerProgress {
+	rootId: string
+	stepId?: string
+	phase: RunPhase
+}
 
 export class QueuedWorkflowOrchestrator {
 	private abortController: AbortController | undefined
 	private running = false
 	private state: QueuedWorkflowState | undefined
+	private stateFile: string | undefined
+	private activeProgress: WorkerLiveProgress | undefined
+	private readonly listeners = new Set<() => void>()
 
-	constructor(private readonly pi: ExtensionAPI, private readonly config: QueuedWorkflowRuntimeConfig) {}
+	constructor(private readonly config: QueuedWorkflowRuntimeConfig) {}
+
+	/** Subscribe to state/progress changes (e.g. to request a UI re-render). Returns an unsubscribe fn. */
+	subscribe(listener: () => void): () => void {
+		this.listeners.add(listener)
+		return () => this.listeners.delete(listener)
+	}
+
+	/** Live progress of the currently running subprocess, if any. Not persisted. */
+	getActiveProgress(): WorkerLiveProgress | undefined {
+		return this.activeProgress
+	}
+
+	private notify(): void {
+		for (const listener of this.listeners) {
+			try {
+				listener()
+			}
+			catch {
+				// A failing listener must not break state propagation to the others.
+			}
+		}
+	}
 
 	restore(ctx: ExtensionContext): void {
+		this.stateFile = resolveStateFile(ctx)
 		const restored = restoreQueuedWorkflowState(ctx, now())
 		this.state = restored.state
 		const warning = restored.warnings.at(-1)
@@ -40,7 +73,7 @@ export class QueuedWorkflowOrchestrator {
 	}
 
 	enable(ctx: ExtensionContext, resume: boolean): void {
-		this.state = setEnabled(this.getState(ctx), true, now())
+		this.state = setEnabled(this.recoverOrphanedActiveRun(this.getState(ctx)), true, now())
 		this.persist()
 		ctx.ui.notify(resume ? 'Queued Workflow resumed.' : 'Queued Workflow enabled.', 'info')
 		void this.runLoop(ctx)
@@ -54,32 +87,26 @@ export class QueuedWorkflowOrchestrator {
 	}
 
 	enqueue(ctx: ExtensionContext, text: string, images?: QueueInputImage[]): void {
-		const item = createRootItemFromInput(text, images, now())
-		this.state = enqueueRootItem(this.getState(ctx), item)
+		const root = createRootFromInput(text, images, now())
+		this.state = enqueueRoot(this.recoverOrphanedActiveRun(this.getState(ctx)), root)
 		this.persist()
 		void this.runLoop(ctx)
 	}
 
-	retry(ctx: ExtensionContext, itemId: string, recursive: boolean): void {
-		this.state = retryItem(this.getState(ctx), itemId, recursive, now())
+	retry(ctx: ExtensionContext, idOrPrefix: string, recursive: boolean): void {
+		const id = this.requireId(ctx, idOrPrefix)
+		this.state = retryItem(this.getState(ctx), id, recursive, now())
 		this.persist()
-		ctx.ui.notify(`Queued Workflow retry scheduled for ${itemId}.`, 'info')
+		ctx.ui.notify(`Queued Workflow retry scheduled for ${id}.`, 'info')
 		void this.runLoop(ctx)
 	}
 
-	answerInteraction(ctx: ExtensionContext, itemId: string, answer: string): void {
-		const state = this.getState(ctx)
-		const item = state.items[itemId]
-		if (!item || item.status !== 'waiting_user')
+	answer(ctx: ExtensionContext, id: string, answerText: string): void {
+		try {
+			this.state = answerQuestion(this.getState(ctx), id, answerText, now())
+		}
+		catch {
 			return
-		const updatedAt = now()
-		this.state = {
-			...state,
-			items: {
-				...state.items,
-				[itemId]: { ...item, input: appendUserResponse(item.input, answer), status: 'pending', userInteraction: undefined, updatedAt },
-			},
-			updatedAt,
 		}
 		this.persist()
 		void this.runLoop(ctx)
@@ -87,37 +114,29 @@ export class QueuedWorkflowOrchestrator {
 
 	status(ctx: ExtensionContext): string {
 		const state = this.getState(ctx)
-		const counts = Object.values(state.items)
-			.reduce<Record<string, number>>((acc, item) => {
-				acc[item.status] = (acc[item.status] ?? 0) + 1
-				return acc
-			}, {})
+		const steps = Object.values(state.roots)
+			.flatMap(root => root.steps)
+		const counts = steps.reduce<Record<string, number>>((acc, step) => {
+			acc[step.status] = (acc[step.status] ?? 0) + 1
+			return acc
+		}, {})
 		const parts = Object.entries(counts)
 			.map(([status, count]) => `${status}:${count}`)
 			.join(' ')
-		return `Queued Workflow ${state.enabled ? 'enabled' : 'disabled'} · roots:${state.rootOrder.length}${parts ? ` · ${parts}` : ''}`
+		return `Queued Workflow ${state.enabled ? 'enabled' : 'disabled'} · roots:${state.rootOrder.length}${parts ? ` · steps ${parts}` : ''} · notes:${state.notes.length}`
 	}
 
-	show(ctx: ExtensionContext, itemId: string, verbose: boolean): string {
-		const item = this.getState(ctx).items[itemId]
-		if (!item)
-			return `Unknown queued workflow item: ${itemId}`
-		const lines = [
-			`${item.id} · ${item.status}`,
-			`goal: ${item.contract.goal}`,
-			`children: ${item.children.join(', ') || '(none)'}`,
-		]
-		if (item.output !== undefined)
-			lines.push(`output: ${JSON.stringify(item.output, null, 2)}`)
-		if (item.error)
-			lines.push(`error: ${item.error}`)
-		if (item.block)
-			lines.push(`block: ${item.block}`)
-		if (item.userInteraction)
-			lines.push(`interaction: ${JSON.stringify(item.userInteraction, null, 2)}`)
-		if (verbose)
-			lines.push(`runs: ${JSON.stringify(item.runs, null, 2)}`)
-		return lines.join('\n')
+	show(ctx: ExtensionContext, idOrPrefix: string, verbose: boolean): string {
+		const resolved = resolveItemId(this.getState(ctx), idOrPrefix)
+		if (resolved.matches.length > 1)
+			return `Ambiguous queued workflow id prefix '${idOrPrefix}': ${resolved.matches.join(', ')}`
+		if (!resolved.id || !resolved.rootId)
+			return `Unknown queued workflow item: ${idOrPrefix}`
+		const root = this.getState(ctx).roots[resolved.rootId]!
+		if (resolved.kind === 'root')
+			return showRoot(root, verbose)
+		const step = root.steps.find(entry => entry.id === resolved.id)!
+		return showStep(root, step, verbose)
 	}
 
 	shutdown(): void {
@@ -127,13 +146,24 @@ export class QueuedWorkflowOrchestrator {
 	async runLoop(ctx: ExtensionContext): Promise<void> {
 		if (this.running)
 			return
+		this.state = this.recoverOrphanedActiveRun(this.getState(ctx))
 		this.running = true
 		try {
 			while (this.getState(ctx).enabled) {
-				const item = getNextPendingItem(this.getState(ctx)) ?? getNextReducibleItem(this.getState(ctx))
-				if (!item)
+				const work = getNextWork(this.getState(ctx))
+				if (!work)
 					return
-				await this.runItem(ctx, item)
+				try {
+					await this.runWork(ctx, work)
+				}
+				catch (error) {
+					this.activeProgress = undefined
+					const message = error instanceof Error ? error.message : String(error)
+					this.state = work.kind === 'plan'
+						? failPlan(this.getState(ctx), work.rootId, message, now())
+						: failStep(this.getState(ctx), work.rootId, work.stepId, message, now())
+					this.persist()
+				}
 			}
 		}
 		finally {
@@ -141,130 +171,123 @@ export class QueuedWorkflowOrchestrator {
 		}
 	}
 
-	private async runItem(ctx: ExtensionContext, item: QueueItem): Promise<void> {
-		const state = this.getState(ctx)
-		if (item.status === 'expanded' && item.reducer && item.children.every(id => state.items[id]?.status === 'resolved')) {
-			await this.runReducer(ctx, item)
+	private async runWork(ctx: ExtensionContext, work: NextWork): Promise<void> {
+		if (work.kind === 'plan') {
+			await this.runPlan(ctx, work.rootId)
 			return
 		}
-		await this.runWorker(ctx, item)
+		await this.runStep(ctx, work.rootId, work.stepId)
 	}
 
-	private async runWorker(ctx: ExtensionContext, item: QueueItem): Promise<void> {
-		const startedAt = now()
-		this.state = markItemRunning(this.getState(ctx), item.id, 'worker', startedAt)
+	private async runPlan(ctx: ExtensionContext, rootId: string): Promise<void> {
+		this.state = markPlanRunning(this.getState(ctx), rootId, now())
 		this.persist()
-		const knowledgeSlice = await this.buildKnowledgeSliceForItem(ctx, item)
-		if (!knowledgeSlice.ok) {
-			this.state = blockItem(this.getState(ctx), item.id, 'Required knowledge exceeds configured limits', now())
-			this.persist()
-			return
-		}
 		this.abortController = new AbortController()
-		const result = await runItemWorker({
-			...this.workerOptions(ctx, this.abortController.signal),
-			item,
-			knowledgeSlice: knowledgeSlice.slice,
-		})
-		this.abortController = undefined
-		this.state = appendRun(this.getState(ctx), item.id, result.run, now())
-		if (!result.ok) {
-			this.state = failItem(this.getState(ctx), item.id, result.error, now())
-			this.persist()
-			return
-		}
-		this.applyWorkerResult(item.id, result.result)
-	}
-
-	private async runReducer(ctx: ExtensionContext, item: QueueItem): Promise<void> {
-		if (!item.reducer)
-			return
-		if (item.reducer.type !== 'worker') {
-			try {
-				this.state = applyDeterministicReducer(this.getState(ctx), item.id, now())
+		try {
+			const signal = this.abortController.signal
+			const root = this.getState(ctx).roots[rootId]!
+			const attempt = (retryFeedback?: string) => runPlanWorker({
+				...this.workerOptions(ctx, signal, 'plan'),
+				notes: notesForPrompt(this.getState(ctx).notes, this.config.notes.maxPromptChars),
+				retryFeedback,
+				root,
+				toolAccess: this.config.planner.toolAccess,
+				onProgress: this.progressReporter(rootId, undefined, 'plan'),
+			})
+			let result = await attempt()
+			this.state = appendRun(this.getState(ctx), rootId, undefined, result.run, now())
+			// One corrective retry when the subprocess succeeded but the final message broke protocol.
+			if (!result.ok && isProtocolViolation(result.run) && !signal.aborted) {
+				result = await attempt(result.error)
+				this.state = appendRun(this.getState(ctx), rootId, undefined, result.run, now())
 			}
-			catch (error) {
-				this.state = failItem(this.getState(ctx), item.id, (error as Error).message, now())
-			}
-			this.persist()
-			return
-		}
-
-		this.state = markItemRunning(this.getState(ctx), item.id, 'reducer', now())
-		this.persist()
-		const childOutputs = item.children.map(childId => ({ itemId: childId, output: this.getState(ctx).items[childId]?.output ?? null }))
-		const knowledgeSlice = buildKnowledgeSlice(this.getState(ctx).knowledge, this.config.knowledge)
-		if (!knowledgeSlice.ok) {
-			this.state = blockItem(this.getState(ctx), item.id, 'Required knowledge exceeds configured limits', now())
-			this.persist()
-			return
-		}
-		this.abortController = new AbortController()
-		const result = await runReducerWorker({
-			...this.workerOptions(ctx, this.abortController.signal),
-			childOutputs,
-			knowledgeSlice: knowledgeSlice.slice,
-			parentItem: item,
-			reducerPrompt: item.reducer.prompt,
-		})
-		this.abortController = undefined
-		this.state = appendRun(this.getState(ctx), item.id, result.run, now())
-		if (!result.ok)
-			this.state = failItem(this.getState(ctx), item.id, result.error, now())
-		else this.applyWorkerResult(item.id, result.result)
-		this.persist()
-	}
-
-	private async buildKnowledgeSliceForItem(ctx: ExtensionContext, item: QueueItem) {
-		const base = buildKnowledgeSlice(this.getState(ctx).knowledge, this.config.knowledge)
-		if (!base.ok || !this.config.knowledge.retrieverEnabled)
-			return base
-		const result = await runRetrieverWorker({
-			...this.workerOptions(ctx),
-			item,
-			knowledgeSlice: base.slice,
-		})
-		this.state = appendRun(this.getState(ctx), item.id, result.run, now())
-		if (!result.ok)
-			return buildKnowledgeSliceAfterRetrieverFailure(this.getState(ctx).knowledge, `retriever failed: ${result.error}`, this.config.knowledge)
-		return buildKnowledgeSliceFromRetrieverResult(this.getState(ctx).knowledge, result.result, this.config.knowledge)
-	}
-
-	private applyWorkerResult(itemId: string, result: WorkerResult): void {
-		const state = this.getStateFromMemory()
-		if (result.knowledgeUpdates?.length) {
-			const applied = applyKnowledgeUpdateProposals(state.knowledge, result.knowledgeUpdates, { now: now(), sourceItemId: itemId })
-			this.state = { ...state, knowledge: applied.state, warnings: [...state.warnings, ...applied.warnings], updatedAt: now() }
-		}
-		if (result.type === 'resolved') {
-			this.state = resolveItem(this.getStateFromMemory(), itemId, result.output, now())
-		}
-		else if (result.type === 'blocked') {
-			this.state = blockItem(this.getStateFromMemory(), itemId, result.reason, now())
-		}
-		else if (result.type === 'failed') {
-			this.state = failItem(this.getStateFromMemory(), itemId, result.error, now())
-		}
-		else if (result.type === 'requires_user_interaction') {
-			this.state = markWaitingUser(this.getStateFromMemory(), itemId, result.request, now())
-		}
-		else {
-			const item = this.getStateFromMemory().items[itemId]!
-			if (!item.canExpand) {
-				this.state = failItem(this.getStateFromMemory(), itemId, 'Worker returned expand for an item with canExpand=false', now())
+			if (!result.ok) {
+				// A cancelled run means the queue was paused, not that planning failed; keep it runnable.
+				this.state = result.run.status === 'cancelled'
+					? resetInterrupted(this.getState(ctx), rootId, undefined, now())
+					: failPlan(this.getState(ctx), rootId, formatWorkerError(result), now())
+				this.persist()
 				return
 			}
-			this.state = setItemReducer(this.getStateFromMemory(), itemId, result.reducer, now())
-			this.state = expandItem(this.getStateFromMemory(), itemId, createChildren(item, result.children), now())
+			this.applyPlanResult(rootId, result.result)
 		}
+		finally {
+			this.abortController = undefined
+			this.activeProgress = undefined
+		}
+	}
+
+	private async runStep(ctx: ExtensionContext, rootId: string, stepId: string): Promise<void> {
+		this.state = markStepRunning(this.getState(ctx), rootId, stepId, now())
+		this.persist()
+		this.abortController = new AbortController()
+		try {
+			const signal = this.abortController.signal
+			const root = this.getState(ctx).roots[rootId]!
+			const step = root.steps.find(entry => entry.id === stepId)!
+			const attempt = (retryFeedback?: string) => runStepWorker({
+				...this.workerOptions(ctx, signal, 'step'),
+				notes: notesForPrompt(this.getState(ctx).notes, this.config.notes.maxPromptChars),
+				retryFeedback,
+				root,
+				step,
+				onProgress: this.progressReporter(rootId, stepId, 'step'),
+			})
+			let result = await attempt()
+			this.state = appendRun(this.getState(ctx), rootId, stepId, result.run, now())
+			// One corrective retry when the subprocess succeeded but the final message broke protocol.
+			if (!result.ok && isProtocolViolation(result.run) && !signal.aborted) {
+				result = await attempt(result.error)
+				this.state = appendRun(this.getState(ctx), rootId, stepId, result.run, now())
+			}
+			if (!result.ok) {
+				this.state = result.run.status === 'cancelled'
+					? resetInterrupted(this.getState(ctx), rootId, stepId, now())
+					: failStep(this.getState(ctx), rootId, stepId, formatWorkerError(result), now())
+				this.persist()
+				return
+			}
+			this.applyStepResult(rootId, stepId, result.result)
+		}
+		finally {
+			this.abortController = undefined
+			this.activeProgress = undefined
+		}
+	}
+
+	private applyPlanResult(rootId: string, result: PlanResult): void {
+		this.absorbNotes(result.notes)
+		if (result.type === 'plan')
+			this.state = applyPlan(this.getStateFromMemory(), rootId, result.steps, now())
+		else if (result.type === 'ask')
+			this.state = markPlanWaiting(this.getStateFromMemory(), rootId, result.question, result.options, now())
+		else this.state = failPlan(this.getStateFromMemory(), rootId, result.hint ? `${result.error}\nhint: ${result.hint}` : result.error, now())
 		this.persist()
 	}
 
-	private workerOptions(ctx: ExtensionContext, signal?: AbortSignal) {
+	private applyStepResult(rootId: string, stepId: string, result: StepResult): void {
+		this.absorbNotes(result.notes)
+		if (result.type === 'done')
+			this.state = completeStep(this.getStateFromMemory(), rootId, stepId, { summary: result.summary, path: result.path, data: result.data }, result.next ?? [], now())
+		else if (result.type === 'ask')
+			this.state = markStepWaiting(this.getStateFromMemory(), rootId, stepId, result.question, result.options, now())
+		else this.state = failStep(this.getStateFromMemory(), rootId, stepId, result.hint ? `${result.error}\nhint: ${result.hint}` : result.error, now())
+		this.persist()
+	}
+
+	private absorbNotes(notes: string[] | undefined): void {
+		if (!notes?.length)
+			return
+		const state = this.getStateFromMemory()
+		this.state = { ...state, notes: addNotes(state.notes, notes, this.config.notes.maxCount), updatedAt: now() }
+	}
+
+	private workerOptions(ctx: ExtensionContext, signal: AbortSignal, phase: RunPhase) {
 		const sessionFile = ctx.sessionManager.getSessionFile()
 		const artifactDir = join(sessionFile ? dirname(sessionFile) : ctx.cwd, 'qw-artifacts')
 		return {
 			artifactDir,
+			cli: this.resolveWorkerCli(ctx, phase),
 			cwd: ctx.cwd,
 			idleWarningMs: this.config.worker.idleWarningMs,
 			piCommand: this.config.worker.piCommand,
@@ -275,8 +298,54 @@ export class QueuedWorkflowOrchestrator {
 		}
 	}
 
+	/**
+	 * Workers inherit the session's current model (ctx.model); config `worker.cli` overrides
+	 * individual fields. The plan phase runs tool-free by default — a single-shot generation with
+	 * no tool loop for flaky local-model tool-call formats to wedge — or read-only, so it can
+	 * never do the work itself.
+	 */
+	private resolveWorkerCli(ctx: ExtensionContext, phase: RunPhase): WorkerCliOptions {
+		const inherited: WorkerCliOptions = ctx.model
+			? { model: ctx.model.id, provider: ctx.model.provider }
+			: {}
+		const merged = { ...inherited, ...(this.config.worker.cli ?? {}) }
+		if (phase !== 'plan')
+			return merged
+		return this.config.planner.toolAccess === 'none'
+			? { ...merged, noTools: true }
+			: { ...merged, tools: { exclude: ['bash', 'edit', 'write'] } }
+	}
+
+	private progressReporter(rootId: string, stepId: string | undefined, phase: RunPhase): (progress: WorkerProgress) => void {
+		return (progress) => {
+			this.activeProgress = { phase, rootId, stepId, ...progress }
+			this.notify()
+		}
+	}
+
 	private persist(): void {
-		persistQueuedWorkflowState(this.pi, this.getStateFromMemory())
+		try {
+			persistQueuedWorkflowState(this.stateFile, this.getStateFromMemory())
+		}
+		catch (error) {
+			this.state = { ...this.getStateFromMemory(), warnings: [...this.getStateFromMemory().warnings, `Failed to persist queued workflow state: ${(error as Error).message}`] }
+		}
+		this.notify()
+	}
+
+	private recoverOrphanedActiveRun(state: QueuedWorkflowState): QueuedWorkflowState {
+		if (!state.activeRun || this.running)
+			return state
+		return resetInterrupted(state, state.activeRun.rootId, state.activeRun.stepId, now())
+	}
+
+	private requireId(ctx: ExtensionContext, idOrPrefix: string): string {
+		const resolved = resolveItemId(this.getState(ctx), idOrPrefix)
+		if (resolved.matches.length > 1)
+			throw new Error(`Ambiguous queued workflow id prefix '${idOrPrefix}': ${resolved.matches.join(', ')}`)
+		if (!resolved.id)
+			throw new Error(`Unknown queued workflow item: ${idOrPrefix}`)
+		return resolved.id
 	}
 
 	private getStateFromMemory(): QueuedWorkflowState {
@@ -286,74 +355,60 @@ export class QueuedWorkflowOrchestrator {
 	}
 }
 
-function getNextReducibleItem(state: QueuedWorkflowState): QueueItem | undefined {
-	return Object.values(state.items)
-		.find(item => item.status === 'expanded' && Boolean(item.reducer) && item.children.length > 0 && item.children.every(childId => state.items[childId]?.status === 'resolved'))
+function showRoot(root: RootItem, verbose: boolean): string {
+	const lines = [
+		`${root.id} · root · ${root.status}`,
+		`goal: ${root.goal}`,
+		`steps: ${root.steps.length === 0 ? '(not planned yet)' : ''}`,
+	]
+	root.steps.forEach((step, index) => lines.push(`  ${index + 1}. [${step.status}] ${step.id} ${step.task}`))
+	if (root.output)
+		lines.push(`output: ${JSON.stringify(root.output, null, 2)}`)
+	if (root.error)
+		lines.push(`error: ${root.error}`)
+	if (root.question)
+		lines.push(`question: ${root.question}${root.options?.length ? ` (options: ${root.options.join(' | ')})` : ''}`)
+	if (root.answers.length > 0)
+		lines.push(`answers: ${root.answers.join(' | ')}`)
+	if (verbose)
+		lines.push(`plan runs: ${JSON.stringify(root.runs, null, 2)}`)
+	return lines.join('\n')
 }
 
-function createChildren(parent: QueueItem, drafts: QueueItemDraft[]): QueueItem[] {
-	const createdAt = now()
-	return drafts.map(draft => ({
-		id: createQueueItemId(),
-		rootId: parent.rootId,
-		parentId: parent.id,
-		status: 'pending',
-		input: draft.input,
-		contract: {
-			...draft.contract,
-			constraints: draft.contract.constraints ?? parent.constraints,
-			outOfScope: draft.contract.outOfScope,
-		},
-		children: [],
-		constraints: draft.contract.constraints ?? parent.constraints,
-		outOfScope: draft.contract.outOfScope ?? parent.outOfScope,
-		canExpand: parent.canExpand && (draft.canExpand ?? parent.canExpand),
-		runs: [],
-		createdAt,
-		updatedAt: createdAt,
-	}))
+function showStep(root: RootItem, step: Step, verbose: boolean): string {
+	const lines = [
+		`${step.id} · step ${root.steps.indexOf(step) + 1}/${root.steps.length} of ${root.id} · ${step.status}`,
+		`task: ${step.task}`,
+	]
+	if (step.context)
+		lines.push(`context: ${step.context}`)
+	if (step.expected)
+		lines.push(`expected: ${step.expected}`)
+	if (step.origin !== 'plan')
+		lines.push(`origin: follow-up of ${step.origin}`)
+	if (step.output)
+		lines.push(`output: ${JSON.stringify(step.output, null, 2)}`)
+	if (step.error)
+		lines.push(`error: ${step.error}`)
+	if (step.question)
+		lines.push(`question: ${step.question}${step.options?.length ? ` (options: ${step.options.join(' | ')})` : ''}`)
+	if (step.answers.length > 0)
+		lines.push(`answers: ${step.answers.join(' | ')}`)
+	if (verbose)
+		lines.push(`runs: ${JSON.stringify(step.runs, null, 2)}`)
+	return lines.join('\n')
 }
 
-function appendRun(state: QueuedWorkflowState, itemId: string, run: QueueItem['runs'][number], updatedAt: string): QueuedWorkflowState {
-	const item = state.items[itemId]
-	if (!item)
-		return state
-	return {
-		...state,
-		items: { ...state.items, [itemId]: { ...item, runs: [...item.runs, run], updatedAt } },
-		updatedAt,
-	}
+/** The subprocess itself succeeded but the final message failed protocol/schema validation. */
+function isProtocolViolation(run: { status: string, exitCode?: number }): boolean {
+	return run.status === 'failed' && run.exitCode === 0
 }
 
-function setItemReducer(state: QueuedWorkflowState, itemId: string, reducer: QueueItem['reducer'], updatedAt: string): QueuedWorkflowState {
-	const item = state.items[itemId]
-	if (!item)
-		return state
-	return {
-		...state,
-		items: { ...state.items, [itemId]: { ...item, reducer, updatedAt } },
-		updatedAt,
-	}
-}
-
-function markWaitingUser(state: QueuedWorkflowState, itemId: string, request: UserInteractionRequest, updatedAt: string): QueuedWorkflowState {
-	const item = state.items[itemId]
-	if (!item)
-		return state
-	return {
-		...state,
-		activeRun: undefined,
-		items: { ...state.items, [itemId]: { ...item, status: 'waiting_user', userInteraction: request, updatedAt } },
-		updatedAt,
-	}
-}
-
-function appendUserResponse(input: QueueItem['input'], answer: string): QueueItem['input'] {
-	if (typeof input === 'object' && input !== null && !Array.isArray(input) && input.kind === 'user_request') {
-		const responses = Array.isArray(input.userResponses) ? input.userResponses : []
-		return { ...input, userResponses: [...responses, answer] }
-	}
-	return { originalInput: input, userResponses: [answer] }
+function formatWorkerError(result: { error: string, stderrTail?: string }): string {
+	const stderr = result.stderrTail?.trim()
+	if (!stderr)
+		return result.error
+	return `${result.error}\n--- worker stderr (tail) ---\n${stderr.slice(-1000)}`
 }
 
 function now(): string {
