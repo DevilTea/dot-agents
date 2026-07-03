@@ -96,8 +96,12 @@ function validateSkill(skillPath) {
     return { valid: false, error: 'Invalid frontmatter format (missing closing ---)' };
   }
 
-  // Allowed keys
-  const ALLOWED = new Set(['name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility']);
+  // Allowed keys (superset across harnesses: Claude Code supports argument-hint,
+  // disable-model-invocation, user-invocable, hidden; some skills carry version)
+  const ALLOWED = new Set([
+    'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility',
+    'argument-hint', 'disable-model-invocation', 'user-invocable', 'hidden', 'version',
+  ]);
   const unexpected = Object.keys(fm).filter(k => !ALLOWED.has(k));
   if (unexpected.length) {
     return { valid: false, error: `Unexpected frontmatter key(s): ${unexpected.join(', ')}. Allowed: ${[...ALLOWED].sort().join(', ')}` };

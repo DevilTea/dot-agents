@@ -5,7 +5,19 @@ description: Create, modify, test, and optimize agent skills. Use when creating 
 
 # Skill Creator
 
-A skill for creating, testing, and iteratively improving agent skills — optimized for VS Code GitHub Copilot's tool and subagent ecosystem.
+A skill for creating, testing, and iteratively improving agent skills. Harness-neutral: it works in any agent environment that provides file tools, a terminal, subagents, and (optionally) structured questions.
+
+## Tool Mapping
+
+This skill refers to tools by capability. Map them to your harness:
+
+| Capability (used below)  | Claude Code       | VS Code Copilot                                            | No equivalent? Fallback                  |
+| ------------------------ | ----------------- | ---------------------------------------------------------- | ---------------------------------------- |
+| structured questions     | `AskUserQuestion` | `vscode_askQuestions`                                       | ask in plain conversation, one at a time |
+| spawn subagent           | `Agent`           | `runSubagent`                                               | run the sub-task inline, sequentially    |
+| todo tracking            | `TodoWrite`       | `manage_todo_list`                                          | keep a checklist in your working notes   |
+| file read / search / dir | `Read` / `Grep` / `Glob` | `read_file` / `grep_search` / `file_search` / `list_dir` | shell equivalents (`cat`, `grep`, `find`) |
+| terminal                 | `Bash`            | `run_in_terminal`                                           | —                                        |
 
 ## High-Level Process
 
@@ -20,7 +32,7 @@ Your job is to figure out where the user is in this process and jump in. Maybe t
 
 ## Communication Style
 
-Pay attention to context cues about the user's technical level. When in doubt, briefly explain terms like "assertion", "benchmark", or "JSON schema". Use `vscode_askQuestions` for structured choices. For open-ended exploration, use natural conversation.
+Pay attention to context cues about the user's technical level. When in doubt, briefly explain terms like "assertion", "benchmark", or "JSON schema". Use your structured-question tool (see Tool Mapping) for structured choices. For open-ended exploration, use natural conversation.
 
 ---
 
@@ -32,11 +44,11 @@ Before writing any code, interview the user relentlessly about every aspect of t
 
 1. **Extract from context first.** If the conversation already contains a workflow the user wants to capture ("turn this into a skill"), extract answers from history — tools used, step sequence, corrections made, I/O formats observed. Don't re-ask what's already clear.
 
-2. **Explore instead of asking.** If a question can be answered by reading the codebase or docs, use `runSubagent` with "Explore" agent instead of burdening the user.
+2. **Explore instead of asking.** If a question can be answered by reading the codebase or docs, spawn an exploration subagent (see Tool Mapping) instead of burdening the user.
 
 3. **Resolve before advancing.** Don't move to the next topic until the current one has shared understanding. Summarize your understanding and confirm.
 
-4. **Structured when possible.** Use `vscode_askQuestions` for choices with clear options. Reserve open conversation for ambiguous topics.
+4. **Structured when possible.** Use your structured-question tool for choices with clear options. Reserve open conversation for ambiguous topics.
 
 ### Decision Tree
 
@@ -58,7 +70,7 @@ Walk through these branches systematically. Skip what's already clear.
 
 - What specific steps should the model follow?
 - Are there deterministic tasks that should be scripts? (If the model would independently write the same helper every time, bundle it.)
-- What tools will the skill rely on? (`run_in_terminal`, `read_file`, `runSubagent`, `vscode_askQuestions`, etc.)
+- What tools will the skill rely on? (terminal, file reading, subagents, structured questions, etc. — name them by capability so the skill stays portable)
 - External dependencies? (npm packages, APIs, CLIs)
 
 **Edge Cases & Constraints**
@@ -74,30 +86,23 @@ Walk through these branches systematically. Skip what's already clear.
 - What does "success" look like concretely?
 - Quantitative assertions, qualitative review, or both?
 
-Use `vscode_askQuestions` for structured decision points:
+Use your structured-question tool for structured decision points, e.g.:
 
 ```
-vscode_askQuestions({
-  questions: [
-    {
-      header: "Testing approach",
-      question: "How should we evaluate this skill's outputs?",
-      options: [
-        { label: "Quantitative — with automated assertions", recommended: true },
-        { label: "Qualitative — human review only" },
-        { label: "Both — assertions plus human review" },
-        { label: "Skip testing — just iterate by feel" }
-      ]
-    }
-  ]
-})
+Header: "Testing approach"
+Question: "How should we evaluate this skill's outputs?"
+Options:
+  - "Quantitative — with automated assertions" (recommended)
+  - "Qualitative — human review only"
+  - "Both — assertions plus human review"
+  - "Skip testing — just iterate by feel"
 ```
 
 ### Research Phase
 
 Before finalizing the design:
 
-- Search for existing similar skills: `file_search('**/SKILL.md')`
+- Search for existing similar skills: glob for `**/SKILL.md`
 - Look for relevant patterns in the user's codebase via "Explore" subagent
 - Check if there are reference docs or repos worth learning from
 
@@ -249,7 +254,7 @@ Subagents inherit the parent conversation's system context (AGENTS.md, skill des
 **With-skill run** — forbidden from:
 
 - Reading workspace source code, docs, examples, or demo projects beyond what the skill references provide
-- Using `search_subagent`, `semantic_search`, `grep_search`, `file_search`, or `list_dir` to explore the codebase
+- Using any code-search, semantic-search, file-listing, or search-subagent tools to explore the codebase (e.g. `Grep`/`Glob` in Claude Code; `grep_search`/`file_search`/`semantic_search`/`list_dir`/`search_subagent` in Copilot)
 - Running terminal commands that read codebase files (cat, grep, find, etc.)
 
 Rationale: the skill's value is measured by how well its bundled knowledge replaces codebase exploration. If the with-skill run also reads source code, you can't attribute the result to the skill.
@@ -262,21 +267,20 @@ Rationale: the skill's value is measured by how well its bundled knowledge repla
 **Baseline run** — forbidden from:
 
 - Reading ANY workspace files (source code, docs, examples, configs, demo projects, test files)
-- Using `read_file`, `search_subagent`, `semantic_search`, `grep_search`, `file_search`, `list_dir`, or `run_in_terminal` for codebase exploration
+- Using any file-reading, code-search, file-listing, or terminal tools for codebase exploration (e.g. `Read`/`Grep`/`Glob`/`Bash` in Claude Code; `read_file`/`grep_search`/`file_search`/`semantic_search`/`list_dir`/`search_subagent`/`run_in_terminal` in Copilot)
 - Reading any skill files (including the skill being tested)
 
 Rationale: the baseline measures what the model can produce from its intrinsic training knowledge alone. Any codebase access gives the baseline near-skill-quality knowledge and collapses the delta.
 
 #### Prompt Templates
 
-**With-skill run:**
+**With-skill run** — spawn a subagent (see Tool Mapping) with this prompt:
 
 ```
-runSubagent({
-  prompt: `You are executing an isolated skill evaluation. Follow these rules strictly:
+You are executing an isolated skill evaluation. Follow these rules strictly:
 
 ALLOWED: Read the skill file and its reference files. Read input files listed below. Write output files.
-FORBIDDEN: Do NOT read any workspace source code, docs, examples, or demo projects. Do NOT use search_subagent, semantic_search, grep_search, file_search, or list_dir to explore the codebase. Do NOT run terminal commands that read codebase files. Only use knowledge from the skill files and your own training data.
+FORBIDDEN: Do NOT read any workspace source code, docs, examples, or demo projects. Do NOT use any code-search, semantic-search, file-listing, or search-subagent tools to explore the codebase. Do NOT run terminal commands that read codebase files. Only use knowledge from the skill files and your own training data.
 
 First, read the skill at <path>/SKILL.md, then load any reference files it directs you to. Then execute this task using ONLY the skill's knowledge and your own training data.
 
@@ -284,27 +288,22 @@ Task: <prompt>
 Input files: <files or "none">
 Save all outputs to: <workspace>/iteration-N/<eval-name>/with_skill/outputs/
 Write a step-by-step transcript to: <workspace>/iteration-N/<eval-name>/with_skill/transcript.md
-At the end, write a metrics summary to: <workspace>/iteration-N/<eval-name>/with_skill/outputs/metrics.json with keys: tool_calls (object counting each tool type), total_tool_calls, files_created, errors_encountered.`,
-  description: "Run eval with skill"
-})
+At the end, write a metrics summary to: <workspace>/iteration-N/<eval-name>/with_skill/outputs/metrics.json with keys: tool_calls (object counting each tool type), total_tool_calls, files_created, errors_encountered.
 ```
 
-**Baseline run:**
+**Baseline run** — spawn a subagent with this prompt:
 
 ```
-runSubagent({
-  prompt: `You are executing an isolated baseline evaluation. Follow these rules strictly:
+You are executing an isolated baseline evaluation. Follow these rules strictly:
 
 ALLOWED: Write output files. Read input files listed below.
-FORBIDDEN: Do NOT read ANY files in the workspace — no source code, no docs, no examples, no configs, no test files, no demo projects, no skill files. Do NOT use read_file, search_subagent, semantic_search, grep_search, file_search, list_dir, or run_in_terminal for any codebase exploration. You must answer using ONLY your own training knowledge.
+FORBIDDEN: Do NOT read ANY files in the workspace — no source code, no docs, no examples, no configs, no test files, no demo projects, no skill files. Do NOT use any file-reading, code-search, file-listing, or terminal tools for any codebase exploration. You must answer using ONLY your own training knowledge.
 
 Task: <prompt>
 Input files: <files or "none">
 Save all outputs to: <workspace>/iteration-N/<eval-name>/without_skill/outputs/
 Write a step-by-step transcript to: <workspace>/iteration-N/<eval-name>/without_skill/transcript.md
-At the end, write a metrics summary to: <workspace>/iteration-N/<eval-name>/without_skill/outputs/metrics.json with keys: tool_calls (object counting each tool type), total_tool_calls, files_created, errors_encountered.`,
-  description: "Run eval baseline"
-})
+At the end, write a metrics summary to: <workspace>/iteration-N/<eval-name>/without_skill/outputs/metrics.json with keys: tool_calls (object counting each tool type), total_tool_calls, files_created, errors_encountered.
 ```
 
 **Baseline strategy:**
@@ -350,11 +349,10 @@ Each run must be graded by a **dedicated grader subagent**, not by the orchestra
 
 Read `agents/grader.md` first, then paste its full content into each grader subagent prompt. Do NOT summarize or abbreviate the grader instructions.
 
-Spawn one grader subagent per run (8 runs = 8 grader subagents). Independent runs can be graded in parallel.
+Spawn one grader subagent per run (8 runs = 8 grader subagents). Independent runs can be graded in parallel. Grader subagent prompt:
 
 ```
-runSubagent({
-  prompt: `You are a grader agent. Follow the grading protocol below EXACTLY — execute every step (1 through 7), produce every field in the output format.
+You are a grader agent. Follow the grading protocol below EXACTLY — execute every step (1 through 7), produce every field in the output format.
 
 <grader-protocol>
 <paste the FULL content of agents/grader.md here — do not summarize>
@@ -368,9 +366,7 @@ Grade this run:
 - Save results to: <path>/grading.json
 
 The expectations array MUST use exactly these fields: text, passed, evidence.
-The output MUST include all top-level keys: expectations, summary (with pass_rate), contamination, execution_metrics, timing, claims, user_notes_summary, eval_feedback.`,
-  description: "Grade <eval-name> <run-type>"
-})
+The output MUST include all top-level keys: expectations, summary (with pass_rate), contamination, execution_metrics, timing, claims, user_notes_summary, eval_feedback.
 ```
 
 **Self-check before proceeding to Step 4**: Verify that grading was done via subagents. If you wrote grading.json files directly without spawning grader subagents, STOP and redo this step correctly.
@@ -495,7 +491,7 @@ Without a CLI tool for automated triggering tests, iterate manually:
 - Review which queries the current description would likely hit/miss
 - Analyze failure patterns — generalize, don't list specific queries
 - Rewrite description: imperative form, focus on user intent, ≤1024 chars, distinctive
-- Use `vscode_askQuestions` to confirm each revision with the user
+- Use your structured-question tool to confirm each revision with the user
 
 ---
 
@@ -513,7 +509,7 @@ Without a CLI tool for automated triggering tests, iterate manually:
 
 ---
 
-**Core loop reminder — use `manage_todo_list` to track progress:**
+**Core loop reminder — use your todo-tracking tool (see Tool Mapping) to track progress:**
 
 1. Interview thoroughly (grill-me style) before writing anything
 2. Draft the skill
