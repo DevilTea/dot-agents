@@ -19,11 +19,39 @@ for user skills.
 > filesystem `claude.md` collides with `CLAUDE.md`, which Claude Code would load as
 > project memory.
 
-## Shared artifacts (committed symlinks)
+## Two instruction layers
+
+Claude Code reads `CLAUDE.md`, never `AGENTS.md`. Rather than symlinking the two
+together, `cli/claude/CLAUDE.md` is a real file that imports the tool-neutral layer
+and appends the harness-specific one:
+
+```markdown
+@~/.agents/AGENTS.md
+
+## Claude Code
+
+### Delegation
+- ...
+```
+
+- `AGENTS.md` (repo root) — rules that hold for any agent CLI. Edit them there.
+- `cli/claude/CLAUDE.md` — only what depends on Claude Code: subagents, effort, plan
+  mode, hooks, or a Claude-only default worth overriding. When in doubt, it belongs in
+  `AGENTS.md`.
+
+The import path is written as `@~/.agents/...` rather than a relative path, because
+Claude Code resolves the file through the `~/.claude` symlink and a relative `../../`
+would escape to the wrong directory. Imports in user-scope memory files load without
+an approval prompt, unlike external imports in a project-level `CLAUDE.md`.
+
+Importing does not reduce context — the imported file is expanded and loaded in full
+at session start. Confirm both layers loaded with `/context` (look under **Memory
+files**); target is under ~200 lines of instructions total.
+
+## Shared artifacts (committed symlink)
 
 ```bash
-ln -s ../../AGENTS.md ~/.agents/cli/claude/CLAUDE.md   # shared behavior rules
-ln -s ../../skills    ~/.agents/cli/claude/skills      # shared skills
+ln -s ../../skills ~/.agents/cli/claude/skills   # shared skills
 ```
 
 ## Tracked config

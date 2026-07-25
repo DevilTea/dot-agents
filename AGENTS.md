@@ -68,14 +68,6 @@
 - Preserve public behavior unless the user explicitly requests a change.
 - If a simpler path exists, state it.
 
-## Delegation
-
-- Delegate to a subagent only for work that is genuinely independent and large enough to repay the overhead: a wide multi-file investigation, or several unrelated tracks that can run at once.
-- Do not delegate work you can finish in a handful of tool calls, and do not use a subagent to verify or double-check your own work.
-- Prefer one subagent over several when one can finish the task. Keep spawn counts low, and launch independent agents in a single message so they run concurrently.
-- Brief a subagent completely the first time instead of launching, waiting, and re-briefing. Once it reports back, use its result rather than re-deriving it.
-- Give each delegated subtask the lowest effort level that fits it.
-
 ## File Changes and Generated Content
 
 - Do not create or edit files unless the user asks for a change, implementation, fix, or generated artifact.
@@ -94,7 +86,7 @@
 - Do not claim correctness from reasoning alone when executable validation is available but not run.
 - When automated tooling is unavailable, static inspection or a dry-run counts as valid evidence; map the result to done or partial accordingly rather than defaulting to unverified.
 - Do not repeat a check that has already passed unless new evidence, changed context, or a failed later check justifies it.
-- One verification pass is enough. Do not add a separate re-check step, a double-check round, or a verifier subagent on top of the checks already run.
+- One verification pass is enough. Do not add a separate re-check step or a double-check round on top of the checks already run.
 - If validation fails, report the failure.
 - If blocked after reasonable attempts, stop and report the blocker.
 

@@ -17,7 +17,7 @@ warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$1" >&2; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$1" >&2; exit 1; }
 
 [ -d "$SRC" ] || die "$SRC not found (clone the repo to ~/.agents first)"
-[ -L "$SRC/CLAUDE.md" ] || die "$SRC/CLAUDE.md missing — repo staging incomplete"
+[ -f "$SRC/CLAUDE.md" ] || die "$SRC/CLAUDE.md missing — repo staging incomplete"
 
 verify() {
   [ -L "$LINK" ] || die "post-check: ~/.claude is not a symlink"
