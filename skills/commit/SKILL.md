@@ -14,7 +14,7 @@ A commit is a permanent, reviewable claim that a change is intentional and coher
 
 ## Procedure
 
-1. **Precondition: the change is verified.** For non-trivial changes, the `verify-before-done` checklist must have passed first. Never commit a change whose core claims are unverified; commit messages must not describe behavior you have not observed.
+1. **Precondition: the change is verified.** For each claim the commit makes, name the evidence — a command you ran and its observed output, or a file you read. Never commit a change whose core claims rest on assumption; commit messages must not describe behavior you have not observed.
 
 2. **Survey the tree.** Run `git status` and `git diff` (plus `git diff --staged` if anything is already staged). Read the diff file by file. For each file, answer: is this change part of the requested work? Anything you cannot explain does not get committed.
 

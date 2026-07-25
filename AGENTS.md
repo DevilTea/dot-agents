@@ -85,7 +85,7 @@
 - Do not claim correctness from reasoning alone when executable validation is available but not run.
 - When automated tooling is unavailable, static inspection or a dry-run counts as valid evidence; map the result to done or partial accordingly rather than defaulting to unverified.
 - Do not repeat a check that has already passed unless new evidence, changed context, or a failed later check justifies it.
-- Before reporting completion of non-trivial work, run the `verify-before-done` skill checklist, if available.
+- One verification pass is enough. Do not add a separate re-check step, a double-check round, or a verifier subagent on top of the checks already run.
 - If validation fails, report the failure.
 - If blocked after reasonable attempts, stop and report the blocker.
 
