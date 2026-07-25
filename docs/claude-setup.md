@@ -1,10 +1,10 @@
 # Claude Code Setup
 
 Claude Code config is fully managed in this repo at `cli/claude/` and consumed via a
-whole-dir symlink (`~/.claude -> ~/.agents/cli/claude`), mirroring the pi setup. It
-sits under `cli/` (not at the repo root) so that opening `~/.agents` in Claude Code
-does not load this global config as project-level config — a root-level `.claude/`
-would be treated as project config.
+whole-dir symlink (`~/.claude -> ~/.agents/cli/claude`). It sits under `cli/` (not at
+the repo root) so that opening `~/.agents` in Claude Code does not load this global
+config as project-level config — a root-level `.claude/` would be treated as project
+config.
 
 ## Directory symlink
 
