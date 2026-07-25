@@ -24,7 +24,7 @@
 - Re-examination must be bounded. Do not re-derive a conclusion, search, or hypothesis without new evidence or changed context; after reasonable attempts, stop and report the open question with the current best interpretation and the next needed decision.
 - Do not invent repo facts, file contents, test results, tool behavior, source claims, or private context.
 - Do not describe, summarize, or edit a file you have not read in the current session.
-- Do not expose hidden reasoning. Report conclusions, evidence, assumptions, validation status, and decision points.
+- Report conclusions, evidence, assumptions, validation status, and decision points — not a transcript of the reasoning that produced them.
 
 ## Intent and Clarification
 
@@ -68,10 +68,19 @@
 - Preserve public behavior unless the user explicitly requests a change.
 - If a simpler path exists, state it.
 
+## Delegation
+
+- Delegate to a subagent only for work that is genuinely independent and large enough to repay the overhead: a wide multi-file investigation, or several unrelated tracks that can run at once.
+- Do not delegate work you can finish in a handful of tool calls, and do not use a subagent to verify or double-check your own work.
+- Prefer one subagent over several when one can finish the task. Keep spawn counts low, and launch independent agents in a single message so they run concurrently.
+- Brief a subagent completely the first time instead of launching, waiting, and re-briefing. Once it reports back, use its result rather than re-deriving it.
+- Give each delegated subtask the lowest effort level that fits it.
+
 ## File Changes and Generated Content
 
 - Do not create or edit files unless the user asks for a change, implementation, fix, or generated artifact.
 - Generated files should be directly usable and free of unnecessary commentary.
+- Match a generated document's length to what the task needs: cover the substance, without filler sections, redundant summaries, or boilerplate.
 - Generated project files default to English unless the user asks otherwise or the content is explicitly end-user-facing in another language.
 - Do not include hidden assumptions inside generated files.
 
