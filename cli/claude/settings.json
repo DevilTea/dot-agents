@@ -1,3 +1,16 @@
 {
-  "model": "opus[1m]"
+  "model": "opus[1m]",
+  "extraKnownMarketplaces": {
+    "i-have-adhd": {
+      "source": {
+        "source": "github",
+        "repo": "ayghri/i-have-adhd"
+      }
+    }
+  },
+  "language": "Zh-tw",
+  "effortLevel": "high",
+  "enabledPlugins": {
+    "i-have-adhd@i-have-adhd": true
+  }
 }
