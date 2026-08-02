@@ -1,175 +1,209 @@
 #!/usr/bin/env node
 
 /**
- * Validate a skill directory's SKILL.md structure and frontmatter.
+ * Validate the portable Agent Skills structure of a skill directory.
  *
  * Usage: node validate.mjs <skill-directory>
  *
- * Checks:
- *   - SKILL.md existence
- *   - Valid YAML frontmatter with opening/closing ---
- *   - Required fields: name, description
- *   - Allowed frontmatter keys only
- *   - Name: kebab-case, max 64 chars
- *   - Description: no angle brackets, max 1024 chars
- *   - Body line count warning (>500 lines)
+ * This intentionally performs a small, dependency-free structural check. It
+ * warns about client extensions instead of pretending they are portable.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
+import { tmpdir } from 'os';
+import { basename, join, resolve } from 'path';
 
-/**
- * Minimal YAML frontmatter parser.
- * Handles simple key: value pairs plus YAML multiline (>, |, >-, |-).
- * Returns null if frontmatter is missing or malformed.
- */
-function parseFrontmatter(content) {
-  if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) return null;
-  const endMatch = content.match(/\n---(\r?\n|$)/);
-  if (!endMatch) return null;
+const STANDARD_FIELDS = new Set([
+  'name',
+  'description',
+  'license',
+  'compatibility',
+  'metadata',
+  'allowed-tools',
+]);
 
-  const endIdx = endMatch.index;
-  const yaml = content.slice(4, endIdx);
-  const result = {};
-  let currentKey = null;
-  let multiline = false;
-  let mlLines = [];
-
-  for (const line of yaml.split('\n')) {
-    const trimmed = line.replace(/\r$/, '');
-    // Multiline continuation
-    if (multiline && (trimmed.startsWith('  ') || trimmed.startsWith('\t'))) {
-      mlLines.push(trimmed.trim());
-      continue;
-    }
-    // Flush multiline
-    if (multiline) {
-      result[currentKey] = mlLines.join(' ');
-      multiline = false;
-      mlLines = [];
-    }
-
-    const colonIdx = trimmed.indexOf(':');
-    if (colonIdx === -1 || trimmed.startsWith('#')) continue;
-
-    const key = trimmed.slice(0, colonIdx).trim();
-    let value = trimmed.slice(colonIdx + 1).trim();
-    currentKey = key;
-
-    if (['>', '|', '>-', '|-'].includes(value)) {
-      multiline = true;
-      mlLines = [];
-      continue;
-    }
-
-    // Strip surrounding quotes
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    result[key] = value;
-  }
-
-  if (multiline) result[currentKey] = mlLines.join(' ');
-  return result;
+function frontmatterBlock(content) {
+  const normalized = content.replace(/\r\n/g, '\n');
+  if (!normalized.startsWith('---\n')) return null;
+  const end = normalized.indexOf('\n---', 4);
+  if (end === -1 || !['\n', ''].includes(normalized[end + 4] ?? '')) return null;
+  return { yaml: normalized.slice(4, end), body: normalized.slice(end + 4).replace(/^\n/, '') };
 }
 
-function validateSkill(skillPath) {
-  const absPath = resolve(skillPath);
-  const skillMd = join(absPath, 'SKILL.md');
+function unquote(value) {
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return value.slice(1, -1);
+    }
+  }
+  return value;
+}
+
+function parseTopLevel(yaml) {
+  const fields = {};
+  const errors = [];
+  const lines = yaml.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#') || /^\s/.test(line)) continue;
+
+    const match = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
+    if (!match) {
+      errors.push(`Invalid top-level frontmatter at line ${index + 2}: ${line}`);
+      continue;
+    }
+
+    const [, key, raw = ''] = match;
+    if (Object.hasOwn(fields, key)) {
+      errors.push(`Duplicate frontmatter field '${key}'`);
+      continue;
+    }
+
+    if (['>', '|', '>-', '|-'].includes(raw)) {
+      const parts = [];
+      while (index + 1 < lines.length && /^\s/.test(lines[index + 1])) {
+        index += 1;
+        parts.push(lines[index].trim());
+      }
+      fields[key] = parts.join(raw.startsWith('>') ? ' ' : '\n').trim();
+    } else {
+      fields[key] = unquote(raw.trim());
+    }
+  }
+
+  return { fields, errors };
+}
+
+function validate(skillPath) {
+  const absolute = resolve(skillPath);
+  const skillFile = join(absolute, 'SKILL.md');
+  const errors = [];
   const warnings = [];
 
-  // Check existence
-  if (!existsSync(skillMd)) {
-    return { valid: false, error: 'SKILL.md not found' };
+  if (!existsSync(skillFile)) return { errors: ['SKILL.md not found'], warnings, fields: {} };
+
+  const content = readFileSync(skillFile, 'utf8');
+  const block = frontmatterBlock(content);
+  if (!block) return { errors: ['SKILL.md must start with closed YAML frontmatter'], warnings, fields: {} };
+
+  const parsed = parseTopLevel(block.yaml);
+  errors.push(...parsed.errors);
+  const fields = parsed.fields;
+
+  for (const field of ['name', 'description']) {
+    if (!fields[field]) errors.push(`Missing required frontmatter field '${field}'`);
   }
 
-  const content = readFileSync(skillMd, 'utf-8');
-
-  // Check frontmatter
-  if (!content.startsWith('---')) {
-    return { valid: false, error: 'No YAML frontmatter found (must start with ---)' };
+  const name = fields.name ?? '';
+  if (name && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
+    errors.push(`Name '${name}' must contain only lowercase letters, digits, and single hyphens`);
   }
+  if (name.length > 64) errors.push(`Name is ${name.length} characters; maximum is 64`);
 
-  const fm = parseFrontmatter(content);
-  if (!fm) {
-    return { valid: false, error: 'Invalid frontmatter format (missing closing ---)' };
-  }
-
-  // Allowed keys (superset across harnesses: Claude Code supports argument-hint,
-  // disable-model-invocation, user-invocable, hidden; some skills carry version)
-  const ALLOWED = new Set([
-    'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility',
-    'argument-hint', 'disable-model-invocation', 'user-invocable', 'hidden', 'version',
-  ]);
-  const unexpected = Object.keys(fm).filter(k => !ALLOWED.has(k));
-  if (unexpected.length) {
-    return { valid: false, error: `Unexpected frontmatter key(s): ${unexpected.join(', ')}. Allowed: ${[...ALLOWED].sort().join(', ')}` };
+  const directoryName = basename(absolute);
+  if (name && name !== directoryName) {
+    errors.push(`Name '${name}' must match parent directory '${directoryName}'`);
   }
 
-  // Required fields
-  if (!fm.name) return { valid: false, error: "Missing required field 'name' in frontmatter" };
-  if (!fm.description) return { valid: false, error: "Missing required field 'description' in frontmatter" };
-
-  // Name validation
-  const name = String(fm.name).trim();
-  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) {
-    return { valid: false, error: `Name '${name}' must be kebab-case (lowercase letters, digits, hyphens, no leading/trailing/consecutive hyphens)` };
-  }
-  if (name.length > 64) {
-    return { valid: false, error: `Name too long (${name.length} chars, max 64)` };
+  const description = fields.description ?? '';
+  if (description.length > 1024) {
+    errors.push(`Description is ${description.length} characters; maximum is 1024`);
   }
 
-  // Description validation
-  const desc = String(fm.description).trim();
-  if (/<|>/.test(desc)) {
-    return { valid: false, error: 'Description must not contain angle brackets (< or >)' };
-  }
-  if (desc.length > 1024) {
-    return { valid: false, error: `Description too long (${desc.length} chars, max 1024)` };
-  }
-  if (desc.length === 0) {
-    return { valid: false, error: 'Description is empty' };
-  }
-
-  // Compatibility validation (optional)
-  if (fm.compatibility) {
-    const compat = String(fm.compatibility).trim();
-    if (compat.length > 500) {
-      return { valid: false, error: `Compatibility too long (${compat.length} chars, max 500)` };
+  if (Object.hasOwn(fields, 'compatibility')) {
+    const compatibility = fields.compatibility;
+    if (!compatibility) errors.push('Compatibility must be non-empty when provided');
+    if (compatibility.length > 500) {
+      errors.push(`Compatibility is ${compatibility.length} characters; maximum is 500`);
     }
   }
 
-  // Body line count warning
-  const endMatch = content.match(/\n---(\r?\n|$)/);
-  if (endMatch) {
-    const bodyStart = endMatch.index + endMatch[0].length;
-    const body = content.slice(bodyStart);
-    const lineCount = body.split('\n').length;
-    if (lineCount > 500) {
-      warnings.push(`SKILL.md body is ${lineCount} lines (recommended: <500). Consider extracting to reference files.`);
-    }
+  const extensions = Object.keys(fields).filter((field) => !STANDARD_FIELDS.has(field));
+  if (extensions.length) {
+    warnings.push(`Non-standard top-level field(s): ${extensions.join(', ')}. Verify them against the target harness.`);
+  }
+  if (Object.hasOwn(fields, 'allowed-tools')) {
+    warnings.push("'allowed-tools' is experimental and may not be portable across harnesses.");
   }
 
-  return { valid: true, message: 'Skill is valid!', frontmatter: fm, warnings };
+  const bodyLines = block.body ? block.body.split('\n').length : 0;
+  if (!block.body.trim()) errors.push('SKILL.md body is empty');
+  if (bodyLines > 500) {
+    warnings.push(`SKILL.md body is ${bodyLines} lines; keep it under 500 and move details to supporting files.`);
+  }
+
+  return { errors, warnings, fields };
 }
 
-// --- CLI ---
+function selfTest() {
+  const root = mkdtempSync(join(tmpdir(), 'maintain-skill-validator-'));
+  const skill = join(root, 'example-skill');
+
+  try {
+    mkdirSync(skill);
+    writeFileSync(join(skill, 'SKILL.md'), `---
+name: example-skill
+description: >
+  Validates example skills.
+  Use when testing this validator.
+metadata:
+  version: "1.0"
+client-extension: true
+---
+
+Follow the example workflow.
+`);
+
+    const valid = validate(skill);
+    if (valid.errors.length) throw new Error(`Expected valid fixture: ${valid.errors.join('; ')}`);
+    if (!valid.warnings.some((warning) => warning.includes('client-extension'))) {
+      throw new Error('Expected a warning for client-extension');
+    }
+
+    writeFileSync(join(skill, 'SKILL.md'), `---
+name: wrong-name
+description: Invalid directory mismatch.
+---
+
+Follow the example workflow.
+`);
+    const invalid = validate(skill);
+    if (!invalid.errors.some((error) => error.includes('must match parent directory'))) {
+      throw new Error('Expected a directory-name mismatch error');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  console.log('OK: validator self-test');
+}
+
 const skillPath = process.argv[2];
+if (skillPath === '--self-test') {
+  selfTest();
+  process.exit(0);
+}
 if (!skillPath) {
-  console.error('Usage: node validate.mjs <skill-directory>');
+  console.error('Usage: node validate.mjs <skill-directory> | --self-test');
+  process.exit(2);
+}
+
+const result = validate(skillPath);
+for (const warning of result.warnings) console.warn(`WARN: ${warning}`);
+
+if (result.errors.length) {
+  for (const error of result.errors) console.error(`ERROR: ${error}`);
   process.exit(1);
 }
 
-const result = validateSkill(skillPath);
-if (result.valid) {
-  console.log(`✅ ${result.message}`);
-  if (result.warnings?.length) {
-    for (const w of result.warnings) console.log(`⚠️  ${w}`);
-  }
-  console.log(`   name: ${result.frontmatter.name}`);
-  console.log(`   description: ${result.frontmatter.description.slice(0, 80)}${result.frontmatter.description.length > 80 ? '...' : ''}`);
-} else {
-  console.error(`❌ ${result.error}`);
-  process.exit(1);
-}
+console.log(`OK: ${resolve(skillPath)} (${result.fields.name})`);

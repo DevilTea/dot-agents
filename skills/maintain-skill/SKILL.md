@@ -1,519 +1,194 @@
 ---
 name: maintain-skill
-description: Create, modify, test, and optimize agent skills. Use when creating a skill from scratch, editing or improving an existing skill, running evals, benchmarking skill quality, or packaging skills for distribution.
+description: Create, audit, simplify, update, and validate reusable Agent Skills. Use when working on a SKILL.md, its scripts or references, trigger descriptions, portability across agent harnesses, or deciding whether guidance belongs in a skill.
 ---
 
-# Skill Creator
+# Maintain Skills
 
-A skill for creating, testing, and iteratively improving agent skills. Harness-neutral: it works in any agent environment that provides file tools, a terminal, subagents, and (optionally) structured questions.
+Build the smallest skill that reliably improves a recurring task. Keep the reusable workflow portable; isolate harness-specific integration.
 
-## Tool Mapping
+## Principles
 
-This skill refers to tools by capability. Map them to your harness:
+- A skill must serve a recognizable, recurring user goal. If ordinary repository instructions or a short prompt are enough, do not create one.
+- Skill discovery is an optimization, not a correctness dependency. The underlying task must still be understandable without hidden runtime behavior.
+- Prefer one focused skill over a bundle of weakly related procedures.
+- Keep `SKILL.md` concise. Load detailed references, examples, and scripts only when needed.
+- Use instructions before code. Add a script only for deterministic processing, repeated transformations, or checks that prose cannot perform reliably.
+- Do not assume every harness supports the same discovery paths, tools, arguments, subagents, permissions, or frontmatter extensions.
+- Preserve useful existing behavior when editing. Remove obsolete machinery only after identifying what it was intended to protect.
 
-| Capability (used below)  | Claude Code       | VS Code Copilot                                            | No equivalent? Fallback                  |
-| ------------------------ | ----------------- | ---------------------------------------------------------- | ---------------------------------------- |
-| structured questions     | `AskUserQuestion` | `vscode_askQuestions`                                       | ask in plain conversation, one at a time |
-| spawn subagent           | `Agent`           | `runSubagent`                                               | run the sub-task inline, sequentially    |
-| todo tracking            | `TodoWrite`       | `manage_todo_list`                                          | keep a checklist in your working notes   |
-| file read / search / dir | `Read` / `Grep` / `Glob` | `read_file` / `grep_search` / `file_search` / `list_dir` | shell equivalents (`cat`, `grep`, `find`) |
-| terminal                 | `Bash`            | `run_in_terminal`                                           | —                                        |
+## Workflow
 
-## High-Level Process
+### 1. Classify the task
 
-1. **Deep Intent Capture** — Grill-me style interview to thoroughly understand the skill's purpose
-2. **Draft** — Write the SKILL.md and supporting files
-3. **Test** — Create test cases and run them via subagents
-4. **Evaluate** — Grade outputs quantitatively and qualitatively with HTML reviewer
-5. **Iterate** — Improve based on feedback, repeat until satisfied
-6. **Validate & Package** — Final checks and packaging
+Determine whether the user wants to:
 
-Your job is to figure out where the user is in this process and jump in. Maybe they want to start from scratch, or maybe they have a draft that needs testing. Be flexible — but always know which phase you're in.
+- create a skill;
+- change its workflow or output;
+- improve discovery or invocation;
+- audit portability, safety, or maintainability;
+- validate structure; or
+- evaluate behavior.
 
-## Communication Style
+Inspect the existing skill and nearby repository conventions before asking questions. Ask only for missing information that would materially change the result.
 
-Pay attention to context cues about the user's technical level. When in doubt, briefly explain terms like "assertion", "benchmark", or "JSON schema". Use your structured-question tool (see Tool Mapping) for structured choices. For open-ended exploration, use natural conversation.
+For an existing skill, identify:
 
----
+- its current trigger and promised outcome;
+- which files are canonical versus generated;
+- portable content versus harness-specific adapters;
+- scripts, references, or eval assets that are actually used;
+- duplicated, stale, or unverifiable requirements.
 
-## Phase 1: Deep Intent Capture (Grill-Me Interview)
+### 2. Define the contract
 
-Before writing any code, interview the user relentlessly about every aspect of their skill idea. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one.
+Write down the minimum contract before editing:
 
-### Core Principles
+- **Goal:** the recurring task this skill improves.
+- **Triggers:** requests where loading it adds material value.
+- **Non-triggers:** close cases where it should stay out of the way.
+- **Inputs:** files, arguments, tools, or context it needs.
+- **Output:** observable result or decision it should produce.
+- **Boundaries:** when to ask, stop, decline, or defer to project instructions.
+- **Dependencies:** required software, network access, or harness features.
 
-1. **Extract from context first.** If the conversation already contains a workflow the user wants to capture ("turn this into a skill"), extract answers from history — tools used, step sequence, corrections made, I/O formats observed. Don't re-ask what's already clear.
+Split skills when triggers, inputs, or success criteria differ substantially. Do not split merely to make the directory structure look pure.
 
-2. **Explore instead of asking.** If a question can be answered by reading the codebase or docs, spawn an exploration subagent (see Tool Mapping) instead of burdening the user.
+### 3. Author the portable core
 
-3. **Resolve before advancing.** Don't move to the next topic until the current one has shared understanding. Summarize your understanding and confirm.
-
-4. **Structured when possible.** Use your structured-question tool for choices with clear options. Reserve open conversation for ambiguous topics.
-
-### Decision Tree
-
-Walk through these branches systematically. Skip what's already clear.
-
-**What & Why**
-
-- What should this skill enable the model to do?
-- What problem does it solve? Why can't the model do this well without specific instructions?
-- What's the expected output format?
-
-**When & Trigger**
-
-- When should this skill activate? What user phrases or contexts?
-- When should it explicitly NOT trigger? What adjacent tasks should be excluded?
-- How "pushy" should the description be? (LLMs tend to under-trigger skills — leaning pushy usually helps.)
-
-**How & Workflow**
-
-- What specific steps should the model follow?
-- Are there deterministic tasks that should be scripts? (If the model would independently write the same helper every time, bundle it.)
-- What tools will the skill rely on? (terminal, file reading, subagents, structured questions, etc. — name them by capability so the skill stays portable)
-- External dependencies? (npm packages, APIs, CLIs)
-
-**Edge Cases & Constraints**
-
-- What errors could occur? How should they be handled?
-- Input format variations?
-- What should the skill explicitly NOT do?
-- Performance or output size constraints?
-
-**Testing Strategy**
-
-- Should we set up test cases? (Recommend for objectively verifiable outputs; skip for subjective ones like writing style.)
-- What does "success" look like concretely?
-- Quantitative assertions, qualitative review, or both?
-
-Use your structured-question tool for structured decision points, e.g.:
-
-```
-Header: "Testing approach"
-Question: "How should we evaluate this skill's outputs?"
-Options:
-  - "Quantitative — with automated assertions" (recommended)
-  - "Qualitative — human review only"
-  - "Both — assertions plus human review"
-  - "Skip testing — just iterate by feel"
-```
-
-### Research Phase
-
-Before finalizing the design:
-
-- Search for existing similar skills: glob for `**/SKILL.md`
-- Look for relevant patterns in the user's codebase via "Explore" subagent
-- Check if there are reference docs or repos worth learning from
-
----
-
-## Phase 2: Write the SKILL.md
-
-### Skill Directory Structure
-
-```
-skill-name/
-├── SKILL.md            # Required — YAML frontmatter + markdown instructions
-├── scripts/            # Executable scripts for deterministic/repetitive tasks
-├── references/         # Docs loaded into context on demand
-└── assets/             # Templates, fonts, static files
-```
-
-### YAML Frontmatter
+Every skill is a directory containing `SKILL.md`. Use standard Agent Skills frontmatter:
 
 ```yaml
 ---
-name: kebab-case-name
-description: >
-  Imperative description focused on user intent, not implementation.
-  Include trigger phrases AND broader intent categories.
-  Be slightly "pushy" to combat under-triggering.
-  Max 1024 characters.
+name: example-skill
+description: Does X for Y. Use when the user asks for Z or provides W.
 ---
 ```
 
-The `description` is the primary triggering mechanism. Tips:
+Standard fields are:
 
-- Use imperative form: "Use this skill when..." not "This skill does..."
-- Focus on what the user is trying to achieve
-- Make it distinctive among competing skills
-- Include edge cases that should trigger it
+- required: `name`, `description`;
+- optional: `license`, `compatibility`, `metadata`, `allowed-tools`.
 
-### Progressive Disclosure
+Apply these constraints:
 
-Three loading levels:
+- `name` matches the parent directory; use lowercase letters, digits, and single hyphens; maximum 64 characters;
+- `description` is non-empty, at most 1024 characters, and states both what the skill does and when it is useful;
+- `compatibility`, when needed, is at most 500 characters;
+- custom metadata such as a version belongs under `metadata`, not as an invented top-level portable field;
+- `allowed-tools` is experimental and may have different effects across clients.
 
-1. **Metadata** (name + description) — Always in context (~100 words)
-2. **SKILL.md body** — Loaded when triggered (<500 lines ideal)
-3. **Bundled resources** — On demand (unlimited; scripts execute without loading)
+Harness extensions such as invocation controls, argument syntax, execution context, or model selection are not portable. Add them only for an explicit target harness and mark the dependency near the frontmatter or in a dedicated adapter section. Verify the current official documentation before adding or changing one.
 
-Guidelines:
+Write the body as operational guidance:
 
-- Keep SKILL.md under 500 lines. Extract to reference files with clear pointers when longer.
-- Reference files >300 lines should include a table of contents.
-- Multi-domain skills: organize by variant (`references/aws.md`, `references/gcp.md`).
+1. State decisions and actions in execution order.
+2. Include branches only where the choice changes behavior.
+3. Name required inputs and observable completion criteria.
+4. State important failure and uncertainty handling.
+5. Include examples only when they resolve ambiguity.
 
-### Writing Patterns
+Avoid generic advice already supplied by the harness or repository. Do not encode fixed planning, delegation, model, or verification policies unless they are intrinsic to this skill's task.
 
-- **Imperative form**: "Extract the text" not "The skill extracts text"
-- **Explain WHY**: Reasoning beats rigid rules. LLMs have good theory of mind — understanding motivation produces better results than mechanical compliance.
-- **Avoid all-caps MUSTs**: If you're tempted to write "ALWAYS" or "NEVER", reframe as explanation of why it matters.
-- **Include examples** for output formats and tricky patterns.
-- **Define templates** with explicit structure when output format matters.
+### 4. Add supporting files only when justified
 
-### Scripts
+Use conventional directories:
 
-When the skill bundles scripts:
-
-- Use Node.js ESM (`.mjs`) as the default runtime
-- Minimize dependencies — prefer Node built-ins (`fs`, `path`, `http`, `crypto`, `child_process`)
-- When npm packages are needed, include a `package.json` in `scripts/` and document install steps
-- Make scripts standalone: `node scripts/my-script.mjs <args>`
-
-### Security
-
-Skills must not contain malware, exploit code, or content that could compromise system security. A skill's contents should not surprise the user. Don't create misleading skills or skills designed to facilitate unauthorized access.
-
----
-
-## Phase 3: Test Cases
-
-After writing the skill draft, create 2–3 realistic test prompts — the kind of thing a real user would actually say. Share them with the user: "Here are test cases I'd like to try. Do these look right, or should we add more?"
-
-Save them as an iteration-local snapshot at `<workspace>/iteration-N/evals.json`:
-
-```json
-{
-  "skill_name": "example-skill",
-  "evals": [
-    {
-      "id": 1,
-      "dir_name": "descriptive-eval-name",
-      "prompt": "User's realistic task prompt",
-      "expected_output": "Description of expected result",
-      "files": [],
-      "expectations": []
-    }
-  ]
-}
+```text
+skill-name/
+├── SKILL.md
+├── references/   # detailed knowledge loaded on demand
+├── scripts/      # deterministic helpers
+└── assets/       # templates or static inputs
 ```
 
-The `dir_name` field must match the directory name used for this eval under each iteration folder (e.g. `iteration-1/descriptive-eval-name/with_skill/`). The review generator and benchmark aggregator use the iteration-local `evals.json` snapshot to map prompts and expectations to runs.
+- Link supporting files directly from `SKILL.md` and say when to read or run them.
+- Keep reference chains shallow.
+- Reuse repository tooling and installed dependencies before adding new ones.
+- Give scripts a clear usage contract, actionable errors, safe defaults, and a focused validation case.
+- Never embed credentials, tokens, private keys, or machine-specific secrets.
+- Treat bundled third-party content and executable scripts as supply-chain inputs that require inspection.
 
-Treat this file as frozen metadata for that iteration. If you start `iteration-2`, copy the previous iteration's `evals.json` forward first, then edit the new copy.
+### 5. Validate in proportion to the change
 
-Don't write assertions yet — just prompts. Assertions come in the next phase while runs are in progress.
+Always run the cheapest checks that can catch the likely failure.
 
-### Writing Good Expectations
+#### Structural check
 
-When you draft assertions (in Phase 4 Step 2), avoid vague "presence checks" that can be satisfied by fabricated content. The without-skill baseline will often generate plausible-looking but factually wrong output. Your expectations must distinguish correct from plausible-but-wrong.
-
-**Bad**: "展示如何處理非同步錯誤"
-— A model can show any async pattern, including incorrect ones.
-
-**Good**: "使用 `process.on('unhandledRejection', handler)` 捕捉未處理的 Promise rejection"
-— Names the exact API; wrong event names or wrong objects will fail.
-
-**Bad**: "package.json 包含模組設定"
-— Any JSON with any module-related fields would pass.
-
-**Good**: "package.json 包含 `\"type\": \"module\"` 及 `exports` 欄位，且 `exports['.']` 指向正確的 build 輸出路徑"
-— Anchors to specific fields; missing `type` or wrong `exports` shape will fail.
-
-Rules of thumb:
-
-- Include **correct API names, import paths, or data structures** in the expectation text
-- If the skill teaches a specific pattern, assert that exact pattern — not just the concept
-- If something has only one correct form (an import path, a function name), name it explicitly
-
-See `references/schemas.md` for the full schema.
-
----
-
-## Phase 4: Run and Evaluate
-
-This is one continuous sequence — don't stop partway through.
-
-Organize results in `<skill-name>-workspace/` as a sibling to the skill directory, by iteration (`iteration-1/`, `iteration-2/`, etc.).
-
-### Step 1: Spawn all runs via subagents
-
-For each test case, spawn two subagents — one with the skill, one without. The isolation rules below are critical for valid measurement.
-
-#### Context Isolation
-
-Subagents inherit the parent conversation's system context (AGENTS.md, skill descriptions, repo memory, user memory). This shared context contaminates both runs equally. To produce a meaningful delta, enforce these constraints **in the subagent prompt itself**:
-
-**With-skill run** — allowed to:
-
-- Read the skill file and any reference files the skill directs
-- Read input files listed in the eval
-- Write output files
-
-**With-skill run** — forbidden from:
-
-- Reading workspace source code, docs, examples, or demo projects beyond what the skill references provide
-- Using any code-search, semantic-search, file-listing, or search-subagent tools to explore the codebase (e.g. `Grep`/`Glob` in Claude Code; `grep_search`/`file_search`/`semantic_search`/`list_dir`/`search_subagent` in Copilot)
-- Running terminal commands that read codebase files (cat, grep, find, etc.)
-
-Rationale: the skill's value is measured by how well its bundled knowledge replaces codebase exploration. If the with-skill run also reads source code, you can't attribute the result to the skill.
-
-**Baseline run** — allowed to:
-
-- Write output files
-- Read input files listed in the eval
-
-**Baseline run** — forbidden from:
-
-- Reading ANY workspace files (source code, docs, examples, configs, demo projects, test files)
-- Using any file-reading, code-search, file-listing, or terminal tools for codebase exploration (e.g. `Read`/`Grep`/`Glob`/`Bash` in Claude Code; `read_file`/`grep_search`/`file_search`/`semantic_search`/`list_dir`/`search_subagent`/`run_in_terminal` in Copilot)
-- Reading any skill files (including the skill being tested)
-
-Rationale: the baseline measures what the model can produce from its intrinsic training knowledge alone. Any codebase access gives the baseline near-skill-quality knowledge and collapses the delta.
-
-#### Prompt Templates
-
-**With-skill run** — spawn a subagent (see Tool Mapping) with this prompt:
-
-```
-You are executing an isolated skill evaluation. Follow these rules strictly:
-
-ALLOWED: Read the skill file and its reference files. Read input files listed below. Write output files.
-FORBIDDEN: Do NOT read any workspace source code, docs, examples, or demo projects. Do NOT use any code-search, semantic-search, file-listing, or search-subagent tools to explore the codebase. Do NOT run terminal commands that read codebase files. Only use knowledge from the skill files and your own training data.
-
-First, read the skill at <path>/SKILL.md, then load any reference files it directs you to. Then execute this task using ONLY the skill's knowledge and your own training data.
-
-Task: <prompt>
-Input files: <files or "none">
-Save all outputs to: <workspace>/iteration-N/<eval-name>/with_skill/outputs/
-Write a step-by-step transcript to: <workspace>/iteration-N/<eval-name>/with_skill/transcript.md
-At the end, write a metrics summary to: <workspace>/iteration-N/<eval-name>/with_skill/outputs/metrics.json with keys: tool_calls (object counting each tool type), total_tool_calls, files_created, errors_encountered.
-```
-
-**Baseline run** — spawn a subagent with this prompt:
-
-```
-You are executing an isolated baseline evaluation. Follow these rules strictly:
-
-ALLOWED: Write output files. Read input files listed below.
-FORBIDDEN: Do NOT read ANY files in the workspace — no source code, no docs, no examples, no configs, no test files, no demo projects, no skill files. Do NOT use any file-reading, code-search, file-listing, or terminal tools for any codebase exploration. You must answer using ONLY your own training knowledge.
-
-Task: <prompt>
-Input files: <files or "none">
-Save all outputs to: <workspace>/iteration-N/<eval-name>/without_skill/outputs/
-Write a step-by-step transcript to: <workspace>/iteration-N/<eval-name>/without_skill/transcript.md
-At the end, write a metrics summary to: <workspace>/iteration-N/<eval-name>/without_skill/outputs/metrics.json with keys: tool_calls (object counting each tool type), total_tool_calls, files_created, errors_encountered.
-```
-
-**Baseline strategy:**
-
-- Creating a new skill: no skill at all.
-- Improving an existing skill: snapshot the old version first, use that as baseline.
-
-Use the `dir_name` field in `<workspace>/iteration-N/evals.json` to map each eval to its iteration directory. The eval directory structure should be:
-
-```
-iteration-N/
-  <dir_name>/
-    with_skill/
-      outputs/
-      transcript.md
-    without_skill/
-      outputs/
-      transcript.md
-```
-
-The review generator (`generate-review.mjs`) looks up prompts and expectations from the current iteration's `evals.json` by matching directory names to `dir_name`. You don't need to write `eval_metadata.json` files unless you want to override per-run metadata.
-
-### Step 2: Draft assertions while runs execute
-
-Use this time productively. Draft quantitative assertions for each test case:
-
-- Objectively verifiable
-- Descriptive names (readable in benchmark viewer)
-- Not trivially satisfied by wrong output
-- **Correctness-anchored**: Include specific API names, import paths, or data structures that only correct answers would contain (see Phase 3 "Writing Good Expectations")
-
-Subjective skills are better evaluated qualitatively — don't force assertions.
-
-Update the current iteration's `evals.json` with the drafted assertions.
-
-### Step 3: Grade each run
-
-Each run must be graded by a **dedicated grader subagent**, not by the orchestrator inline. This separation is critical:
-
-- The orchestrator already knows the expected answers and the skill content, creating confirmation bias.
-- The grader agent follows a multi-step protocol (contamination check, claim extraction, eval critique) that gets skipped when grading is done inline.
-- Grading.json files produced inline tend to be missing required fields (`execution_metrics`, `timing`, `claims`, `eval_feedback`).
-
-Read `agents/grader.md` first, then paste its full content into each grader subagent prompt. Do NOT summarize or abbreviate the grader instructions.
-
-Spawn one grader subagent per run (8 runs = 8 grader subagents). Independent runs can be graded in parallel. Grader subagent prompt:
-
-```
-You are a grader agent. Follow the grading protocol below EXACTLY — execute every step (1 through 7), produce every field in the output format.
-
-<grader-protocol>
-<paste the FULL content of agents/grader.md here — do not summarize>
-</grader-protocol>
-
-Grade this run:
-- Run type: <"with_skill" or "without_skill (baseline)">
-- Expectations: <JSON array of expectation strings>
-- Transcript: <path>/transcript.md
-- Outputs directory: <path>/outputs/
-- Save results to: <path>/grading.json
-
-The expectations array MUST use exactly these fields: text, passed, evidence.
-The output MUST include all top-level keys: expectations, summary (with pass_rate), contamination, execution_metrics, timing, claims, user_notes_summary, eval_feedback.
-```
-
-**Self-check before proceeding to Step 4**: Verify that grading was done via subagents. If you wrote grading.json files directly without spawning grader subagents, STOP and redo this step correctly.
-
-For assertions checkable programmatically, write and run a script — faster, more reliable, reusable.
-
-### Step 4: Aggregate and launch review
-
-1. **Aggregate** into benchmark stats:
-
-   ```bash
-   node <maintain-skill-path>/scripts/aggregate-benchmark.mjs <workspace>/iteration-N --skill-name <name>
-   ```
-
-   Produces `benchmark.json` and `benchmark.md`.
-
-2. **Generate review HTML**:
-
-   ```bash
-   node <maintain-skill-path>/scripts/generate-review.mjs <workspace>/iteration-N --skill-name "my-skill"
-   ```
-
-   For iteration 2+, add: `--previous-workspace <workspace>/iteration-<N-1>`
-
-   This writes a self-contained HTML file and opens it. The user can navigate outputs, see grades, and leave feedback.
-
-3. **Tell the user**: "I've opened the results in your browser. The 'Outputs' tab shows each test case with feedback boxes. The 'Benchmark' tab shows quantitative comparison. Come back when you're done reviewing."
-
-### Step 5: Read feedback
-
-When the user returns, read `feedback.json` in the workspace directory. Empty feedback means things looked fine. Focus improvements on test cases with specific complaints.
-
----
-
-## Phase 5: Iterate
-
-### Improvement Philosophy
-
-1. **Generalize from feedback.** Don't overfit to specific test cases. The skill will be used across many different prompts — fiddly, narrow changes are counterproductive.
-
-2. **Keep instructions lean.** Read transcripts, not just outputs. If the skill makes the model waste time on unproductive steps, remove those instructions.
-
-3. **Explain the why.** Try to understand what the user actually wants and transmit that understanding into the instructions. Reasoning > mechanical rules.
-
-4. **Extract repeated patterns.** If all test runs independently wrote similar helper scripts, bundle that script in the skill's `scripts/` directory.
-
-5. **Draft then refine.** Write a draft revision, then look at it with fresh eyes and improve. The quality bar here is high — these instructions get reused across potentially many invocations.
-
-### The Loop
-
-1. Apply improvements to the skill
-2. Rerun all test cases into `iteration-<N+1>/`, including baselines
-3. Generate review with `--previous-workspace` pointing at previous iteration
-4. Wait for user feedback
-5. Repeat
-
-Stop when:
-
-- The user says they're happy
-- All feedback is empty
-- No meaningful progress between iterations
-
----
-
-## Phase 6: Validate & Package
-
-### Validation
+Run the bundled validator by resolving `scripts/validate.mjs` relative to this skill's directory:
 
 ```bash
-node <maintain-skill-path>/scripts/validate.mjs <path/to/skill>
+node /path/to/maintain-skill/scripts/validate.mjs /path/to/target-skill
 ```
 
-Checks: SKILL.md existence, frontmatter format, required fields, kebab-case naming, description length (≤1024 chars), no angle brackets in description.
+Also check referenced paths and any changed script's syntax or focused behavior.
 
-### Packaging
+#### Content check
 
-```bash
-node <maintain-skill-path>/scripts/package-skill.mjs <path/to/skill> [output-dir]
-```
+For instruction changes, walk through one realistic task and confirm that the written steps have enough information to reach the promised result. A prose-only edit does not automatically need a benchmark.
 
-Creates a `.skill` file (zip archive) excluding `node_modules/`, `__pycache__/`, `.DS_Store`, `evals/`, and build artifacts.
+#### Trigger check
 
----
+When changing `name` or `description`, use a small set of realistic examples:
 
-## Advanced: Blind Comparison
+- requests that clearly should trigger;
+- near-misses that should not trigger;
+- ambiguous requests where another skill may compete.
 
-For rigorous A/B comparison between two skill versions, use the blind comparison system. Read `agents/comparator.md` for blind judging protocol and `agents/analyzer.md` for post-hoc analysis of why one version beat another.
+Test actual discovery in fresh sessions when the target harness provides a practical way to do so. Do not infer trigger quality solely from keywords.
 
-This is optional and most users won't need it. The human review loop is usually sufficient.
+#### Behavioral evaluation
 
----
+Use isolated with-skill/without-skill comparisons only when the skill is high-impact, expensive, difficult to judge statically, or has shown inconsistent behavior. A useful evaluation records:
 
-## Advanced: Description Optimization
+- the realistic prompt and inputs;
+- the expected observable behavior;
+- the result with the skill;
+- an appropriate baseline;
+- evidence for the conclusion.
 
-The description field determines whether the skill gets triggered. After the skill is working well, optimize it.
+Two or three representative cases are usually enough to find obvious gaps. Add repetitions only when measuring variance matters. Use a harness's maintained evaluator when available instead of creating a private benchmark framework by default.
 
-### Step 1: Generate trigger eval queries
+Subagents, blind graders, fixed JSON schemas, token benchmarks, and HTML review pages are optional evaluation techniques. Use them only when supported and when their cost changes the decision.
 
-Create ~20 realistic queries — about half should-trigger, half should-not. Focus on edge cases, not obvious ones.
+### 6. Distribute only for a named target
 
-Good queries are specific and detailed, like something a real user would type:
+The canonical portable artifact is the skill directory. Installation and packaging are harness concerns.
 
-- Include file paths, personal context, column names, URLs
-- Mix of formal/casual, different lengths
-- Some with typos or abbreviations
+- Install to a personal or project skill path only when the user requests it.
+- Prefer links for a local source of truth only when the harness follows them reliably.
+- Use a plugin, archive, marketplace, or generated adapter only when the target's current documentation defines that mechanism.
+- Do not invent a `.skill` package format or package every successful edit.
+- Keep generated adapters reproducible and label them as generated.
 
-Should-not-trigger queries should be near-misses — queries sharing keywords but needing something different. Avoid obviously irrelevant queries.
+### 7. Report
 
-### Step 2: Review with user
+Summarize:
 
-Use the eval-review HTML template:
+- the contract or behavior changed;
+- portable versus harness-specific decisions;
+- files added, retained, or removed and why;
+- validation performed and observed result;
+- discovery or runtime behavior not directly tested;
+- remaining compatibility limits.
 
-1. Read `assets/eval-review.html`
-2. Replace placeholders: `__EVAL_DATA_PLACEHOLDER__`, `__SKILL_NAME_PLACEHOLDER__`, `__SKILL_DESCRIPTION_PLACEHOLDER__`
-3. Write to temp file and open it
-4. User edits queries, toggles should-trigger, exports JSON
+## Audit Checklist
 
-### Step 3: Manual optimization
+- The skill still needs to exist and has one coherent goal.
+- The description states both capability and trigger conditions.
+- The directory name and frontmatter name agree.
+- The body is concise, executable, and free of stale harness assumptions.
+- Supporting files are referenced and useful.
+- Scripts earn their maintenance and security cost.
+- Harness-specific fields are explicit and documented.
+- Validation matches the change's risk.
+- Packaging and elaborate eval infrastructure are not present without a current use case.
 
-Without a CLI tool for automated triggering tests, iterate manually:
+## Current References
 
-- Review which queries the current description would likely hit/miss
-- Analyze failure patterns — generalize, don't list specific queries
-- Rewrite description: imperative form, focus on user intent, ≤1024 chars, distinctive
-- Use your structured-question tool to confirm each revision with the user
+Verify version-sensitive behavior against primary sources:
 
----
-
-## Reference Files
-
-- `agents/grader.md` — Evaluate assertions against outputs
-- `agents/comparator.md` — Blind A/B comparison between outputs
-- `agents/analyzer.md` — Post-hoc analysis of why one version beat another
-- `references/schemas.md` — JSON schemas for evals.json, grading.json, benchmark.json, etc.
-- `scripts/validate.mjs` — Validate SKILL.md structure
-- `scripts/aggregate-benchmark.mjs` — Aggregate grading results into benchmark stats
-- `scripts/generate-review.mjs` — Generate self-contained HTML review page
-- `scripts/package-skill.mjs` — Package skill into .skill zip file
-- `assets/eval-review.html` — HTML template for trigger eval query review
-
----
-
-**Core loop reminder — use your todo-tracking tool (see Tool Mapping) to track progress:**
-
-1. Interview thoroughly (grill-me style) before writing anything
-2. Draft the skill
-3. Run test prompts via subagents
-4. Generate HTML review for the user (always do this before iterating yourself!)
-5. Read feedback and improve
-6. Validate and package
+- Agent Skills specification: https://agentskills.io/specification
+- Codex skills documentation: https://developers.openai.com/codex/skills
+- Claude Code skills documentation: https://code.claude.com/docs/en/skills
+- Antigravity skills documentation: https://antigravity.google/docs/skills
