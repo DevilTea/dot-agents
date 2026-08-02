@@ -1,16 +1,16 @@
-# Claude Code config dir is whole-dir symlinked from ~/.claude, so Claude Code
-# writes its runtime state in here. Track only managed config; ignore the rest.
+# Legacy runtime directory for the existing ~/.claude whole-directory symlink.
+# Canonical tracked sources now live under harnesses/claude/. Keep only the
+# compatibility bridge and settings copy visible until setup migrates the
+# installation to per-entry management.
 
 # Ignore everything by default …
 /*
 
-# … then re-include the version-controlled config.
+# … then re-include the compatibility entries.
 !/.gitignore
 !/CLAUDE.md
 !/skills
 !/settings.json
-!/commands
-!/agents
 
 # Never track local-only or sensitive settings.
 settings.local.json

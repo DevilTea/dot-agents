@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "ask": [
+      "command(rm -rf)",
+      "command(git reset --hard)",
+      "command(sudo)"
+    ]
+  }
+}

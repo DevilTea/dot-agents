@@ -1,75 +1,129 @@
 # dot-agents
 
-個人 `~/.agents` 目錄：用單一版控來源，集中管理 AI coding 工具的指令、skills 與工具設定。
+`dot-agents` 是個人 agent environment 的 source of truth。它集中保存：
 
-目前使用的工具：
+- portable communication preferences
+- durable engineering principles
+- shared skills
+- harness-specific policies
+- harness-specific settings
+- 安裝與同步機制
 
-- **Claude Code** — 公司企業訂閱。
+它不是 universal agent policy、cross-provider behavioral compatibility layer、agent framework、prompt portability guarantee，也不試圖強迫不同模型與 harness 產生相同行為。
 
-## 原則：單一來源，連結出去
+## Architecture
 
-repo 是唯一真實來源。工具仍從自己預期的位置（`~/.claude`）讀設定，但那個位置是指回本 repo 的 symlink，所以每份內容只有一份。
+```text
+                     shared preferences
+                     shared principles
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+     Codex policy       Claude policy     Antigravity policy
+          │                  │                  │
+          ▼                  ▼                  ▼
+       Codex CLI         Claude Code       Google Antigravity
 
-跨工具共用的有兩項：
+              shared skills (selected when useful)
+```
 
-- `AGENTS.md` — 工具中立的行為準則
-- `skills/` — 共用 skills
+共通層只描述穩定、可攜的 user intent。每個 harness 依自己的 instruction hierarchy、tools、permissions、planning 與 delegation 能力實作；共通層不反向依賴任何 harness。
 
-其餘屬於工具專屬設定，放在 `cli/claude/`（Claude Code）。
+## Repository layout
 
-> 為什麼包在 `cli/` 下：root 層若直接叫 `.claude` 會被 Claude Code 當成「專案層級設定」。收進 `cli/` 可讓 root 乾淨，打開 `~/.agents` 時不會把全域設定誤當專案設定載入。
+```text
+.
+├── .skill-lock.json
+├── LICENSE
+├── README.md
+├── preferences/
+│   ├── README.md
+│   ├── communication.md
+│   └── engineering.md
+├── skills/
+│   ├── README.md
+│   └── <skill>/
+├── optional-skills/
+│   ├── README.md
+│   └── impeccable/
+├── harnesses/
+│   ├── README.md
+│   ├── codex/
+│   ├── claude/
+│   └── antigravity/
+└── scripts/
+    └── setup.sh
+```
 
-### 指令分兩層
+`.skill-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它不是 prompt 或 portability contract。
 
-`AGENTS.md` 只放任何 agent CLI 都成立的規則。harness 專屬的（subagent、effort、plan mode、hooks 這類概念）放在 `cli/claude/CLAUDE.md`，它用 `@~/.agents/AGENTS.md` 把中立層 import 進來，再往下接 `## Claude Code` 區塊。Claude Code 只讀 `CLAUDE.md`、不讀 `AGENTS.md`，這是官方建議的接法。
+`skills/` 是 global discovery set；`optional-skills/` 是 project opt-in catalog，不會由 global setup 安裝。
 
-注意 import 不省 context — 被 import 的檔一樣在 session 啟動時全量載入。分層是為了劃清界線，不是為了省 token。細節見 [docs/claude-setup.md](./docs/claude-setup.md)。
+`cli/claude/` 暫時保留為既有 `~/.claude -> ~/.agents/cli/claude` 安裝的相容橋接與 runtime 位置；canonical tracked sources 已移至 `harnesses/claude/`。新版 setup 會先備份舊 symlink、複製保留 runtime state，再改採 per-entry 管理；不會刪除舊 runtime copy。
 
-## 安裝
+## Portability contract
 
-需求：Node.js >= v22（部分 skills 內附的腳本需要）。
+| 類型 | 可攜性 |
+| --- | --- |
+| communication preferences | 高 |
+| engineering principles | 中高 |
+| skill semantics | 中高 |
+| skill invocation | 不保證 |
+| harness policy | 不可攜 |
+| settings / hooks / agents | harness-specific |
+
+Project-local instructions 可以補充或覆蓋個人偏好。實際 precedence 由各 harness 決定。
+
+## Setup
+
+先預覽，不修改檔案：
 
 ```bash
-# 1. clone 到 ~/.agents
-git clone https://github.com/DevilTea/dot-agents.git ~/.agents
-
-# 2. 建立 symlink
-bash ~/.agents/scripts/setup-claude.sh   # 關閉 Claude Code 後再執行
+./scripts/setup.sh --dry-run
 ```
 
-腳本可重複執行（idempotent）。`setup-claude.sh` 若偵測到 `~/.claude` 已是真實目錄，會在備份後就地遷移；細節見 [docs/claude-setup.md](./docs/claude-setup.md)。
+正式執行會先列出所有異動，再要求輸入 `YES`：
 
-## 目錄結構
-
-```
-~/.agents/
-├── AGENTS.md            # 工具中立行為準則（單一來源）
-├── skills/              # 共用 skills（單一來源）
-├── cli/
-│   └── claude/          # ~/.claude -> ~/.agents/cli/claude
-│       ├── CLAUDE.md    # import AGENTS.md + Claude 專屬指令
-│       ├── skills       # symlink -> ../../skills
-│       └── ...          # settings.json 等為 Claude 專屬設定
-├── docs/                # claude-setup.md（工具細節）
-└── scripts/             # setup-claude.sh
+```bash
+./scripts/setup.sh
 ```
 
-## 連結對照
+腳本不下載工具、不修改 project repository，也不移除不再存在於 canonical source 的舊項目。未安裝的 harness 會顯示 skip reason，其餘 harness 仍可繼續處理。
 
-| 主機上的連結 | 指向 |
-|--------------|------|
-| `~/.claude` | `~/.agents/cli/claude` |
+有異動時，既有 entry 會先移至：
 
-| repo 內已提交的連結 | 指向 |
-|----------------------|------|
-| `cli/claude/skills` | `../../skills` |
+```text
+~/.dot-agents-backups/<timestamp>-<pid>/
+```
 
-`cli/claude/CLAUDE.md` 是真實檔案（不是 symlink），靠第一行的 `@~/.agents/AGENTS.md` import 中立層。
+該目錄的 `manifest.tsv` 記錄原路徑與備份路徑。Rollback 前先關閉相關 harness，將目前 entry 移到別處，再依 manifest 將備份移回原路徑。備份不會由 setup 自動刪除。
 
-## 維護
+安裝結果：
 
-- 改中立準則只動 `AGENTS.md`；改 skills 只動 `skills/`，工具透過 import／連結自動讀到。
-- 只有在規則依賴 harness 概念時才寫進 `cli/claude/CLAUDE.md`；分不清就先放 `AGENTS.md`。
-- 工具專屬設定放在 `cli/claude/*`。
-- runtime 狀態（sessions、node_modules、auth 等）已 gitignore，不會進版控。
-- 設定說明文件一律命名 `*-setup.md`，不要叫 `claude.md`：在不分大小寫的檔案系統上會與 `CLAUDE.md` 衝突，被 Claude Code 當成記憶載入。
+- Codex：生成 `~/.codex/AGENTS.md`；global skills 位於 `~/.agents/skills/`。
+- Claude Code：生成 `~/.claude/CLAUDE.md`（保留 `@path` imports）、複製 `settings.json`，並逐一連結 global skills。
+- Google Antigravity IDE：生成 `~/.gemini/GEMINI.md`，並逐一複製 global skills 到 `~/.gemini/config/skills/`。
+- Antigravity CLI：同樣使用 `~/.gemini/GEMINI.md`，另複製 CLI `settings.json` 與 global skills 到 `~/.gemini/antigravity-cli/`。
+
+Optional skills 需依 [`optional-skills/README.md`](./optional-skills/README.md) 在目標 project 明確安裝；global setup 不會修改 project repository。
+
+修改 canonical source 後重新執行 setup 即可同步。Codex 與 Antigravity 的 composed instructions，以及 Antigravity skills，需要重新執行；Claude 的 settings 與 generated `CLAUDE.md` 也需要重新執行，symlinked skills 內容則會立即反映。
+
+各工具的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
+
+## Migration mapping
+
+| 舊內容 | 新位置 | 處理方式 |
+| --- | --- | --- |
+| root `AGENTS.md` 的語言、語氣與 truthfulness | `preferences/communication.md` | 搬移、去除 harness procedure |
+| root `AGENTS.md` 的通用工程原則 | `preferences/engineering.md` | 搬移、去除固定 workflow |
+| root `AGENTS.md` 的 execution、validation、reporting | `harnesses/codex/AGENTS.md` 與 `harnesses/claude/CLAUDE.md` | 依 harness 能力分離 |
+| `cli/claude/CLAUDE.md` delegation 規則 | `harnesses/claude/CLAUDE.md` | 保留並整理 |
+| `cli/claude/settings.json` | `harnesses/claude/settings.json` | 搬移 canonical source；相容副本暫留 |
+| `docs/claude-setup.md` | `harnesses/claude/README.md` | 合併更新 |
+| `scripts/setup-claude.sh` | `scripts/setup.sh` | 以多 harness、安全 dry-run 流程取代 |
+| `skills/impeccable` | `optional-skills/impeccable` | 保留內容，改為 project opt-in |
+| `agent-browser`、`commit`、`maintain-skill` | `skills/` | 保留為 global skills |
+| `codebase-design`、`diagnosing-bugs`、`domain-modeling`、`grill-me`、`grilling`、`handoff`、`improve-codebase-architecture`、`stuck` | — | 依個人實際使用情況移除；可由 git history 復原 |
+
+歷史上已刪除的 Pi CLI／Node.js extension 不恢復；本 repository 不再開發 CLI 或 package。
