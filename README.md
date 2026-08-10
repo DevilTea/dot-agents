@@ -155,7 +155,7 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --dry-run
 **安裝或更新外部來源的 skill**
 以 `npx skills` 管理，安裝結果記錄在 `.skill-lock.json`，之後重跑 setup 建立 symlink。不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋，且 `skillFolderHash` 會失去意義。兩個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
 
-目前 `.skill-lock.json` 管理 22 個 entry（`skills/` 內的 `agent-browser` 與 20 個 `cmux*`，加上 `optional-skills/impeccable`）。`commit`、`maintain-skill`、`model-routing` 為本地撰寫，不受 lockfile 管理。
+哪些 skill 屬於外部來源以 `.skill-lock.json` 為準，其餘為本地撰寫；`./scripts/doctor.sh` 會列出兩者的實際分佈，不需在文件中複述清單。
 
 **移除 skill**
 刪除 `skills/<name>/`（外部來源者一併處理 lockfile entry）。Setup **不會**自動清除已安裝的 symlink，需手動刪除各 harness 目錄下對應的 entry。

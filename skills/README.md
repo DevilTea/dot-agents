@@ -14,4 +14,10 @@
 
 目前已知 adapters：`agent-browser` 的部分 frontmatter 為 Claude Code metadata；`maintain-skill` 內有明確 Tool Mapping。未支援這些 adapter 的 harness 仍可使用其共通 playbook。
 
-目前有 13 個 global skills：`agent-browser`、`commit`、`maintain-skill`、`model-routing`，以及由 [`manaflow-ai/cmux`](https://github.com/manaflow-ai/cmux) 外部安裝的 `cmux` 與 8 個 `cmux-*`。cmux 系列只保留 end-user 導向的 topology、workspace、browser、settings、diagnostics、customization 等 skill；針對 cmux 原始碼開發的 skill（architecture、backend、testing、release 等）不安裝，因為本機沒有 cmux 原始碼，這些 skill 只會稀釋 skill 選擇。Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)，也不會因 canonical source 少了一個 entry 就自動刪除目的地內容。
+## Composition
+
+實際清單以此目錄的內容為準，不在文件中複述。Global skills 分兩類：本 repository 自行撰寫的（`commit`、`maintain-skill`、`model-routing`），以及由外部來源安裝、provenance 記於 [`../.skill-lock.json`](../.skill-lock.json) 的（`agent-browser` 與 [`manaflow-ai/cmux`](https://github.com/manaflow-ai/cmux) 的 `cmux` 系列）。`./scripts/doctor.sh` 會列出兩者的實際分佈。
+
+cmux 系列只安裝 end-user 導向的 skill（topology、workspace、browser、settings、diagnostics、customization 等）。針對 cmux 原始碼開發的 skill（architecture、backend、testing、release 等）不安裝：本機沒有 cmux 原始碼，它們永遠不會正確觸發，只會佔用每個 session 的 context 並稀釋 skill 選擇。同一標準適用於其他外部來源 —— 只安裝與實際使用情境相符的 skill，不整包引入。
+
+Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)，也不會因 canonical source 少了一個 entry 就自動刪除目的地內容。
