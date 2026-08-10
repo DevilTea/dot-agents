@@ -1,6 +1,6 @@
 # Google Antigravity
 
-正式產品名稱為 Google Antigravity。本機已安裝 `agy` CLI `1.1.11`；`Antigravity.app` 不存在，因此 IDE surface 的實際載入行為仍未驗證。Repository 內容依目前 Google 官方 Antigravity IDE／2.0 CLI 文件整理。
+正式產品名稱為 Google Antigravity。本機已安裝 `agy` CLI；`Antigravity.app` 不存在，因此 IDE surface 的實際載入行為仍未驗證。Repository 內容依目前 Google 官方 Antigravity IDE／2.0 CLI 文件整理。
 
 Canonical sources：
 

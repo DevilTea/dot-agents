@@ -2,9 +2,9 @@
 
 Canonical policy：[`AGENTS.md`](./AGENTS.md)。共通 intent 位於 [`../../preferences/`](../../preferences/)。
 
-## Verified loading model
+## Loading model
 
-本次盤點的本機版本為 `codex-cli 0.146.0`。Codex 官方規則：
+依目前官方文件整理。Codex 更新頻繁，本檔不記錄版號；需要時以 `codex --version` 查詢當下版本。
 
 - global instructions：`$CODEX_HOME/AGENTS.override.md`，不存在時才讀 `$CODEX_HOME/AGENTS.md`；預設 `CODEX_HOME=~/.codex`。
 - project instructions：從 repository root 走到 cwd，每層最多載入一份 `AGENTS.override.md`／`AGENTS.md`／configured fallback。

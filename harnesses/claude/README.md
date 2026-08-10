@@ -22,6 +22,6 @@ Skills 逐一 symlink 到 `~/.claude/skills/`；現有本機配置已使用此�
 
 `~/.claude` 為 Claude Code 自有的實體目錄，setup 只管理其中的 `CLAUDE.md`、`settings.json` 與 `skills/` entry，其餘 runtime state 不受管理。早期的 `~/.claude -> <repo>/cli/claude` whole-directory symlink 安裝方式已淘汰，相關遷移邏輯與 legacy runtime 目錄一併移除。
 
-本機 Claude Code 版本為 `2.1.220`。載入規則依目前官方文件建立。
+載入規則依目前官方文件建立。Claude Code 更新頻繁，本檔不記錄版號；需要時以 `claude --version` 查詢當下版本。
 
 來源：[Claude Code memory／imports](https://code.claude.com/docs/en/memory)、[Claude Code skills](https://code.claude.com/docs/en/slash-commands)。
