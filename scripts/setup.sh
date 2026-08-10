@@ -149,17 +149,6 @@ plan_skill_links() {
   done
 }
 
-plan_all_skill_links() {
-  local destination_root="$1"
-  local label="$2"
-  local skill_source destination
-  for skill_source in "$SKILLS_DIR"/*; do
-    [ -f "$skill_source/SKILL.md" ] || continue
-    destination="$destination_root/$(basename "$skill_source")"
-    add_action link-dir "$skill_source" "$destination" "$label skill $(basename "$skill_source")"
-  done
-}
-
 directories_equal() {
   diff -qr "$1" "$2" >/dev/null 2>&1
 }
@@ -197,16 +186,9 @@ else
 fi
 
 if $CLAUDE_INSTALLED; then
-  if [ -L "$INSTALL_HOME/.claude" ] && [ "$(readlink "$INSTALL_HOME/.claude")" = "$REPO_ROOT/cli/claude" ]; then
-    add_action migrate-claude-root "$REPO_ROOT/cli/claude" "$INSTALL_HOME/.claude" "Claude Code legacy runtime"
-    add_action generate claude "$INSTALL_HOME/.claude/CLAUDE.md" "Claude Code global instructions"
-    add_action copy-file "$REPO_ROOT/harnesses/claude/settings.json" "$INSTALL_HOME/.claude/settings.json" "Claude Code settings"
-    plan_all_skill_links "$INSTALL_HOME/.claude/skills" "Claude Code"
-  else
-    plan_generated claude "$INSTALL_HOME/.claude/CLAUDE.md" "Claude Code global instructions"
-    plan_copy_file "$REPO_ROOT/harnesses/claude/settings.json" "$INSTALL_HOME/.claude/settings.json" "Claude Code settings"
-    plan_skill_links "$INSTALL_HOME/.claude/skills" "Claude Code"
-  fi
+  plan_generated claude "$INSTALL_HOME/.claude/CLAUDE.md" "Claude Code global instructions"
+  plan_copy_file "$REPO_ROOT/harnesses/claude/settings.json" "$INSTALL_HOME/.claude/settings.json" "Claude Code settings"
+  plan_skill_links "$INSTALL_HOME/.claude/skills" "Claude Code"
 else
   note "SKIP Claude Code: 'claude' is not installed or not available in PATH."
 fi
@@ -282,18 +264,6 @@ for index in "${!ACTION_TYPES[@]}"; do
     copy-file) cp "$source" "$destination" ;;
     link-dir) ln -s "$source" "$destination" ;;
     copy-dir) cp -R "$source" "$destination" ;;
-    migrate-claude-root)
-      mkdir -p "$destination"
-      shopt -s dotglob nullglob
-      for runtime_item in "$source"/*; do
-        runtime_name="$(basename "$runtime_item")"
-        case "$runtime_name" in
-          .gitignore|CLAUDE.md|settings.json|settings.local.json|skills|commands|agents) continue ;;
-        esac
-        cp -R "$runtime_item" "$destination/"
-      done
-      shopt -u dotglob nullglob
-      ;;
     *) die "unknown action type: $action_type" ;;
   esac
 done

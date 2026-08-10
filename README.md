@@ -59,8 +59,6 @@
 
 `skills/` 是 global discovery set；`optional-skills/` 是 project opt-in catalog，不會由 global setup 安裝。
 
-`cli/claude/` 暫時保留為既有 `~/.claude -> ~/.agents/cli/claude` 安裝的相容橋接與 runtime 位置；canonical tracked sources 已移至 `harnesses/claude/`。新版 setup 會先備份舊 symlink、複製保留 runtime state，再改採 per-entry 管理；不會刪除舊 runtime copy。
-
 ## Portability contract
 
 | 類型 | 可攜性 |
@@ -119,7 +117,8 @@ Optional skills 需依 [`optional-skills/README.md`](./optional-skills/README.md
 | root `AGENTS.md` 的通用工程原則 | `preferences/engineering.md` | 搬移、去除固定 workflow |
 | root `AGENTS.md` 的 execution、validation、reporting | `harnesses/codex/AGENTS.md` 與 `harnesses/claude/CLAUDE.md` | 依 harness 能力分離 |
 | `cli/claude/CLAUDE.md` delegation 規則 | `harnesses/claude/CLAUDE.md` | 保留並整理 |
-| `cli/claude/settings.json` | `harnesses/claude/settings.json` | 搬移 canonical source；相容副本暫留 |
+| `cli/claude/settings.json` | `harnesses/claude/settings.json` | 搬移 canonical source |
+| `cli/claude/` legacy runtime 目錄 | — | `~/.claude` 已改為實體目錄與 per-entry 管理後移除 |
 | `docs/claude-setup.md` | `harnesses/claude/README.md` | 合併更新 |
 | `scripts/setup-claude.sh` | `scripts/setup.sh` | 以多 harness、安全 dry-run 流程取代 |
 | `skills/impeccable` | `optional-skills/impeccable` | 保留內容，改為 project opt-in |

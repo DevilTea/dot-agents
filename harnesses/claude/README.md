@@ -20,7 +20,7 @@ Claude Code 官方支援 user instructions `~/.claude/CLAUDE.md`、personal skil
 
 Skills 逐一 symlink 到 `~/.claude/skills/`；現有本機配置已使用此方式。新增或移除 skill entry 後應重新執行 setup；既有 symlink 內的內容修改會立即反映。
 
-若偵測到舊版 `~/.claude -> <repo>/cli/claude` whole-directory symlink，setup 會將 symlink 備份，複製其中未受管理的 runtime state 到新的 `~/.claude/`，再安裝上述 managed entries。舊 target 不會自動刪除，確認新安裝後才可人工清理。
+`~/.claude` 為 Claude Code 自有的實體目錄，setup 只管理其中的 `CLAUDE.md`、`settings.json` 與 `skills/` entry，其餘 runtime state 不受管理。早期的 `~/.claude -> <repo>/cli/claude` whole-directory symlink 安裝方式已淘汰，相關遷移邏輯與 legacy runtime 目錄一併移除。
 
 本次環境的 `claude` CLI 不在 PATH，因此無法確認 Claude Code 版本或執行 `/context`。`/Applications/Claude.app` 為 Claude Desktop `1.24012.9`，不能當作 Claude Code 版本。載入規則依目前官方文件建立。
 
