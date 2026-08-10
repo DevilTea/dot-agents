@@ -54,6 +54,7 @@
 │   ├── claude/
 │   └── antigravity/
 └── scripts/
+    ├── doctor.sh
     └── setup.sh
 ```
 
@@ -118,6 +119,24 @@ Harness 偵測方式：`codex`、`claude`、`agy` 依 PATH 判斷；Antigravity 
 ```bash
 DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --dry-run
 ```
+
+## Doctor
+
+檢查 canonical source、安裝結果與 skill 清單之間的落差。唯讀，不修改任何檔案；有 `FAIL` 時 exit 1。
+
+```bash
+./scripts/doctor.sh
+```
+
+「是否同步」由 `setup.sh --dry-run` 回答，`doctor.sh` 額外檢查 setup 無法表達的狀況：
+
+- managed settings 是否仍是指回 repository 的 symlink，或已被 harness 於 runtime 換成一般檔案（此時內容需人工併回 canonical）
+- managed settings 是否有經由 symlink 寫回 repository、尚未 commit 的改動（`WARN`，需 review）
+- 各 harness skills 目錄有無斷掉的 symlink、setup 不會清除的 orphan，或不隨 repository 更新的實體目錄
+- `skills/` 內是否有缺少 `SKILL.md` 的目錄
+- `.skill-lock.json` 是否合法，且每個 `skillPath` 都存在（外部 skill 移除後殘留的 entry 需手動刪除）
+
+`FAIL` 表示狀態與預期不符，`WARN` 表示需要人工判斷，`INFO` 只是現況描述。同樣支援 `DOT_AGENTS_SETUP_HOME` 指向沙箱。
 
 ## 日常操作
 
