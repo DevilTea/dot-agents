@@ -16,7 +16,7 @@ Claude Code 官方支援 user instructions `~/.claude/CLAUDE.md`、personal skil
 
 改寫為對應 canonical source 的絕對 `@path`，其餘 Claude-specific 內容保持不變。修改 preferences 或 `CLAUDE.md` 後需重新執行 setup。
 
-`settings.json` 採 copy，而非 symlink：Claude Code 可能由 `/config` 更新 user settings，不應讓 runtime 操作直接改動 repository。Setup 在內容不同時先備份既有檔案，再複製 canonical source。
+`settings.json` 採 symlink，使 repository 永遠是實際生效的內容。代價是 Claude Code 由 `/config` 寫入的 user settings 會直接落在 repository，需要另外 commit；若 CLI 以「寫入暫存檔再 rename」的方式更新，symlink 會被換成一般檔案，此時重跑 setup 會先把該檔備份到 `~/.dot-agents-backups/` 再重建 link，內容不會消失但需人工併回 canonical。`settings.local.json` 不由 setup 管理，適合放不想版本控管的本機覆寫。
 
 Skills 逐一 symlink 到 `~/.claude/skills/`；現有本機配置已使用此方式。新增或移除 skill entry 後應重新執行 setup；既有 symlink 內的內容修改會立即反映。
 

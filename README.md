@@ -99,13 +99,15 @@ Project-local instructions 可以補充或覆蓋個人偏好。實際 precedence
 安裝結果：
 
 - Codex：生成 `~/.codex/AGENTS.md`；global skills 位於 `~/.agents/skills/`。
-- Claude Code：生成 `~/.claude/CLAUDE.md`（保留 `@path` imports）、複製 `settings.json`，並逐一連結 global skills。
-- Google Antigravity IDE：生成 `~/.gemini/GEMINI.md`，並逐一複製 global skills 到 `~/.gemini/config/skills/`。
-- Antigravity CLI：同樣使用 `~/.gemini/GEMINI.md`，另複製 CLI `settings.json` 與 global skills 到 `~/.gemini/antigravity-cli/`。
+- Claude Code：生成 `~/.claude/CLAUDE.md`（保留 `@path` imports）、symlink `settings.json`，並逐一 symlink global skills。
+- Google Antigravity IDE：生成 `~/.gemini/GEMINI.md`，並逐一 symlink global skills 到 `~/.gemini/config/skills/`。
+- Antigravity CLI：同樣使用 `~/.gemini/GEMINI.md`，另 symlink CLI `settings.json` 與 global skills 到 `~/.gemini/antigravity-cli/`。
+
+除三個 instruction 檔外，settings 與 skills 都是指向 repository 的 symlink，因此 repository 永遠是實際生效的內容，改動立即反映。Instruction 檔必須是生成檔：Codex 的 `AGENTS.md` 與 Antigravity 的 `GEMINI.md` 由 preferences 串接而成，Claude 的 `CLAUDE.md` 需把相對 `@path` 改寫為絕對路徑，三者都無法以單一 symlink 表達。改動 `preferences/` 或任一 instruction canonical source 後必須重跑 setup。
 
 Optional skills 需依 [`optional-skills/README.md`](./optional-skills/README.md) 在目標 project 明確安裝；global setup 不會修改 project repository。
 
-修改 canonical source 後重新執行 setup 即可同步。Codex 與 Antigravity 的 composed instructions，以及 Antigravity skills，需要重新執行；Claude 的 settings 與 generated `CLAUDE.md` 也需要重新執行，symlinked skills 內容則會立即反映。
+新增或移除 skill entry、或改動 instruction canonical source 後，重新執行 setup 即可同步。已 symlink 的 settings 與 skills 內容改動不需重跑。
 
 各工具的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
 

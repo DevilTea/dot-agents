@@ -63,10 +63,21 @@ path_exists() {
   [ -e "$1" ] || [ -L "$1" ]
 }
 
+resolved_path() {
+  local target="$1"
+  [ -e "$target" ] || return 1
+  if [ -d "$target" ]; then
+    (cd "$target" && pwd -P)
+  else
+    printf '%s/%s\n' "$(cd "$(dirname "$target")" && pwd -P)" "$(basename "$target")"
+  fi
+}
+
 same_existing_path() {
-  local left="$1"
-  local right="$2"
-  [ -e "$left" ] && [ -e "$right" ] && [ "$(cd "$left" 2>/dev/null && pwd -P)" = "$(cd "$right" 2>/dev/null && pwd -P)" ]
+  local left right
+  left="$(resolved_path "$1")" || return 1
+  right="$(resolved_path "$2")" || return 1
+  [ "$left" = "$right" ]
 }
 
 generated_codex() {
@@ -121,49 +132,29 @@ plan_generated() {
   add_action generate "$generator" "$destination" "$label"
 }
 
-plan_copy_file() {
+plan_link() {
   local source="$1"
   local destination="$2"
   local label="$3"
-  if [ -f "$destination" ] && [ ! -L "$destination" ] && cmp -s "$source" "$destination"; then
+  local current
+  if same_existing_path "$source" "$destination"; then
     return
   fi
-  add_action copy-file "$source" "$destination" "$label"
+  if [ -L "$destination" ]; then
+    current="$(readlink "$destination")"
+    [ "$current" = "$source" ] && return
+  fi
+  add_action link "$source" "$destination" "$label"
 }
 
 plan_skill_links() {
   local destination_root="$1"
   local label="$2"
-  local skill_source destination current
+  local skill_source
   for skill_source in "$SKILLS_DIR"/*; do
     [ -f "$skill_source/SKILL.md" ] || continue
-    destination="$destination_root/$(basename "$skill_source")"
-    if same_existing_path "$skill_source" "$destination"; then
-      continue
-    fi
-    if [ -L "$destination" ]; then
-      current="$(readlink "$destination")"
-      [ "$current" = "$skill_source" ] && continue
-    fi
-    add_action link-dir "$skill_source" "$destination" "$label skill $(basename "$skill_source")"
-  done
-}
-
-directories_equal() {
-  diff -qr "$1" "$2" >/dev/null 2>&1
-}
-
-plan_skill_copies() {
-  local destination_root="$1"
-  local label="$2"
-  local skill_source destination
-  for skill_source in "$SKILLS_DIR"/*; do
-    [ -f "$skill_source/SKILL.md" ] || continue
-    destination="$destination_root/$(basename "$skill_source")"
-    if [ -d "$destination" ] && [ ! -L "$destination" ] && directories_equal "$skill_source" "$destination"; then
-      continue
-    fi
-    add_action copy-dir "$skill_source" "$destination" "$label skill $(basename "$skill_source")"
+    plan_link "$skill_source" "$destination_root/$(basename "$skill_source")" \
+      "$label skill $(basename "$skill_source")"
   done
 }
 
@@ -187,7 +178,7 @@ fi
 
 if $CLAUDE_INSTALLED; then
   plan_generated claude "$INSTALL_HOME/.claude/CLAUDE.md" "Claude Code global instructions"
-  plan_copy_file "$REPO_ROOT/harnesses/claude/settings.json" "$INSTALL_HOME/.claude/settings.json" "Claude Code settings"
+  plan_link "$REPO_ROOT/harnesses/claude/settings.json" "$INSTALL_HOME/.claude/settings.json" "Claude Code settings"
   plan_skill_links "$INSTALL_HOME/.claude/skills" "Claude Code"
 else
   note "SKIP Claude Code: 'claude' is not installed or not available in PATH."
@@ -198,14 +189,14 @@ if $ANTIGRAVITY_IDE_INSTALLED || $ANTIGRAVITY_CLI_INSTALLED; then
 fi
 
 if $ANTIGRAVITY_IDE_INSTALLED; then
-  plan_skill_copies "$INSTALL_HOME/.gemini/config/skills" "Google Antigravity IDE"
+  plan_skill_links "$INSTALL_HOME/.gemini/config/skills" "Google Antigravity IDE"
 else
   note "SKIP Google Antigravity IDE: Antigravity.app was not found."
 fi
 
 if $ANTIGRAVITY_CLI_INSTALLED; then
-  plan_copy_file "$REPO_ROOT/harnesses/antigravity/settings.json" "$INSTALL_HOME/.gemini/antigravity-cli/settings.json" "Antigravity CLI settings"
-  plan_skill_copies "$INSTALL_HOME/.gemini/antigravity-cli/skills" "Antigravity CLI"
+  plan_link "$REPO_ROOT/harnesses/antigravity/settings.json" "$INSTALL_HOME/.gemini/antigravity-cli/settings.json" "Antigravity CLI settings"
+  plan_skill_links "$INSTALL_HOME/.gemini/antigravity-cli/skills" "Antigravity CLI"
 else
   note "SKIP Antigravity CLI: 'agy' is not installed or not available in PATH."
 fi
@@ -261,9 +252,7 @@ for index in "${!ACTION_TYPES[@]}"; do
   mkdir -p "$(dirname "$destination")"
   case "$action_type" in
     generate) generated_content "$source" > "$destination" ;;
-    copy-file) cp "$source" "$destination" ;;
-    link-dir) ln -s "$source" "$destination" ;;
-    copy-dir) cp -R "$source" "$destination" ;;
+    link) ln -s "$source" "$destination" ;;
     *) die "unknown action type: $action_type" ;;
   esac
 done

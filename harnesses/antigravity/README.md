@@ -17,9 +17,9 @@ Skills 路徑依 surface 不同：
 - IDE／Antigravity 2.0：`~/.gemini/config/skills/<name>/`
 - `agy` CLI：`~/.gemini/antigravity-cli/skills/<name>/`
 
-官方文件列出 discovery path，但未明確保證 symlink semantics；setup 因此逐一 copy skills，並在衝突時先備份。
+Setup 逐一 symlink skills，與 Codex／Claude Code 一致，讓 repository 內容即時生效。官方文件列出 discovery path，但未明確保證 symlink semantics；若實測發現 Antigravity 不跟隨 symlink，需改回逐一 copy。
 
-CLI settings 安裝到 `~/.gemini/antigravity-cli/settings.json`。IDE 的 settings 由其 Settings UI 與 Application Support 管理，官方文件未提供可安全整份取代的等價 JSON schema，因此 setup 不安裝 [`settings.json`](./settings.json) 到 IDE。
+CLI settings 以 symlink 安裝到 `~/.gemini/antigravity-cli/settings.json`，因此 [`settings.json`](./settings.json) 除官方已文件化的 `permissions` 之外，也會累積 `agy` 於 runtime 寫入的 key（例如 `trustedWorkspaces`，內含本機絕對路徑）。IDE 的 settings 由其 Settings UI 與 Application Support 管理，官方文件未提供可安全整份取代的等價 JSON schema，因此 setup 不安裝該檔到 IDE。
 
 目前沒有既有、可證明必要的 custom agent role，所以不建立空的 `agents/` 或範例 agent。若未來需要，官方 CLI global path 是 `~/.gemini/config/agents/<name>/agent.md`；custom main agent 與 subagents 的責任應在新增時個別記錄。
 

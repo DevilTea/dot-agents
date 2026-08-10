@@ -5,5 +5,8 @@
       "command(git reset --hard)",
       "command(sudo)"
     ]
-  }
+  },
+  "trustedWorkspaces": [
+    "/Users/deviltea/.agents"
+  ]
 }
