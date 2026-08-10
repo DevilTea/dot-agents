@@ -1,0 +1,150 @@
+# Cross-harness model / reasoning-effort routing table.
+# Edit assignments here; SKILL.md stays lineup-agnostic.
+# Verify slugs and effort ranges against each harness's current model list
+# before editing (Codex: ~/.codex/models_cache.json; Claude Code: /model).
+
+version: 1
+updated: "2026-08-10"
+
+principles:
+  - "Explicit user instruction and project policy override this table."
+  - "Bounded-hard work (clear scope, known success criteria) suits a cheap model at max effort; ambiguous work needs a stronger model — more effort on a cheap model does not fix misjudgment."
+  - "Unclear spec: fix the specification first; no effort level compensates for an unstated acceptance criterion."
+  - "On repeated failure, escalate one tier (effort first, then model) with new evidence; never retry unchanged at the same tier."
+  - "Prefer the cheapest adequate tier; savings come from routing volume work down, not from starving hard work."
+
+task_classes:
+  orchestration:
+    what: "Planning, architecture decisions, cross-task integration, conflict resolution, final synthesis and reporting."
+    signals: "Ambiguity, product judgment, output feeds many downstream units."
+  deep-reasoning:
+    what: "Hard but bounded problems — test-failure triage, tricky bug root-causing, algorithm design, structured document comparison."
+    signals: "Clear scope and success criteria, but genuinely difficult."
+  implementation:
+    what: "Routine feature work and refactors following known patterns."
+    signals: "Well-specified, moderate difficulty, reviewable output."
+  review-verification:
+    what: "Code review, adversarial verification of findings, security checks."
+    signals: "Needs skepticism and judgment proportional to the stakes."
+  search-retrieval:
+    what: "Codebase exploration, file/symbol search, gathering and summarizing existing information."
+    signals: "Read-only, breadth over depth, conclusion matters not process."
+  mechanical:
+    what: "Renames, format conversions, batch edits, lint fixes, boilerplate generation."
+    signals: "Deterministic transform, low judgment, high volume."
+  writing-docs:
+    what: "Documentation, commit messages, summaries, routine prose."
+    signals: "Language quality matters more than reasoning depth."
+
+harnesses:
+  claude-code:
+    models:
+      fable:
+        id: claude-fable-5
+        note: "top tier (Mythos-class)"
+      opus:
+        id: claude-opus-5
+      sonnet:
+        id: claude-sonnet-5
+      haiku:
+        id: claude-haiku-4-5
+    efforts: [low, medium, high, xhigh, max]
+    assignments:
+      orchestration:
+        model: fable
+        effort: high
+        note: "usually the main session; opus high if fable unavailable"
+      deep-reasoning:
+        model: opus
+        effort: xhigh
+        note: "fable for the hardest or most ambiguous"
+      implementation:
+        model: sonnet
+        effort: medium
+        note: "high for less familiar patterns"
+      review-verification:
+        model: sonnet
+        effort: high
+        note: "opus high for security-critical or final verify"
+      search-retrieval:
+        model: haiku
+        effort: low
+        note: "Explore agent; sonnet low if synthesis needed"
+      mechanical:
+        model: haiku
+        effort: low
+      writing-docs:
+        model: sonnet
+        effort: low
+
+  codex-cli:
+    models:
+      sol:
+        id: gpt-5.6-sol
+        efforts: [low, medium, high, xhigh, max, ultra]
+        pricing_per_mtok: { in: 5, out: 30 }
+      terra:
+        id: gpt-5.6-terra
+        efforts: [low, medium, high, xhigh, max, ultra]
+        pricing_per_mtok: { in: 2.5, out: 15 }
+      luna:
+        id: gpt-5.6-luna
+        efforts: [low, medium, high, xhigh, max]
+        pricing_per_mtok: { in: 1, out: 6 }
+    assignments:
+      orchestration:
+        model: sol
+        effort: high
+        note: "xhigh/ultra only for multi-hour agentic runs"
+      deep-reasoning:
+        model: luna
+        effort: max
+        note: "bounded-hard sweet spot (~sol-medium quality at ~1/6 cost); use sol max when the problem is ambiguous, not just hard"
+      implementation:
+        model: luna
+        effort: xhigh
+        note: "terra medium when judgment calls are likely"
+      review-verification:
+        model: terra
+        effort: high
+        note: "sol high for security-critical"
+      search-retrieval:
+        model: luna
+        effort: low
+      mechanical:
+        model: luna
+        effort: low
+      writing-docs:
+        model: luna
+        effort: medium
+    apply:
+      default: "Set model / model_reasoning_effort in ~/.codex/config.toml."
+      per_task: "codex --profile <name> with a [profiles.<name>] block."
+      subagents: "[agents] default_subagent_model / default_subagent_reasoning_effort."
+
+  antigravity:
+    # Policy: only gemini-3.6-flash is used in Antigravity. Other Gemini
+    # models are intentionally not listed. Large or complex tasks are NOT
+    # routed to this harness — hand them to Claude Code or Codex CLI.
+    models:
+      flash:
+        id: gemini-3.6-flash
+    assignments:
+      orchestration:
+        route_elsewhere: true
+        note: "use Claude Code or Codex CLI"
+      deep-reasoning:
+        route_elsewhere: true
+        note: "use Claude Code or Codex CLI"
+      implementation:
+        model: flash
+        note: "small, well-specified changes only; otherwise route elsewhere"
+      review-verification:
+        route_elsewhere: true
+        note: "use Claude Code or Codex CLI"
+      search-retrieval:
+        model: flash
+      mechanical:
+        model: flash
+      writing-docs:
+        model: flash

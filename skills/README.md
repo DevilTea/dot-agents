@@ -14,4 +14,4 @@
 
 目前已知 adapters：`agent-browser` 的部分 frontmatter 為 Claude Code metadata；`maintain-skill` 內有明確 Tool Mapping。未支援這些 adapter 的 harness 仍可使用其共通 playbook。
 
-目前只有 3 個 global skills：`agent-browser`、`commit`、`maintain-skill`。Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)，也不會因 canonical source 少了一個 entry 就自動刪除目的地內容。
+目前有 4 個 global skills：`agent-browser`、`commit`、`maintain-skill`、`model-routing`。Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)，也不會因 canonical source 少了一個 entry 就自動刪除目的地內容。
