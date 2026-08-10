@@ -19,5 +19,8 @@
     }
   },
   "language": "Zh-tw",
-  "effortLevel": "high"
+  "effortLevel": "high",
+  "autoUpdatesChannel": "stable",
+  "skipWorkflowUsageWarning": true,
+  "theme": "dark-daltonized"
 }
