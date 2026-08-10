@@ -16,15 +16,16 @@ Assign each unit of work the cheapest model/effort that is adequate for its task
 
 1. **Classify** each task unit into exactly one task class defined in `routing.yaml` (`task_classes` section). If a unit spans classes, split it into smaller units; if it cannot be split, use the most demanding class involved.
 2. **Look up** the assignment for the current harness under `harnesses.<harness>.assignments`. For a harness not in the table, apply the `principles` section and pick the nearest capability tier by analogy.
-3. **Apply** through the harness's own mechanism:
-   - Claude Code: `model` / `effort` options on subagent or workflow-agent calls; `/model` for the main session.
+3. **Apply** through the harness's own mechanism. Where a harness defaults a delegated agent to the caller's model, an omitted option is still a routing decision — set it explicitly whenever the caller sits above the task class.
+   - Claude Code: `model` / `effort` options on subagent or workflow-agent calls; `/model` for the main session. Omitting `model` inherits the main-loop model, so a fan-out launched from a high tier runs entirely at that tier.
    - Codex CLI: `model` and `model_reasoning_effort` in `~/.codex/config.toml`, per-profile via `[profiles.<name>]` (`codex --profile <name>`), or subagent defaults under `[agents]`.
    - Antigravity: model picker per conversation/agent.
 4. **Escalate on failure, don't loop.** If the assigned tier fails repeatedly on the same unit, escalate one step — effort first, then model — with the new evidence in the brief. If failure traces to an unclear spec, fix the spec instead: no effort level compensates for an unstated acceptance criterion.
+5. **Respect reserved tiers.** A tier the table marks reserved (see a harness's `policy` section) is outside the escalation path. Judging a task hard does not authorize it — run the unit at its assigned tier, then hand the user the failure evidence and let them decide.
 
 ## Output
 
-For each delegated or configured unit, state the chosen (model, effort) and the task class that justified it, so the routing is reviewable.
+For each delegated or configured unit, state the chosen (model, effort) and the task class that justified it, so the routing is reviewable. When a unit runs on a reserved tier, also name the user request that authorized it.
 
 ## Maintaining the table
 
