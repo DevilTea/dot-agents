@@ -22,6 +22,6 @@ Skills 逐一 symlink 到 `~/.claude/skills/`；現有本機配置已使用此�
 
 `~/.claude` 為 Claude Code 自有的實體目錄，setup 只管理其中的 `CLAUDE.md`、`settings.json` 與 `skills/` entry，其餘 runtime state 不受管理。早期的 `~/.claude -> <repo>/cli/claude` whole-directory symlink 安裝方式已淘汰，相關遷移邏輯與 legacy runtime 目錄一併移除。
 
-本次環境的 `claude` CLI 不在 PATH，因此無法確認 Claude Code 版本或執行 `/context`。`/Applications/Claude.app` 為 Claude Desktop `1.24012.9`，不能當作 Claude Code 版本。載入規則依目前官方文件建立。
+本機 Claude Code 版本為 `2.1.220`。載入規則依目前官方文件建立。
 
 來源：[Claude Code memory／imports](https://code.claude.com/docs/en/memory)、[Claude Code skills](https://code.claude.com/docs/en/slash-commands)。

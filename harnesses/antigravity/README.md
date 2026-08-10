@@ -1,6 +1,6 @@
 # Google Antigravity
 
-正式產品名稱為 Google Antigravity。本次本機找不到 `agy` CLI 或 `Antigravity.app`；僅存在舊的 `~/.gemini/antigravity/`、`~/.antigravity/` 與 Application Support 資料，因此無法確認本機版本或做實際載入測試。Repository 內容依目前 Google 官方 Antigravity IDE／2.0 CLI 文件整理。
+正式產品名稱為 Google Antigravity。本機已安裝 `agy` CLI `1.1.11`；`Antigravity.app` 不存在，因此 IDE surface 的實際載入行為仍未驗證。Repository 內容依目前 Google 官方 Antigravity IDE／2.0 CLI 文件整理。
 
 Canonical sources：
 
@@ -17,7 +17,7 @@ Skills 路徑依 surface 不同：
 - IDE／Antigravity 2.0：`~/.gemini/config/skills/<name>/`
 - `agy` CLI：`~/.gemini/antigravity-cli/skills/<name>/`
 
-Setup 逐一 symlink skills，與 Codex／Claude Code 一致，讓 repository 內容即時生效。官方文件列出 discovery path，但未明確保證 symlink semantics；若實測發現 Antigravity 不跟隨 symlink，需改回逐一 copy。
+Setup 逐一 symlink skills，與 Codex／Claude Code 一致，讓 repository 內容即時生效。官方文件未明確保證 symlink semantics，但已在本機以 `agy` 實測確認 symlink 安裝的 skills 可正常載入。IDE surface 尚未實測。
 
 CLI settings 以 symlink 安裝到 `~/.gemini/antigravity-cli/settings.json`，因此 [`settings.json`](./settings.json) 除官方已文件化的 `permissions` 之外，也會累積 `agy` 於 runtime 寫入的 key（例如 `trustedWorkspaces`，內含本機絕對路徑）。IDE 的 settings 由其 Settings UI 與 Application Support 管理，官方文件未提供可安全整份取代的等價 JSON schema，因此 setup 不安裝該檔到 IDE。
 
