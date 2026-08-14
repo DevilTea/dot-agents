@@ -54,6 +54,7 @@
 │   ├── claude/
 │   └── antigravity/
 └── scripts/
+    ├── clean-backups.sh
     ├── doctor.sh
     └── setup.sh
 ```
@@ -112,13 +113,27 @@ Harness 偵測方式：`codex`、`claude`、`agy` 依 PATH 判斷；Antigravity 
 ~/.dot-agents-backups/<timestamp>-<pid>/
 ```
 
-該目錄的 `manifest.tsv` 記錄原路徑與備份路徑。Rollback 前先關閉相關 harness，將目前 entry 移到別處，再依 manifest 將備份移回原路徑。備份不會由 setup 自動刪除。
+該目錄的 `manifest.tsv` 記錄原路徑與備份路徑。Rollback 前先關閉相關 harness，將目前 entry 移到別處，再依 manifest 將備份移回原路徑。備份不會由 setup 自動刪除，確認安裝正常後以 `scripts/clean-backups.sh` 清理。
 
 要在不動真實 `$HOME` 的情況下驗證 setup 本身的改動，可指定沙箱安裝根目錄：
 
 ```bash
 DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --dry-run
 ```
+
+## Backup cleanup
+
+清除 setup 留下的備份批次。與 setup 相同：先列出計畫，再要求輸入 `YES`。
+
+```bash
+./scripts/clean-backups.sh --dry-run   # 只列出
+./scripts/clean-backups.sh             # 全部清除
+./scripts/clean-backups.sh --keep 1    # 保留最新 1 份
+```
+
+只處理符合 `<YYYYmmdd-HHMMSS>-<pid>` 命名的 depth-1 目錄，手動放進 `~/.dot-agents-backups/` 的其他內容一律不動；批次全數清除且該目錄已空時會一併移除。`--yes` 跳過確認供非互動環境使用，非 TTY 且未指定時腳本直接失敗而非盲刪。
+
+清除即失去對應的 rollback 路徑，只在確認安裝正常後執行。
 
 ## Doctor
 

@@ -253,7 +253,7 @@ section 'Setup 備份'
 backup_root="$INSTALL_HOME/.dot-agents-backups"
 if [ -d "$backup_root" ]; then
   count="$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
-  info "$(tilde "$backup_root")：$count 份，setup 不會自動刪除，確認安裝正常後可自行清理"
+  info "$(tilde "$backup_root")：$count 份，setup 不會自動刪除，確認安裝正常後以 scripts/clean-backups.sh 清理"
 else
   info "$(tilde "$backup_root") 不存在"
 fi
