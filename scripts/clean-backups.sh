@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# 清除 scripts/setup.sh 產生的備份批次。
+# 清除 dot-agents sync / scripts/setup.sh 產生的備份批次。
 #
-# setup.sh 有異動時，會把既有 entry 移到 ~/.dot-agents-backups/<timestamp>-<pid>/，
-# 並在該目錄寫下 manifest.tsv 供 rollback；setup 自己永遠不刪除這些批次。本腳本
-# 是唯一的清理入口：先列出計畫，再要求確認，只動符合 setup 命名規則的批次目錄。
+# sync 有異動時，會把既有 entry 移到 ~/.dot-agents-backups/<timestamp>-<pid>/，
+# 並在該目錄寫下 manifest.tsv 供 rollback；sync 自己永遠不刪除這些批次。本腳本
+# 是唯一的清理入口：先列出計畫，再要求確認，只動符合 sync backup 命名規則的批次目錄。
 #
 # 只要還可能需要 rollback，就不要清除對應批次。
 
@@ -20,14 +20,14 @@ usage() {
   cat <<'EOF'
 Usage: clean-backups.sh [--dry-run] [--keep N] [--yes]
 
-清除 scripts/setup.sh 產生的備份批次（~/.dot-agents-backups/<timestamp>-<pid>/）。
+清除 dot-agents sync / scripts/setup.sh 產生的備份批次（~/.dot-agents-backups/<timestamp>-<pid>/）。
 
   --dry-run   只列出將刪除的批次，不修改任何檔案
   --keep N    保留最新的 N 份（預設 0，即全部清除）
   --yes       跳過互動確認，供非互動環境使用
   -h, --help  顯示本說明
 
-DOT_AGENTS_SETUP_HOME 可改寫安裝根目錄，與 setup.sh、doctor.sh 一致。
+DOT_AGENTS_SETUP_HOME 可改寫安裝根目錄，與 dot-agents、setup.sh、doctor.sh 一致。
 EOF
 }
 
@@ -76,7 +76,7 @@ done <<< "$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)"
 
 total="${#BATCHES[@]}"
 if [ "$total" -eq 0 ]; then
-  note "$(tilde "$BACKUP_ROOT") 沒有 setup 產生的備份批次。"
+  note "$(tilde "$BACKUP_ROOT") 沒有 sync 產生的備份批次。"
   exit 0
 fi
 

@@ -4,7 +4,7 @@
 # before editing (Codex: ~/.codex/models_cache.json; Claude Code: /model).
 
 version: 1
-updated: "2026-08-10"
+updated: "2026-08-22"
 
 principles:
   - "Explicit user instruction and project policy override this table."
@@ -140,12 +140,12 @@ harnesses:
       subagents: "[agents] default_subagent_model / default_subagent_reasoning_effort."
 
   antigravity:
-    # Policy: only gemini-3.6-flash is used in Antigravity. Other Gemini
+    # Policy: only Gemini 3.7 Flash (High) is used in Antigravity. Other Gemini
     # models are intentionally not listed. Large or complex tasks are NOT
     # routed to this harness — hand them to Claude Code or Codex CLI.
     models:
       flash:
-        id: gemini-3.6-flash
+        id: gemini-3.7-flash-high
     assignments:
       orchestration:
         route_elsewhere: true

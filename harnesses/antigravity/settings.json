@@ -6,7 +6,5 @@
       "command(sudo)"
     ]
   },
-  "trustedWorkspaces": [
-    "/Users/deviltea/.agents"
-  ]
+  "enableTelemetry": false
 }

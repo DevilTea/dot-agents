@@ -1,6 +1,6 @@
 # Codex
 
-Canonical policy：[`AGENTS.md`](./AGENTS.md)。共通 intent 位於 [`../../preferences/`](../../preferences/)。
+Canonical sources：[`AGENTS.md`](./AGENTS.md) 與 [`config.toml`](./config.toml)。共通 intent 位於 [`../../preferences/`](../../preferences/)。
 
 ## Loading model
 
@@ -12,16 +12,16 @@ Canonical policy：[`AGENTS.md`](./AGENTS.md)。共通 intent 位於 [`../../pre
 - instruction chain 每次 run／TUI session 啟動時建立。
 - 預設 project instruction 總上限為 32 KiB，可由 `project_doc_max_bytes` 調整。
 
-官方文件未提供讓 `AGENTS.md` 直接 import 任意 Markdown 的語法。因此 setup 會依固定順序生成 `~/.codex/AGENTS.md`：
+`dot-agents sync` 依固定順序生成 `~/.codex/AGENTS.md`：
 
 1. `preferences/communication.md`
 2. `preferences/engineering.md`
 3. `harnesses/codex/AGENTS.md`
 
-修改任一 canonical source 後需重新執行 setup，並開啟新的 Codex session。生成檔不應直接修改。
+Canonical source 修改後先用 `dot-agents check` 查看 drift，再以 `dot-agents sync` materialize；新 instruction 只會在新的 Codex run／TUI session 建立 instruction chain 時載入。
 
-Personal skills 的官方位置是 `~/.agents/skills/`。setup 逐一建立 skill symlink；若 repository 本身位於 `~/.agents`，來源與目的相同，不做任何異動。
+Personal skills 的官方位置是 `~/.agents/skills/`。`dot-agents sync` 將 `skills/<name>/` 完整 copy 到該位置，不使用 symlink，因此 repository 修改不會在未 sync 時偷偷改變執行中環境。
 
-`~/.codex/config.toml` 不由本 repository 管理：現有內容可能包含 MCP、sandbox、model 與本機路徑，缺乏可安全整份取代的 portable baseline。
+`harnesses/codex/config.toml` 保存跨裝置 shared defaults；目前管理 `model`、`model_reasoning_effort` 與 `[agents]` 的 default subagent model/effort。`dot-agents sync` 對 `~/.codex/config.toml` 做 key-level patch，不整份重寫，因此 canonical 未管理的 MCP、sandbox、comments 與本機設定會保留。裝置差異可放在 `~/.config/dot-agents/overrides/codex.toml`，其 key precedence 高於 canonical。
 
 來源：[OpenAI Codex `AGENTS.md` 文件](https://learn.chatgpt.com/docs/agent-configuration/agents-md.md)。

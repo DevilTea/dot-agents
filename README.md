@@ -55,70 +55,115 @@
 │   └── antigravity/
 └── scripts/
     ├── clean-backups.sh
+    ├── dot-agents
     ├── doctor.sh
     └── setup.sh
 ```
 
 - `preferences/` 是跨 harness 的可攜 intent，見 [preferences/README.md](./preferences/README.md)。
 - `skills/` 是 global discovery set，見 [skills/README.md](./skills/README.md)。
-- `optional-skills/` 是 project opt-in catalog，global setup 不安裝，見 [optional-skills/README.md](./optional-skills/README.md)。
+- `optional-skills/` 是 project opt-in catalog，global sync 不安裝，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
 - `.skill-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它不是 prompt，也不是 portability contract。
 
-## Installation model
+## Sync model
 
-Setup 只做兩種安裝：**symlink** 指回 repository，或**生成**組合後的檔案。
+Repository 只保存 canonical source；harness runtime 目錄不再 symlink 回 repository。同步是明確、單向且由使用者觸發：
 
-| 安裝位置 | 型態 | 來源 | 改動後需重跑 setup |
-| --- | --- | --- | --- |
-| `~/.codex/AGENTS.md` | 生成 | `preferences/` ×2 + `harnesses/codex/AGENTS.md` | 是 |
-| `~/.agents/skills/<name>` | symlink | `skills/<name>` | 僅新增或移除 entry |
-| `~/.claude/CLAUDE.md` | 生成 | `harnesses/claude/CLAUDE.md`（`@path` 改寫為絕對路徑） | 是 |
-| `~/.claude/settings.json` | symlink | `harnesses/claude/settings.json` | 否 |
-| `~/.claude/skills/<name>` | symlink | `skills/<name>` | 僅新增或移除 entry |
-| `~/.gemini/GEMINI.md` | 生成 | `preferences/` ×2 + `harnesses/antigravity/instructions.md` | 是 |
-| `~/.gemini/antigravity-cli/settings.json` | symlink | `harnesses/antigravity/settings.json` | 否 |
-| `~/.gemini/antigravity-cli/skills/<name>` | symlink | `skills/<name>` | 僅新增或移除 entry |
-| `~/.gemini/config/skills/<name>`（IDE） | symlink | `skills/<name>` | 僅新增或移除 entry |
-
-Symlink 的部分，repository 永遠就是實際生效的內容，改完立即生效；代價是 harness 於 runtime 寫入該檔（例如 Claude Code 的 `/config`、`agy` 的 `trustedWorkspaces`）會直接落在 repository，需要自行 review 後 commit。
-
-三個 instruction 檔無法用 symlink 表達，必須生成：Codex 的 `AGENTS.md` 官方無 import 語法、Antigravity 的 `GEMINI.md` 同為串接產物，兩者都必須是完整檔；Claude 的 `CLAUDE.md` 需把相對 `@path` 改寫成絕對路徑才能在 `~/.claude/` 正確解析。
-
-若 repository 本身就位於 `~/.agents`，Codex skills 的來源與目的相同，setup 不做任何異動。
-
-`~/.codex/config.toml` 與 Antigravity IDE settings 不由本 repository 管理：兩者都缺乏可安全整份取代的 portable baseline。
-
-## Setup
-
-先預覽，不修改檔案：
-
-```bash
-./scripts/setup.sh --dry-run
+```text
+canonical repository
+        +
+device-local overrides
+        ↓
+   dot-agents sync
+        ↓
+materialized harness files / directories
 ```
 
-正式執行會先列出所有異動，再要求輸入 `YES`：
+`dot-agents check` 唯讀比較 canonical source 與目前安裝結果；有 drift 時 exit 1。`dot-agents sync` 才會實際寫入。Harness 在兩次 sync 之間修改 runtime 檔案，不會直接污染 Git repository。
 
-```bash
-./scripts/setup.sh
+| 安裝位置 | 同步方式 | 來源 |
+| --- | --- | --- |
+| `~/.codex/AGENTS.md` | generate | `preferences/` ×2 + `harnesses/codex/AGENTS.md` |
+| `~/.codex/config.toml` | managed TOML key merge | `harnesses/codex/config.toml` + local override + existing runtime config |
+| `~/.agents/skills/<name>` | copy | `skills/<name>` |
+| `~/.claude/CLAUDE.md` | generate | `harnesses/claude/CLAUDE.md`（`@path` 改寫為 canonical repo 絕對路徑） |
+| `~/.claude/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
+| `~/.claude/skills/<name>` | copy | `skills/<name>` |
+| `~/.gemini/GEMINI.md` | generate | `preferences/` ×2 + `harnesses/antigravity/instructions.md` |
+| `~/.gemini/antigravity-cli/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
+| `~/.gemini/antigravity-cli/skills/<name>` | copy | `skills/<name>` |
+| `~/.gemini/config/skills/<name>`（IDE） | copy | `skills/<name>` |
+
+Managed settings merge 的 precedence：
+
+```text
+existing runtime state
+        ← canonical managed settings
+        ← device-local override
 ```
 
-腳本不下載工具、不修改 project repository，也不移除不再存在於 canonical source 的舊項目。未安裝的 harness 會顯示 skip reason，其餘 harness 仍可繼續處理。重跑是冪等的：已同步的項目不會出現在計畫中。
+Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、sandbox、comment 或本機設定。
 
-Harness 偵測方式：`codex`、`claude`、`agy` 依 PATH 判斷；Antigravity IDE 依 `/Applications/Antigravity.app` 或 `~/Applications/Antigravity.app` 是否存在。
+Device-local override 放在：
 
-有異動時，既有 entry 會先移至：
+```text
+~/.config/dot-agents/overrides/codex.toml
+~/.config/dot-agents/overrides/claude-settings.json
+~/.config/dot-agents/overrides/antigravity-settings.json
+```
+
+這些檔案不進 Git，適合 machine-specific path、單機 UX 或其他裝置差異。JSON object 會 recursive merge；array 與 scalar 由較高 precedence 整體取代。Codex TOML override 使用相同 precedence，但只把 override 中明確出現的 key 納入 managed set。
+
+Antigravity IDE settings 目前仍不由本 repository 管理，因為尚無可安全管理 subset、同時保留未知 runtime state 的既定 adapter。
+
+## Commands
+
+第一次 clone 後，直接從 repository 執行：
+
+```bash
+./scripts/dot-agents check
+./scripts/dot-agents sync
+```
+
+第一次 `sync` 會另外 materialize 一個很小的 launcher 到：
+
+```text
+~/.local/bin/dot-agents
+```
+
+並把 canonical repository 路徑記錄在：
+
+```text
+~/.config/dot-agents/repo
+```
+
+之後可直接使用：
+
+```bash
+dot-agents check          # 唯讀；完全同步 exit 0，有 drift exit 1
+dot-agents sync           # 列出 plan，互動要求輸入 YES
+dot-agents sync --yes     # 非互動套用
+dot-agents doctor         # canonical / override / sync / lockfile diagnostics
+```
+
+`./scripts/setup.sh --dry-run` 與 `./scripts/setup.sh` 保留為相容入口，分別等同 `dot-agents check` 與 `dot-agents sync`；新流程不再以 setup 作為主要介面。
+
+Sync 不下載 harness、不修改 project repository。未安裝的 harness 會顯示 skip reason。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。
+
+有異動時，既有 managed entry 會先移至：
 
 ```text
 ~/.dot-agents-backups/<timestamp>-<pid>/
 ```
 
-該目錄的 `manifest.tsv` 記錄原路徑與備份路徑。Rollback 前先關閉相關 harness，將目前 entry 移到別處，再依 manifest 將備份移回原路徑。備份不會由 setup 自動刪除，確認安裝正常後以 `scripts/clean-backups.sh` 清理。
+`manifest.tsv` 記錄原路徑與備份路徑。Derived local sync state 不需要 rollback，因此不進 backup manifest。
 
-要在不動真實 `$HOME` 的情況下驗證 setup 本身的改動，可指定沙箱安裝根目錄：
+要在不動真實 `$HOME` 的情況下測試：
 
 ```bash
-DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --dry-run
+DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/dot-agents check
+DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/dot-agents sync --yes
 ```
 
 ## Backup cleanup
@@ -137,46 +182,46 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --dry-run
 
 ## Doctor
 
-檢查 canonical source、安裝結果與 skill 清單之間的落差。唯讀，不修改任何檔案；有 `FAIL` 時 exit 1。
+`dot-agents doctor` 是唯讀 diagnostics。它檢查：
+
+- canonical source 與 JSON 是否有效
+- canonical settings 是否誤帶常見 machine-specific absolute path
+- device-local override JSON 是否有效
+- `skills/` 是否缺少 `SKILL.md` 或含 symlink
+- 是否有 pending sync
+- `.skill-lock.json` 與實際 skill path 是否一致
+- setup/sync backups 現況
 
 ```bash
-./scripts/doctor.sh
+dot-agents doctor
 ```
 
-「是否同步」由 `setup.sh --dry-run` 回答，`doctor.sh` 額外檢查 setup 無法表達的狀況：
-
-- managed settings 是否仍是指回 repository 的 symlink，或已被 harness 於 runtime 換成一般檔案（此時內容需人工併回 canonical）
-- managed settings 是否有經由 symlink 寫回 repository、尚未 commit 的改動（`WARN`，需 review）
-- 各 harness skills 目錄有無斷掉的 symlink、setup 不會清除的 orphan，或不隨 repository 更新的實體目錄
-- `skills/` 內是否有缺少 `SKILL.md` 的目錄
-- `.skill-lock.json` 是否合法，且每個 `skillPath` 都存在（外部 skill 移除後殘留的 entry 需手動刪除）
-
-`FAIL` 表示狀態與預期不符，`WARN` 表示需要人工判斷，`INFO` 只是現況描述。同樣支援 `DOT_AGENTS_SETUP_HOME` 指向沙箱。
+Pending sync 視為 `FAIL`；`WARN` 表示 canonical content 本身仍需要人工判斷。
 
 ## 日常操作
 
 **改 communication／engineering preference**
-編輯 `preferences/*.md`，重跑 setup。三個 instruction 檔都由它們組合而成。
+編輯 `preferences/*.md`，再執行 `dot-agents check`／`dot-agents sync`。三個 instruction 檔都由它們組合而成。
 
 **改某個 harness 的 policy**
-編輯 `harnesses/<harness>/AGENTS.md`／`CLAUDE.md`／`instructions.md`，重跑 setup。只影響該 harness。
+編輯 `harnesses/<harness>/AGENTS.md`／`CLAUDE.md`／`instructions.md`，再執行 `dot-agents check`／`dot-agents sync`。只影響該 harness。
 
 **改某個 harness 的 settings**
-編輯 `harnesses/<harness>/settings.json`，立即生效，不需重跑 setup。
+編輯 `harnesses/<harness>/settings.json` 後執行 `dot-agents sync`；canonical source 不會直接連到 runtime。單機差異放 `~/.config/dot-agents/overrides/`。
 
 **新增自己撰寫的 skill**
-建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），重跑 setup 建立各 harness 的 symlink。撰寫與稽核流程見 `maintain-skill` skill。
+建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），再執行 `dot-agents sync` materialize 到各 harness。撰寫與稽核流程見 `maintain-skill` skill。
 
 **安裝或更新外部來源的 skill**
-以 `npx skills` 管理，安裝結果記錄在 `.skill-lock.json`，之後重跑 setup 建立 symlink。不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋，且 `skillFolderHash` 會失去意義。兩個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
+以 `npx skills` 管理，安裝結果記錄在 `.skill-lock.json`，之後執行 `dot-agents sync` 更新各 harness copy。不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋，且 `skillFolderHash` 會失去意義。兩個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
 
-哪些 skill 屬於外部來源以 `.skill-lock.json` 為準，其餘為本地撰寫；`./scripts/doctor.sh` 會列出兩者的實際分佈，不需在文件中複述清單。
+哪些 skill 屬於外部來源以 `.skill-lock.json` 為準，其餘為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈，不需在文件中複述清單。
 
 **移除 skill**
-刪除 `skills/<name>/`（外部來源者一併處理 lockfile entry）。Setup **不會**自動清除已安裝的 symlink，需手動刪除各 harness 目錄下對應的 entry。
+刪除 `skills/<name>/`（外部來源者一併處理 lockfile entry）。曾由 dot-agents sync 管理的 deployment copy 會由 local ownership state 辨識，下一次 `sync` 自動移除。
 
 **只想在特定 project 使用的 skill**
-放進 `optional-skills/`，並依 [optional-skills/README.md](./optional-skills/README.md) 在目標 project 明確安裝。Global setup 不會安裝這些內容，也不會修改任何 project repository。
+放進 `optional-skills/`，並依 [optional-skills/README.md](./optional-skills/README.md) 在目標 project 明確安裝。Global sync 不會安裝這些內容，也不會修改任何 project repository。
 
 ## Portability contract
 
@@ -196,8 +241,8 @@ Project-local instructions 可以補充或覆蓋個人偏好。實際 precedence
 本 repository 由早期的單一 `AGENTS.md` 加 Claude 專屬 setup 演進而來。主要決定：
 
 - 通用語氣與工程原則拆到 `preferences/`；execution、validation、reporting 等依 harness 能力拆到 `harnesses/<harness>/`。
-- `scripts/setup-claude.sh` 由多 harness、可 dry-run 的 `scripts/setup.sh` 取代。
-- 早期的 `~/.claude -> <repo>/cli/claude` 整目錄 symlink 安裝方式淘汰，改為 per-entry 管理，`cli/` 已移除。
-- Pi CLI 與 Node.js extension 不恢復；本 repository 不再開發 CLI 或 package。
+- `scripts/setup-claude.sh` 曾由多 harness `scripts/setup.sh` 取代；目前主要介面已改為 explicit `dot-agents check`／`dot-agents sync`。
+- 所有 harness deployment 都不再 symlink 回 repository；instructions generate、skills materialize copy、mutable JSON settings 採 managed merge。
+- Pi CLI 與 Node.js extension 不恢復；目前 `dot-agents` 只是 repository-local sync CLI，不是 agent framework 或發布套件。
 
 細節可由 git history 復原。

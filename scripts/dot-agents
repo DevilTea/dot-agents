@@ -1,0 +1,843 @@
+#!/usr/bin/env python3
+"""Explicit sync CLI for the dot-agents personal agent environment.
+
+Repository content is canonical. Harness runtime directories receive materialized
+copies only when `dot-agents sync` is invoked. `dot-agents check` is read-only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import tomllib
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+@dataclass
+class Action:
+    kind: str
+    destination: Path
+    label: str
+    source: Path | None = None
+    content: bytes | None = None
+    json_value: dict[str, Any] | None = None
+
+
+def install_home() -> Path:
+    return Path(os.environ.get("DOT_AGENTS_SETUP_HOME", str(Path.home()))).expanduser().resolve()
+
+
+def config_home(home: Path) -> Path:
+    explicit = os.environ.get("DOT_AGENTS_CONFIG_HOME")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg and "DOT_AGENTS_SETUP_HOME" not in os.environ:
+        return Path(xdg).expanduser().resolve() / "dot-agents"
+    return home / ".config" / "dot-agents"
+
+
+def looks_like_repo(path: Path) -> bool:
+    return (
+        (path / "preferences" / "communication.md").is_file()
+        and (path / "preferences" / "engineering.md").is_file()
+        and (path / "harnesses").is_dir()
+        and (path / "skills").is_dir()
+        and (path / "scripts" / "dot-agents").is_file()
+    )
+
+
+def resolve_repo(home: Path, cfg: Path) -> Path:
+    env_repo = os.environ.get("DOT_AGENTS_REPO")
+    if env_repo:
+        candidate = Path(env_repo).expanduser().resolve()
+        if not looks_like_repo(candidate):
+            raise RuntimeError(f"DOT_AGENTS_REPO is not a dot-agents repository: {candidate}")
+        return candidate
+
+    # Running the canonical repository script directly is the bootstrap path.
+    script_repo = Path(__file__).resolve().parent.parent
+    if looks_like_repo(script_repo):
+        return script_repo
+
+    pointer = cfg / "repo"
+    if pointer.is_file():
+        raw = pointer.read_text(encoding="utf-8").strip()
+        if raw:
+            candidate = Path(raw).expanduser().resolve()
+            if looks_like_repo(candidate):
+                return candidate
+            raise RuntimeError(f"configured dot-agents repository is invalid: {candidate}")
+
+    raise RuntimeError(
+        "dot-agents repository is not configured; run ./scripts/dot-agents sync from the cloned repository"
+    )
+
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def generated_codex(repo: Path) -> bytes:
+    parts = [
+        "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
+        read_text(repo / "preferences" / "communication.md").rstrip("\n") + "\n\n",
+        read_text(repo / "preferences" / "engineering.md").rstrip("\n") + "\n\n",
+        read_text(repo / "harnesses" / "codex" / "AGENTS.md").rstrip("\n") + "\n",
+    ]
+    return "".join(parts).encode()
+
+
+def generated_claude(repo: Path) -> bytes:
+    source = read_text(repo / "harnesses" / "claude" / "CLAUDE.md")
+    lines: list[str] = ["<!-- Generated from dot-agents. Do not edit directly. -->", ""]
+    prefix = "@../../preferences/"
+    for line in source.splitlines():
+        if line.startswith(prefix):
+            lines.append(f"@{repo}/preferences/{line[len(prefix):]}")
+        else:
+            lines.append(line)
+    return ("\n".join(lines).rstrip("\n") + "\n").encode()
+
+
+def generated_antigravity(repo: Path) -> bytes:
+    parts = [
+        "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
+        read_text(repo / "preferences" / "communication.md").rstrip("\n") + "\n\n",
+        read_text(repo / "preferences" / "engineering.md").rstrip("\n") + "\n\n",
+        read_text(repo / "harnesses" / "antigravity" / "instructions.md").rstrip("\n") + "\n",
+    ]
+    return "".join(parts).encode()
+
+
+def launcher_content() -> bytes:
+    return b"""#!/bin/sh\nset -eu\nCONFIG_HOME=${DOT_AGENTS_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/dot-agents}\nREPO_FILE=\"$CONFIG_HOME/repo\"\nif [ ! -f \"$REPO_FILE\" ]; then\n  echo \"dot-agents: repository is not configured; run ./scripts/dot-agents sync from the cloned repository\" >&2\n  exit 2\nfi\nREPO=$(cat \"$REPO_FILE\")\nexec \"$REPO/scripts/dot-agents\" \"$@\"\n"""
+
+
+def load_json_object(path: Path, *, allow_missing: bool = False) -> dict[str, Any]:
+    if allow_missing and not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise RuntimeError(f"missing JSON file: {path}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid JSON in {path}: {exc}")
+    if not isinstance(value, dict):
+        raise RuntimeError(f"expected a JSON object in {path}")
+    return value
+
+
+def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def load_toml_object(path: Path, *, allow_missing: bool = False) -> dict[str, Any]:
+    if allow_missing and not path.exists():
+        return {}
+    try:
+        with path.open("rb") as handle:
+            value = tomllib.load(handle)
+    except FileNotFoundError:
+        raise RuntimeError(f"missing TOML file: {path}")
+    except tomllib.TOMLDecodeError as exc:
+        raise RuntimeError(f"invalid TOML in {path}: {exc}")
+    if not isinstance(value, dict):
+        raise RuntimeError(f"expected a TOML table in {path}")
+    return value
+
+
+def toml_value(value: Any) -> str:
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value == float("inf"):
+            return "inf"
+        if value == float("-inf"):
+            return "-inf"
+        if value != value:
+            return "nan"
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    raise RuntimeError(f"unsupported managed TOML value: {value!r}")
+
+
+def flatten_toml_leaves(value: dict[str, Any], prefix: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
+    leaves: list[tuple[tuple[str, ...], Any]] = []
+    for key, item in value.items():
+        path = prefix + (key,)
+        if isinstance(item, dict):
+            leaves.extend(flatten_toml_leaves(item, path))
+        else:
+            leaves.append((path, item))
+    return leaves
+
+
+def patch_toml_text(current_text: str, expected: dict[str, Any]) -> str:
+    """Patch only managed TOML leaves, preserving unrelated text and tables."""
+    lines = current_text.splitlines()
+    table_re = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
+    key_re = re.compile(r"^(\s*)([A-Za-z0-9_-]+)\s*=.*$")
+
+    def table_ranges() -> dict[tuple[str, ...], tuple[int, int]]:
+        starts: list[tuple[tuple[str, ...], int]] = [((), -1)]
+        for index, line in enumerate(lines):
+            match = table_re.match(line)
+            if match:
+                starts.append((tuple(match.group(1).split(".")), index))
+        result: dict[tuple[str, ...], tuple[int, int]] = {}
+        for pos, (table, header_index) in enumerate(starts):
+            end = starts[pos + 1][1] if pos + 1 < len(starts) else len(lines)
+            result[table] = (header_index + 1, end)
+        return result
+
+    for path, value in flatten_toml_leaves(expected):
+        table = path[:-1]
+        key = path[-1]
+        ranges = table_ranges()
+        rendered = f"{key} = {toml_value(value)}"
+        if table in ranges:
+            start, end = ranges[table]
+            replaced = False
+            for index in range(start, end):
+                match = key_re.match(lines[index])
+                if match and match.group(2) == key:
+                    lines[index] = match.group(1) + rendered
+                    replaced = True
+                    break
+            if replaced:
+                continue
+            insert_at = end
+            while insert_at > start and lines[insert_at - 1].strip() == "":
+                insert_at -= 1
+            lines.insert(insert_at, rendered)
+        else:
+            if lines and lines[-1].strip() != "":
+                lines.append("")
+            lines.append(f"[{'.'.join(table)}]")
+            lines.append(rendered)
+
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def contains_managed(current: Any, expected: Any) -> bool:
+    """Return true when current contains every managed expected value.
+
+    Unknown runtime-owned keys are intentionally ignored.
+    """
+    if isinstance(expected, dict):
+        if not isinstance(current, dict):
+            return False
+        return all(key in current and contains_managed(current[key], value) for key, value in expected.items())
+    return current == expected
+
+
+def logical_file_bytes(path: Path) -> bytes | None:
+    try:
+        if path.is_file() and not path.is_symlink():
+            return path.read_bytes()
+    except OSError:
+        pass
+    return None
+
+
+def tree_digest(path: Path) -> str | None:
+    if not path.is_dir() or path.is_symlink():
+        return None
+    digest = hashlib.sha256()
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
+        files.sort()
+        root_path = Path(root)
+        rel_root = root_path.relative_to(path)
+        for name in dirs:
+            p = root_path / name
+            rel = (rel_root / name).as_posix()
+            digest.update(b"D\0" + rel.encode() + b"\0")
+            if p.is_symlink():
+                digest.update(b"L\0" + os.readlink(p).encode() + b"\0")
+        for name in files:
+            p = root_path / name
+            rel = (rel_root / name).as_posix()
+            if p.is_symlink():
+                # Source skill symlinks are not expected; include target identity so
+                # doctor/check still report deterministic drift.
+                digest.update(b"L\0" + rel.encode() + b"\0" + os.readlink(p).encode() + b"\0")
+            else:
+                digest.update(b"F\0" + rel.encode() + b"\0")
+                with p.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def skill_names(repo: Path) -> list[str]:
+    result: list[str] = []
+    for child in sorted((repo / "skills").iterdir(), key=lambda p: p.name):
+        if child.is_dir() and (child / "SKILL.md").is_file():
+            result.append(child.name)
+    return result
+
+
+def command_exists(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def antigravity_ide_installed(home: Path) -> bool:
+    return Path("/Applications/Antigravity.app").is_dir() or (home / "Applications" / "Antigravity.app").is_dir()
+
+
+def path_exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def read_state(cfg: Path) -> dict[str, Any]:
+    path = cfg / "state.json"
+    if not path.exists():
+        return {"version": 1, "skills": {}}
+    return load_json_object(path)
+
+
+def expected_state(installed_surfaces: dict[str, Path], names: list[str]) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "skills": {surface: names for surface in sorted(installed_surfaces)},
+    }
+
+
+def json_bytes(value: dict[str, Any]) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
+
+
+def plan(repo: Path, home: Path, cfg: Path) -> tuple[list[Action], list[str]]:
+    actions: list[Action] = []
+    notes: list[str] = []
+
+    required = [
+        repo / "preferences" / "communication.md",
+        repo / "preferences" / "engineering.md",
+        repo / "harnesses" / "codex" / "AGENTS.md",
+        repo / "harnesses" / "codex" / "config.toml",
+        repo / "harnesses" / "claude" / "CLAUDE.md",
+        repo / "harnesses" / "claude" / "settings.json",
+        repo / "harnesses" / "antigravity" / "instructions.md",
+        repo / "harnesses" / "antigravity" / "settings.json",
+    ]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise RuntimeError("canonical source missing:\n  " + "\n  ".join(missing))
+
+    # Bootstrap metadata and user-facing launcher are also explicit sync outputs.
+    repo_pointer = cfg / "repo"
+    pointer_content = (str(repo) + "\n").encode()
+    if logical_file_bytes(repo_pointer) != pointer_content:
+        actions.append(Action("write", repo_pointer, "dot-agents repository pointer", content=pointer_content))
+
+    launcher = home / ".local" / "bin" / "dot-agents"
+    if logical_file_bytes(launcher) != launcher_content():
+        actions.append(Action("write-exec", launcher, "dot-agents command launcher", content=launcher_content()))
+
+    installed_surfaces: dict[str, Path] = {}
+    names = skill_names(repo)
+
+    if command_exists("codex"):
+        target = home / ".codex" / "AGENTS.md"
+        content = generated_codex(repo)
+        if logical_file_bytes(target) != content:
+            actions.append(Action("write", target, "Codex global instructions", content=content))
+        plan_toml_settings(
+            actions,
+            repo / "harnesses" / "codex" / "config.toml",
+            cfg / "overrides" / "codex.toml",
+            home / ".codex" / "config.toml",
+            "Codex config",
+        )
+        installed_surfaces["codex"] = home / ".agents" / "skills"
+    else:
+        notes.append("SKIP Codex: 'codex' is not installed or not available in PATH.")
+
+    if command_exists("claude"):
+        target = home / ".claude" / "CLAUDE.md"
+        content = generated_claude(repo)
+        if logical_file_bytes(target) != content:
+            actions.append(Action("write", target, "Claude Code global instructions", content=content))
+        installed_surfaces["claude"] = home / ".claude" / "skills"
+        plan_json_settings(
+            actions,
+            repo / "harnesses" / "claude" / "settings.json",
+            cfg / "overrides" / "claude-settings.json",
+            home / ".claude" / "settings.json",
+            "Claude Code settings",
+        )
+    else:
+        notes.append("SKIP Claude Code: 'claude' is not installed or not available in PATH.")
+
+    ide = antigravity_ide_installed(home)
+    agy = command_exists("agy")
+    if ide or agy:
+        target = home / ".gemini" / "GEMINI.md"
+        content = generated_antigravity(repo)
+        if logical_file_bytes(target) != content:
+            actions.append(Action("write", target, "Google Antigravity global instructions", content=content))
+
+    if ide:
+        installed_surfaces["antigravity-ide"] = home / ".gemini" / "config" / "skills"
+    else:
+        notes.append("SKIP Google Antigravity IDE: Antigravity.app was not found.")
+
+    if agy:
+        installed_surfaces["antigravity-cli"] = home / ".gemini" / "antigravity-cli" / "skills"
+        plan_json_settings(
+            actions,
+            repo / "harnesses" / "antigravity" / "settings.json",
+            cfg / "overrides" / "antigravity-settings.json",
+            home / ".gemini" / "antigravity-cli" / "settings.json",
+            "Antigravity CLI settings",
+        )
+    else:
+        notes.append("SKIP Antigravity CLI: 'agy' is not installed or not available in PATH.")
+
+    previous_state = read_state(cfg)
+    previous_skills = previous_state.get("skills", {}) if isinstance(previous_state.get("skills"), dict) else {}
+
+    for surface, root in installed_surfaces.items():
+        for name in names:
+            source = repo / "skills" / name
+            destination = root / name
+            if tree_digest(source) != tree_digest(destination):
+                actions.append(Action("copy-tree", destination, f"{surface} skill {name}", source=source))
+
+        previously_managed = previous_skills.get(surface, [])
+        if isinstance(previously_managed, list):
+            for old_name in sorted(set(previously_managed) - set(names)):
+                destination = root / old_name
+                if path_exists(destination):
+                    actions.append(Action("remove", destination, f"removed {surface} skill {old_name}"))
+
+    state = expected_state(installed_surfaces, names)
+    state_path = cfg / "state.json"
+    if logical_file_bytes(state_path) != json_bytes(state):
+        actions.append(Action("state", state_path, "local sync ownership state", content=json_bytes(state)))
+
+    return actions, notes
+
+
+def plan_toml_settings(
+    actions: list[Action],
+    canonical_path: Path,
+    override_path: Path,
+    destination: Path,
+    label: str,
+) -> None:
+    canonical = load_toml_object(canonical_path)
+    override = load_toml_object(override_path, allow_missing=True)
+    expected = deep_merge(canonical, override)
+
+    current: dict[str, Any] = {}
+    current_text = ""
+    if path_exists(destination):
+        try:
+            current_text = destination.read_text(encoding="utf-8")
+            current = load_toml_object(destination)
+        except (RuntimeError, OSError):
+            current = {}
+            current_text = ""
+
+    if destination.is_symlink() or not contains_managed(current, expected):
+        merged_text = patch_toml_text(current_text, expected)
+        actions.append(Action("toml-merge", destination, label, content=merged_text.encode()))
+
+
+def plan_json_settings(
+    actions: list[Action],
+    canonical_path: Path,
+    override_path: Path,
+    destination: Path,
+    label: str,
+) -> None:
+    canonical = load_json_object(canonical_path)
+    override = load_json_object(override_path, allow_missing=True)
+    expected = deep_merge(canonical, override)
+
+    current: dict[str, Any] = {}
+    if path_exists(destination):
+        try:
+            current = load_json_object(destination)
+        except RuntimeError:
+            # Invalid/mismatched runtime file is still repairable by sync.
+            current = {}
+
+    # A managed settings symlink is always drift even if its current contents match.
+    if destination.is_symlink() or not contains_managed(current, expected):
+        merged = deep_merge(current, expected)
+        actions.append(Action("json-merge", destination, label, json_value=merged))
+
+
+def action_verb(action: Action) -> str:
+    if action.kind == "remove":
+        return "REMOVE"
+    if action.kind in {"json-merge", "toml-merge"}:
+        return "MERGE"
+    if action.kind == "copy-tree":
+        return "COPY"
+    if action.kind in {"state"}:
+        return "UPDATE"
+    return "REPLACE" if path_exists(action.destination) else "CREATE"
+
+
+def print_plan(actions: list[Action], notes: list[str]) -> None:
+    for note in notes:
+        print(note)
+    if not actions:
+        print("Everything is in sync.")
+        return
+    print("\nPending sync:")
+    for action in actions:
+        print(f"  - {action_verb(action)}: {action.destination} [{action.label}]")
+
+
+def backup_existing(destination: Path, backup_root: Path, manifest: list[tuple[Path, Path]]) -> None:
+    if not path_exists(destination):
+        return
+    relative = str(destination).lstrip(os.sep)
+    backup_path = backup_root / relative
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(destination), str(backup_path))
+    manifest.append((destination, backup_path))
+
+
+def atomic_write(destination: Path, content: bytes, executable: bool = False) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=str(destination.parent))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+        if executable:
+            os.chmod(temp_name, 0o755)
+        os.replace(temp_name, destination)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
+def apply(actions: list[Action], home: Path) -> Path | None:
+    if not actions:
+        return None
+
+    backup_root = home / ".dot-agents-backups" / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    manifest: list[tuple[Path, Path]] = []
+
+    for action in actions:
+        if action.kind == "state":
+            # Local ownership metadata is derived state, not user/runtime content.
+            assert action.content is not None
+            atomic_write(action.destination, action.content)
+            continue
+
+        backup_existing(action.destination, backup_root, manifest)
+
+        if action.kind == "remove":
+            continue
+        if action.kind == "copy-tree":
+            assert action.source is not None
+            action.destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(action.source, action.destination, symlinks=False)
+        elif action.kind in {"write", "write-exec"}:
+            assert action.content is not None
+            atomic_write(action.destination, action.content, executable=action.kind == "write-exec")
+        elif action.kind == "json-merge":
+            assert action.json_value is not None
+            atomic_write(action.destination, json_bytes(action.json_value))
+        elif action.kind == "toml-merge":
+            assert action.content is not None
+            atomic_write(action.destination, action.content)
+        else:
+            raise RuntimeError(f"unknown action type: {action.kind}")
+
+    if manifest:
+        backup_root.mkdir(parents=True, exist_ok=True)
+        manifest_path = backup_root / "manifest.tsv"
+        manifest_path.write_text(
+            "".join(f"{original}\t{backup}\n" for original, backup in manifest),
+            encoding="utf-8",
+        )
+        return backup_root
+
+    if backup_root.exists():
+        shutil.rmtree(backup_root)
+    return None
+
+
+def run_check(repo: Path, home: Path, cfg: Path) -> int:
+    actions, notes = plan(repo, home, cfg)
+    print_plan(actions, notes)
+    return 1 if actions else 0
+
+
+def run_sync(repo: Path, home: Path, cfg: Path, assume_yes: bool) -> int:
+    actions, notes = plan(repo, home, cfg)
+    print_plan(actions, notes)
+    if not actions:
+        return 0
+
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            print("ERROR: not a terminal; re-run with --yes to sync without confirmation", file=sys.stderr)
+            return 2
+        answer = input("\nType YES to apply these changes: ")
+        if answer != "YES":
+            print("ERROR: aborted (you did not type YES)", file=sys.stderr)
+            return 2
+
+    backup_root = apply(actions, home)
+    print(f"\nApplied {len(actions)} sync action(s).")
+    if backup_root:
+        print(f"Backups and rollback manifest: {backup_root}")
+
+    remaining, remaining_notes = plan(repo, home, cfg)
+    if remaining:
+        print("\nERROR: sync did not converge:", file=sys.stderr)
+        print_plan(remaining, remaining_notes)
+        return 1
+    print("Everything is in sync.")
+    return 0
+
+
+def absolute_machine_path(value: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(value, dict):
+        for item in value.values():
+            found.extend(absolute_machine_path(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(absolute_machine_path(item))
+    elif isinstance(value, str) and (value.startswith("/Users/") or value.startswith("/home/")):
+        found.append(value)
+    return found
+
+
+def run_doctor(repo: Path, home: Path, cfg: Path) -> int:
+    failures = 0
+    warnings = 0
+
+    def section(title: str) -> None:
+        print(f"\n{title}")
+
+    def ok(message: str) -> None:
+        print(f"  OK    {message}")
+
+    def info(message: str) -> None:
+        print(f"  INFO  {message}")
+
+    def warn(message: str) -> None:
+        nonlocal warnings
+        warnings += 1
+        print(f"  WARN  {message}")
+
+    def fail(message: str) -> None:
+        nonlocal failures
+        failures += 1
+        print(f"  FAIL  {message}")
+
+    section("Canonical sources")
+    required = [
+        "preferences/communication.md",
+        "preferences/engineering.md",
+        "harnesses/codex/AGENTS.md",
+        "harnesses/codex/config.toml",
+        "harnesses/claude/CLAUDE.md",
+        "harnesses/claude/settings.json",
+        "harnesses/antigravity/instructions.md",
+        "harnesses/antigravity/settings.json",
+        "scripts/dot-agents",
+    ]
+    for rel in required:
+        if (repo / rel).is_file():
+            ok(rel)
+        else:
+            fail(f"{rel} missing")
+
+    section("Canonical settings")
+    try:
+        value = load_toml_object(repo / "harnesses/codex/config.toml")
+        paths = absolute_machine_path(value)
+        if paths:
+            warn("harnesses/codex/config.toml contains machine-specific absolute path(s): " + ", ".join(paths))
+        else:
+            ok("harnesses/codex/config.toml is valid portable TOML")
+    except RuntimeError as exc:
+        fail(str(exc))
+
+    for rel in ["harnesses/claude/settings.json", "harnesses/antigravity/settings.json"]:
+        try:
+            value = load_json_object(repo / rel)
+            paths = absolute_machine_path(value)
+            if paths:
+                warn(f"{rel} contains machine-specific absolute path(s): {', '.join(paths)}")
+            else:
+                ok(f"{rel} is valid portable JSON")
+        except RuntimeError as exc:
+            fail(str(exc))
+
+    section("Local overrides")
+    override_paths = [
+        cfg / "overrides" / "claude-settings.json",
+        cfg / "overrides" / "antigravity-settings.json",
+    ]
+    found_override = False
+    codex_override = cfg / "overrides" / "codex.toml"
+    if codex_override.exists():
+        found_override = True
+        try:
+            load_toml_object(codex_override)
+            ok(f"{codex_override} is valid TOML")
+        except RuntimeError as exc:
+            fail(str(exc))
+    for path in override_paths:
+        if path.exists():
+            found_override = True
+            try:
+                load_json_object(path)
+                ok(f"{path} is valid JSON")
+            except RuntimeError as exc:
+                fail(str(exc))
+    if not found_override:
+        info("no device-local overrides configured")
+
+    section("Skills canonical set")
+    names = skill_names(repo)
+    broken_dirs = [
+        child.name
+        for child in sorted((repo / "skills").iterdir(), key=lambda p: p.name)
+        if child.is_dir() and not (child / "SKILL.md").is_file()
+    ]
+    for name in broken_dirs:
+        fail(f"skills/{name} is missing SKILL.md")
+    ok(f"skills/ has {len(names)} installable skill(s)")
+
+    source_symlinks: list[str] = []
+    for name in names:
+        root = repo / "skills" / name
+        for p in root.rglob("*"):
+            if p.is_symlink():
+                source_symlinks.append(str(p.relative_to(repo)))
+    if source_symlinks:
+        warn("skill source contains symlink(s); materialized copy semantics may differ: " + ", ".join(source_symlinks[:5]))
+
+    section("Sync status")
+    try:
+        actions, notes = plan(repo, home, cfg)
+        for note in notes:
+            info(note.removeprefix("SKIP "))
+        if actions:
+            fail(f"{len(actions)} sync action(s) pending; run `dot-agents check` then `dot-agents sync`")
+            for action in actions[:10]:
+                print(f"        {action_verb(action)} {action.destination} [{action.label}]")
+            if len(actions) > 10:
+                print(f"        ... and {len(actions) - 10} more")
+        else:
+            ok("all managed outputs are in sync")
+    except RuntimeError as exc:
+        fail(str(exc))
+
+    section("Skill lockfile")
+    lock_path = repo / ".skill-lock.json"
+    if not lock_path.exists():
+        info(".skill-lock.json is absent")
+    else:
+        try:
+            data = load_json_object(lock_path)
+            entries = data.get("skills", {})
+            if not isinstance(entries, dict):
+                fail(".skill-lock.json skills must be an object")
+            else:
+                missing_paths: list[str] = []
+                managed: set[str] = set()
+                for name, meta in entries.items():
+                    if not isinstance(meta, dict) or not isinstance(meta.get("skillPath"), str):
+                        fail(f"lockfile entry {name} has no skillPath")
+                        continue
+                    skill_path = repo / meta["skillPath"]
+                    if not skill_path.exists():
+                        missing_paths.append(meta["skillPath"])
+                    if meta["skillPath"].startswith("skills/"):
+                        managed.add(meta["skillPath"].split("/", 2)[1])
+                if missing_paths:
+                    fail("lockfile points to missing path(s): " + ", ".join(missing_paths))
+                else:
+                    ok(f"lockfile manages {len(entries)} entry/entries; {len(managed)} under skills/")
+                local = sorted(set(names) - managed)
+                if local:
+                    info("local/non-lockfile skills: " + ", ".join(local))
+        except RuntimeError as exc:
+            fail(str(exc))
+
+    section("Backups")
+    backup_root = home / ".dot-agents-backups"
+    if backup_root.is_dir():
+        count = sum(1 for p in backup_root.iterdir() if p.is_dir())
+        info(f"{backup_root}: {count} backup batch(es)")
+    else:
+        info(f"{backup_root} does not exist")
+
+    print()
+    if failures:
+        print(f"{failures} FAIL, {warnings} WARN.")
+        return 1
+    if warnings:
+        print(f"No FAIL; {warnings} WARN require review.")
+    else:
+        print("All checks passed.")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="dot-agents", description="Check and explicitly sync dot-agents canonical configuration.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("check", help="read-only: show pending sync actions")
+    sync = sub.add_parser("sync", help="sync canonical content into installed harness locations")
+    sync.add_argument("--yes", action="store_true", help="apply without interactive confirmation")
+    sub.add_parser("doctor", help="run canonical/source/sync diagnostics")
+
+    args = parser.parse_args()
+    home = install_home()
+    cfg = config_home(home)
+    try:
+        repo = resolve_repo(home, cfg)
+        if args.command == "check":
+            return run_check(repo, home, cfg)
+        if args.command == "sync":
+            return run_sync(repo, home, cfg, args.yes)
+        if args.command == "doctor":
+            return run_doctor(repo, home, cfg)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
