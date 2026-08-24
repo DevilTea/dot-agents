@@ -46,8 +46,7 @@
 │   ├── README.md
 │   └── <skill>/
 ├── optional-skills/
-│   ├── README.md
-│   └── impeccable/
+│   └── README.md
 ├── harnesses/
 │   ├── README.md
 │   ├── codex/
@@ -62,7 +61,7 @@
 
 - `preferences/` 是跨 harness 的可攜 intent，見 [preferences/README.md](./preferences/README.md)。
 - `skills/` 是 global discovery set，見 [skills/README.md](./skills/README.md)。
-- `optional-skills/` 是 project opt-in catalog，global sync 不安裝，見 [optional-skills/README.md](./optional-skills/README.md)。
+- `optional-skills/` 是 project opt-in catalog，只記錄來源與安裝方式、不 vendor skill 內容，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
 - `skills-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它由 `npx skills` 維護，不是 prompt，也不是 portability contract。
 
@@ -231,7 +230,7 @@ npx skills add <source> --skill <name> --agent openclaw --copy -y
 刪除 `skills/<name>/`（外部來源者一併處理 lockfile entry）。曾由 dot-agents sync 管理的 deployment copy 會由 local ownership state 辨識，下一次 `sync` 自動移除。
 
 **只想在特定 project 使用的 skill**
-放進 `optional-skills/`，並依 [optional-skills/README.md](./optional-skills/README.md) 在目標 project 明確安裝。Global sync 不會安裝這些內容，也不會修改任何 project repository。
+在 [optional-skills/README.md](./optional-skills/README.md) 的 catalog 加一列，記錄來源與安裝情境；skill 內容不進本 repository，改由 `npx skills` 在目標 project 直接從 upstream 安裝。Global sync 不會安裝這些 skill，也不會修改任何 project repository。
 
 ## Portability contract
 
