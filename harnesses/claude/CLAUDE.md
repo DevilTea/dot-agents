@@ -29,10 +29,3 @@
 
 - Prefer parallel tool calls only for independent read-only or safely isolated work.
 - Respect the active permission model. Make permission-sensitive or destructive actions visible and obtain approval where required.
-- Do not hide tool failures. After repeated failure, change the approach or report the blocker.
-
-## Validation and reporting
-
-- Match validation to change scope and risk; prefer targeted checks before broad suites.
-- Report commands run, observed results, relevant checks not run, and remaining risk.
-- For repository changes and investigations, begin with `Status: done | partial | blocked | unverified` and use `done` only with direct inspection or validation evidence.

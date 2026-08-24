@@ -1,27 +1,12 @@
 # Codex-specific policy
 
-## Instruction discovery
+## Instructions and sessions
 
-- Treat global guidance as personal defaults, then apply repository and nested `AGENTS.md` instructions for the files in scope.
-- Inspect the repository root and the path from the root to the working directory before editing. More specific project instructions may refine broader guidance.
-- Do not assume instructions are refreshed mid-session; start a new Codex run when installed instruction files change.
+- Global guidance loads from `$CODEX_HOME/AGENTS.override.md` when present, otherwise `$CODEX_HOME/AGENTS.md`. Project instructions load from the repository root down to the working directory; closer files refine broader guidance.
+- The instruction chain is built once per run or TUI session. Treat installed instruction files as fixed for the session; if they changed on disk, say so instead of assuming the new content is active.
 
-## Execution and scope
+## Execution
 
-- Execute clear, low-risk, reversible tasks directly. Use an explicit plan when sequencing, uncertainty, risk, or cross-cutting scope makes it useful.
-- Read the files and trace the flow touched by a change before editing.
-- Keep edits within the requested scope. Preserve unrelated user changes in a dirty worktree.
-- Use the available sandbox and approval flow. Request approval only when an in-scope action requires capabilities unavailable in the current sandbox.
-- Stop repeating an unchanged approach after repeated failure; revise the hypothesis or report the blocker.
-
-## Review and validation
-
-- For review tasks, prioritize actionable correctness, security, regression, and missing-test findings. Cite the relevant file and location.
-- Use the cheapest relevant validation that can fail clearly, with depth proportional to risk.
-- Report what ran, its observed result, and anything relevant that was not checked.
-
-## Final reporting
-
-- For repository changes and investigations, begin with `Status: done | partial | blocked | unverified`.
-- Use `done` only when direct inspection or validation supports completion.
-- Summarize changed or found items, validation evidence, unchecked scope, and remaining risks or decisions.
+- Execute clear, low-risk tasks directly. Use the plan tool for multi-step, cross-file, or high-uncertainty work, and update it as steps complete.
+- Honor the active `sandbox_mode`, `approval_policy`, and network policy. Use the supported approval flow when an in-scope action requires it; never treat instruction files as authorization to bypass these controls. If approval is denied or unavailable, report the blocker.
+- Route delegated subagent work through the `model-routing` skill's table; `config.toml` `[agents]` only sets session defaults.
