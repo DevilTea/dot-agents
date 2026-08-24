@@ -35,9 +35,9 @@
 
 ```text
 .
-├── .skill-lock.json
 ├── LICENSE
 ├── README.md
+├── skills-lock.json
 ├── preferences/
 │   ├── README.md
 │   ├── communication.md
@@ -64,7 +64,7 @@
 - `skills/` 是 global discovery set，見 [skills/README.md](./skills/README.md)。
 - `optional-skills/` 是 project opt-in catalog，global sync 不安裝，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
-- `.skill-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它不是 prompt，也不是 portability contract。
+- `skills-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它由 `npx skills` 維護，不是 prompt，也不是 portability contract。
 
 ## Sync model
 
@@ -189,7 +189,7 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/dot-agents sync --yes
 - device-local override JSON 是否有效
 - `skills/` 是否缺少 `SKILL.md` 或含 symlink
 - 是否有 pending sync
-- `.skill-lock.json` 與實際 skill path 是否一致
+- `skills-lock.json` 的每個 entry 是否都有對應的 `skills/<name>/SKILL.md`
 - setup/sync backups 現況
 
 ```bash
@@ -213,9 +213,19 @@ Pending sync 視為 `FAIL`；`WARN` 表示 canonical content 本身仍需要人�
 建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），再執行 `dot-agents sync` materialize 到各 harness。撰寫與稽核流程見 `maintain-skill` skill。
 
 **安裝或更新外部來源的 skill**
-以 `npx skills` 管理，安裝結果記錄在 `.skill-lock.json`，之後執行 `dot-agents sync` 更新各 harness copy。不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋，且 `skillFolderHash` 會失去意義。兩個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
+以 `npx skills` 管理。從 repository root 執行：
 
-哪些 skill 屬於外部來源以 `.skill-lock.json` 為準，其餘為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈，不需在文件中複述清單。
+```bash
+npx skills add <source> --skill <name> --agent openclaw --copy -y
+```
+
+`--agent openclaw` 是必要的：CLI 的 agent registry 中只有它的 project skills 目錄是純 `skills/`，正好對應本 repository 的 canonical layout；其他 agent 會裝到 `.agents/skills/` 或 `.claude/skills/`。`--copy` 避免產生 symlink。安裝結果記錄在 `skills-lock.json`，之後執行 `dot-agents sync` 更新各 harness copy。
+
+更新就是用同一條指令重跑。**不要使用 `npx skills update`** —— 它內部重新呼叫 `add` 但不帶 `--agent` 與 `--copy`，會依偵測結果在 repository 內另外建立 `.agents/skills/`、`.claude/skills/`，並改用 symlink。
+
+不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋。lockfile 的 `skillPath` 記錄的是 **來源 repository 內** 的路徑，不是本地路徑；本地位置一律是 `skills/<name>/`。三個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
+
+哪些 skill 屬於外部來源以 `skills-lock.json` 為準，其餘為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈，不需在文件中複述清單。
 
 **移除 skill**
 刪除 `skills/<name>/`（外部來源者一併處理 lockfile entry）。曾由 dot-agents sync 管理的 deployment copy 會由 local ownership state 辨識，下一次 `sync` 自動移除。

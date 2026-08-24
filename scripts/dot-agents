@@ -764,31 +764,27 @@ def run_doctor(repo: Path, home: Path, cfg: Path) -> int:
         fail(str(exc))
 
     section("Skill lockfile")
-    lock_path = repo / ".skill-lock.json"
+    lock_path = repo / "skills-lock.json"
     if not lock_path.exists():
-        info(".skill-lock.json is absent")
+        info("skills-lock.json is absent")
     else:
         try:
             data = load_json_object(lock_path)
             entries = data.get("skills", {})
             if not isinstance(entries, dict):
-                fail(".skill-lock.json skills must be an object")
+                fail("skills-lock.json skills must be an object")
             else:
-                missing_paths: list[str] = []
+                missing: list[str] = []
                 managed: set[str] = set()
-                for name, meta in entries.items():
-                    if not isinstance(meta, dict) or not isinstance(meta.get("skillPath"), str):
-                        fail(f"lockfile entry {name} has no skillPath")
-                        continue
-                    skill_path = repo / meta["skillPath"]
-                    if not skill_path.exists():
-                        missing_paths.append(meta["skillPath"])
-                    if meta["skillPath"].startswith("skills/"):
-                        managed.add(meta["skillPath"].split("/", 2)[1])
-                if missing_paths:
-                    fail("lockfile points to missing path(s): " + ", ".join(missing_paths))
+                for name in entries:
+                    if (repo / "skills" / name / "SKILL.md").exists():
+                        managed.add(name)
+                    else:
+                        missing.append(name)
+                if missing:
+                    fail("lockfile entries without skills/<name>/SKILL.md: " + ", ".join(sorted(missing)))
                 else:
-                    ok(f"lockfile manages {len(entries)} entry/entries; {len(managed)} under skills/")
+                    ok(f"lockfile manages {len(entries)} external skill(s) under skills/")
                 local = sorted(set(names) - managed)
                 if local:
                     info("local/non-lockfile skills: " + ", ".join(local))

@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "skills": {
+    "agent-browser": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "skillPath": "skills/agent-browser/SKILL.md",
+      "computedHash": "a674b7d81066e3cc471a7512ddb4ae724418cbfefa75cbb050b0dc430e4d57a0"
+    },
+    "cmux": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux/SKILL.md",
+      "computedHash": "75b2d4a46f84a04b23fac4fdcaafeb2b11310d44b9bcc0e9aa44a7ef5413a45e"
+    },
+    "cmux-browser": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-browser/SKILL.md",
+      "computedHash": "5be161a426e14a65ef16cba7a2276eb33c0d910cf10dd120094b13b5baf9f572"
+    },
+    "cmux-custom-sidebar": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-custom-sidebar/SKILL.md",
+      "computedHash": "18edd8ba167b12addfa4f2f6063f293e376c76015da469b062551002cb7f8366"
+    },
+    "cmux-customization": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-customization/SKILL.md",
+      "computedHash": "13c8870cff261c2b0cb54727c2549311740dbd3a1df047673c88d36727933003"
+    },
+    "cmux-diagnostics": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-diagnostics/SKILL.md",
+      "computedHash": "321d2b89fb13523dc1945da92cf04f383c9fb665354b601fa6face49a4a1fa6a"
+    },
+    "cmux-keyboard-shortcuts": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-keyboard-shortcuts/SKILL.md",
+      "computedHash": "32c05cc3a88869f5f19013ded2341785b74e49769039efa1d67f325cb837b26a"
+    },
+    "cmux-markdown": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-markdown/SKILL.md",
+      "computedHash": "0870025e9cc20f3a7bde8eeebfafc7a2c5e273168b5252df961acac942c26e28"
+    },
+    "cmux-settings": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-settings/SKILL.md",
+      "computedHash": "a8c76fe5989951b193e1316a8156c2916a523575a616c875d5d41c8c3866053f"
+    },
+    "cmux-workspace": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-workspace/SKILL.md",
+      "computedHash": "dd9c0a13ad338511e1e74266146657e32fbeeed29956f1fbe8947cb6494c5296"
+    },
+    "eli5": {
+      "source": "dreambigou/eli5",
+      "sourceType": "github",
+      "skillPath": "skills/eli5/SKILL.md",
+      "computedHash": "ebe7a298b60d28ac26da8aa505d28dc97d124882abc7f33eddeb0d01e9852058"
+    }
+  }
+}

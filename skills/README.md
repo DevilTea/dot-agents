@@ -16,7 +16,7 @@
 
 ## Composition
 
-實際清單以此目錄的內容為準，不在文件中複述。Global skills 分兩類：本 repository 自行撰寫的，以及由外部來源安裝、provenance 記於 [`../.skill-lock.json`](../.skill-lock.json) 的（目前為 `agent-browser` 與 [`manaflow-ai/cmux`](https://github.com/manaflow-ai/cmux) 的 `cmux` 系列）。lockfile 未涵蓋者即為本地撰寫；`./scripts/doctor.sh` 會列出兩者的實際分佈。
+實際清單以此目錄的內容為準，不在文件中複述。Global skills 分兩類：本 repository 自行撰寫的，以及由外部來源安裝、provenance 記於 [`../skills-lock.json`](../skills-lock.json) 的（目前為 `agent-browser`、[`manaflow-ai/cmux`](https://github.com/manaflow-ai/cmux) 的 `cmux` 系列，以及 [`dreambigou/eli5`](https://github.com/dreambigou/eli5) 的 `eli5`）。lockfile 未涵蓋者即為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈。
 
 cmux 系列只安裝 end-user 導向的 skill（topology、workspace、browser、settings、diagnostics、customization 等）。針對 cmux 原始碼開發的 skill（architecture、backend、testing、release 等）不安裝：本機沒有 cmux 原始碼，它們永遠不會正確觸發，只會佔用每個 session 的 context 並稀釋 skill 選擇。同一標準適用於其他外部來源 —— 只安裝與實際使用情境相符的 skill，不整包引入。
 
