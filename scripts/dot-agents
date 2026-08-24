@@ -1,846 +1,1021 @@
-#!/usr/bin/env python3
-"""Explicit sync CLI for the dot-agents personal agent environment.
+#!/usr/bin/env node
+"use strict";
 
-Repository content is canonical. Harness runtime directories receive materialized
-copies only when `dot-agents sync` is invoked. `dot-agents check` is read-only.
-"""
+/*
+ * Explicit sync CLI for the dot-agents personal agent environment.
+ *
+ * Repository content is canonical. Harness runtime directories receive
+ * materialized copies only when `dot-agents sync` is invoked. `dot-agents
+ * check` is read-only.
+ */
 
-from __future__ import annotations
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+const crypto = require("node:crypto");
+const { spawnSync } = require("node:child_process");
 
-import argparse
-import hashlib
-import json
-import os
-import shutil
-import stat
-import subprocess
-import sys
-import tempfile
-import tomllib
-import re
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Any
+class RuntimeError extends Error {}
 
+class Action {
+  constructor(kind, destination, label, options = {}) {
+    this.kind = kind;
+    this.destination = destination;
+    this.label = label;
+    this.source = options.source ?? null;
+    this.content = options.content ?? null;
+    this.jsonValue = options.jsonValue ?? null;
+  }
+}
 
-@dataclass
-class Action:
-    kind: str
-    destination: Path
-    label: str
-    source: Path | None = None
-    content: bytes | None = None
-    json_value: dict[str, Any] | None = None
+function expandPath(value) {
+  const raw = String(value);
+  if (raw === "~") return os.homedir();
+  if (raw.startsWith("~/")) return path.join(os.homedir(), raw.slice(2));
+  return raw;
+}
 
+function absolutePath(value) {
+  return path.resolve(expandPath(value));
+}
 
-def install_home() -> Path:
-    return Path(os.environ.get("DOT_AGENTS_SETUP_HOME", str(Path.home()))).expanduser().resolve()
+function installHome() {
+  return absolutePath(process.env.DOT_AGENTS_SETUP_HOME || os.homedir());
+}
 
+function configHome(home) {
+  if (process.env.DOT_AGENTS_CONFIG_HOME) return absolutePath(process.env.DOT_AGENTS_CONFIG_HOME);
+  if (process.env.XDG_CONFIG_HOME && !process.env.DOT_AGENTS_SETUP_HOME) {
+    return path.resolve(expandPath(process.env.XDG_CONFIG_HOME), "dot-agents");
+  }
+  return path.join(home, ".config", "dot-agents");
+}
 
-def config_home(home: Path) -> Path:
-    explicit = os.environ.get("DOT_AGENTS_CONFIG_HOME")
-    if explicit:
-        return Path(explicit).expanduser().resolve()
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    if xdg and "DOT_AGENTS_SETUP_HOME" not in os.environ:
-        return Path(xdg).expanduser().resolve() / "dot-agents"
-    return home / ".config" / "dot-agents"
+function pathExists(file) {
+  try {
+    fs.lstatSync(file);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
 
+function isFile(file) {
+  try {
+    return fs.lstatSync(file).isFile();
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
 
-def looks_like_repo(path: Path) -> bool:
-    return (
-        (path / "preferences" / "communication.md").is_file()
-        and (path / "preferences" / "engineering.md").is_file()
-        and (path / "harnesses").is_dir()
-        and (path / "skills").is_dir()
-        and (path / "scripts" / "dot-agents").is_file()
-    )
+function isDirectory(file) {
+  try {
+    return fs.lstatSync(file).isDirectory();
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
 
+function isSymlink(file) {
+  try {
+    return fs.lstatSync(file).isSymbolicLink();
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
 
-def resolve_repo(home: Path, cfg: Path) -> Path:
-    env_repo = os.environ.get("DOT_AGENTS_REPO")
-    if env_repo:
-        candidate = Path(env_repo).expanduser().resolve()
-        if not looks_like_repo(candidate):
-            raise RuntimeError(f"DOT_AGENTS_REPO is not a dot-agents repository: {candidate}")
-        return candidate
+function looksLikeRepo(repo) {
+  return (
+    isFile(path.join(repo, "preferences", "communication.md")) &&
+    isFile(path.join(repo, "preferences", "engineering.md")) &&
+    isDirectory(path.join(repo, "harnesses")) &&
+    isDirectory(path.join(repo, "skills")) &&
+    isFile(path.join(repo, "scripts", "dot-agents"))
+  );
+}
 
-    # Running the canonical repository script directly is the bootstrap path.
-    script_repo = Path(__file__).resolve().parent.parent
-    if looks_like_repo(script_repo):
-        return script_repo
-
-    pointer = cfg / "repo"
-    if pointer.is_file():
-        raw = pointer.read_text(encoding="utf-8").strip()
-        if raw:
-            candidate = Path(raw).expanduser().resolve()
-            if looks_like_repo(candidate):
-                return candidate
-            raise RuntimeError(f"configured dot-agents repository is invalid: {candidate}")
-
-    raise RuntimeError(
-        "dot-agents repository is not configured; run ./scripts/dot-agents sync from the cloned repository"
-    )
-
-
-def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-def generated_codex(repo: Path) -> bytes:
-    parts = [
-        "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
-        read_text(repo / "preferences" / "communication.md").rstrip("\n") + "\n\n",
-        read_text(repo / "preferences" / "engineering.md").rstrip("\n") + "\n\n",
-        read_text(repo / "harnesses" / "codex" / "AGENTS.md").rstrip("\n") + "\n",
-    ]
-    return "".join(parts).encode()
-
-
-def generated_claude(repo: Path) -> bytes:
-    source = read_text(repo / "harnesses" / "claude" / "CLAUDE.md")
-    lines: list[str] = ["<!-- Generated from dot-agents. Do not edit directly. -->", ""]
-    prefix = "@../../preferences/"
-    for line in source.splitlines():
-        if line.startswith(prefix):
-            lines.append(f"@{repo}/preferences/{line[len(prefix):]}")
-        else:
-            lines.append(line)
-    return ("\n".join(lines).rstrip("\n") + "\n").encode()
-
-
-def generated_antigravity(repo: Path) -> bytes:
-    parts = [
-        "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
-        read_text(repo / "preferences" / "communication.md").rstrip("\n") + "\n\n",
-        read_text(repo / "preferences" / "engineering.md").rstrip("\n") + "\n\n",
-        read_text(repo / "harnesses" / "antigravity" / "instructions.md").rstrip("\n") + "\n",
-    ]
-    return "".join(parts).encode()
-
-
-def launcher_content() -> bytes:
-    return b"""#!/bin/sh\nset -eu\nCONFIG_HOME=${DOT_AGENTS_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/dot-agents}\nREPO_FILE=\"$CONFIG_HOME/repo\"\nif [ ! -f \"$REPO_FILE\" ]; then\n  echo \"dot-agents: repository is not configured; run ./scripts/dot-agents sync from the cloned repository\" >&2\n  exit 2\nfi\nREPO=$(cat \"$REPO_FILE\")\nexec \"$REPO/scripts/dot-agents\" \"$@\"\n"""
-
-
-def load_json_object(path: Path, *, allow_missing: bool = False) -> dict[str, Any]:
-    if allow_missing and not path.exists():
-        return {}
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise RuntimeError(f"missing JSON file: {path}")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"invalid JSON in {path}: {exc}")
-    if not isinstance(value, dict):
-        raise RuntimeError(f"expected a JSON object in {path}")
-    return value
-
-
-def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = dict(base)
-    for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def load_toml_object(path: Path, *, allow_missing: bool = False) -> dict[str, Any]:
-    if allow_missing and not path.exists():
-        return {}
-    try:
-        with path.open("rb") as handle:
-            value = tomllib.load(handle)
-    except FileNotFoundError:
-        raise RuntimeError(f"missing TOML file: {path}")
-    except tomllib.TOMLDecodeError as exc:
-        raise RuntimeError(f"invalid TOML in {path}: {exc}")
-    if not isinstance(value, dict):
-        raise RuntimeError(f"expected a TOML table in {path}")
-    return value
-
-
-def toml_value(value: Any) -> str:
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        if value == float("inf"):
-            return "inf"
-        if value == float("-inf"):
-            return "-inf"
-        if value != value:
-            return "nan"
-        return repr(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(toml_value(item) for item in value) + "]"
-    raise RuntimeError(f"unsupported managed TOML value: {value!r}")
-
-
-def flatten_toml_leaves(value: dict[str, Any], prefix: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
-    leaves: list[tuple[tuple[str, ...], Any]] = []
-    for key, item in value.items():
-        path = prefix + (key,)
-        if isinstance(item, dict):
-            leaves.extend(flatten_toml_leaves(item, path))
-        else:
-            leaves.append((path, item))
-    return leaves
-
-
-def patch_toml_text(current_text: str, expected: dict[str, Any]) -> str:
-    """Patch only managed TOML leaves, preserving unrelated text and tables."""
-    lines = current_text.splitlines()
-    table_re = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
-    key_re = re.compile(r"^(\s*)([A-Za-z0-9_-]+)\s*=.*$")
-
-    def table_ranges() -> dict[tuple[str, ...], tuple[int, int]]:
-        starts: list[tuple[tuple[str, ...], int]] = [((), -1)]
-        for index, line in enumerate(lines):
-            match = table_re.match(line)
-            if match:
-                starts.append((tuple(match.group(1).split(".")), index))
-        result: dict[tuple[str, ...], tuple[int, int]] = {}
-        for pos, (table, header_index) in enumerate(starts):
-            end = starts[pos + 1][1] if pos + 1 < len(starts) else len(lines)
-            result[table] = (header_index + 1, end)
-        return result
-
-    for path, value in flatten_toml_leaves(expected):
-        table = path[:-1]
-        key = path[-1]
-        ranges = table_ranges()
-        rendered = f"{key} = {toml_value(value)}"
-        if table in ranges:
-            start, end = ranges[table]
-            replaced = False
-            for index in range(start, end):
-                match = key_re.match(lines[index])
-                if match and match.group(2) == key:
-                    lines[index] = match.group(1) + rendered
-                    replaced = True
-                    break
-            if replaced:
-                continue
-            insert_at = end
-            while insert_at > start and lines[insert_at - 1].strip() == "":
-                insert_at -= 1
-            lines.insert(insert_at, rendered)
-        else:
-            if lines and lines[-1].strip() != "":
-                lines.append("")
-            lines.append(f"[{'.'.join(table)}]")
-            lines.append(rendered)
-
-    return "\n".join(lines).rstrip("\n") + "\n"
-
-
-def contains_managed(current: Any, expected: Any) -> bool:
-    """Return true when current contains every managed expected value.
-
-    Unknown runtime-owned keys are intentionally ignored.
-    """
-    if isinstance(expected, dict):
-        if not isinstance(current, dict):
-            return False
-        return all(key in current and contains_managed(current[key], value) for key, value in expected.items())
-    return current == expected
-
-
-def logical_file_bytes(path: Path) -> bytes | None:
-    try:
-        if path.is_file() and not path.is_symlink():
-            return path.read_bytes()
-    except OSError:
-        pass
-    return None
-
-
-def tree_digest(path: Path) -> str | None:
-    if not path.is_dir() or path.is_symlink():
-        return None
-    digest = hashlib.sha256()
-    for root, dirs, files in os.walk(path):
-        dirs.sort()
-        files.sort()
-        root_path = Path(root)
-        rel_root = root_path.relative_to(path)
-        for name in dirs:
-            p = root_path / name
-            rel = (rel_root / name).as_posix()
-            digest.update(b"D\0" + rel.encode() + b"\0")
-            if p.is_symlink():
-                digest.update(b"L\0" + os.readlink(p).encode() + b"\0")
-        for name in files:
-            p = root_path / name
-            rel = (rel_root / name).as_posix()
-            if p.is_symlink():
-                # Source skill symlinks are not expected; include target identity so
-                # doctor/check still report deterministic drift.
-                digest.update(b"L\0" + rel.encode() + b"\0" + os.readlink(p).encode() + b"\0")
-            else:
-                digest.update(b"F\0" + rel.encode() + b"\0")
-                with p.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                digest.update(b"\0")
-    return digest.hexdigest()
-
-
-def skill_names(repo: Path) -> list[str]:
-    result: list[str] = []
-    for child in sorted((repo / "skills").iterdir(), key=lambda p: p.name):
-        if child.is_dir() and (child / "SKILL.md").is_file():
-            result.append(child.name)
-    return result
-
-
-def command_exists(name: str) -> bool:
-    return shutil.which(name) is not None
-
-
-def antigravity_ide_installed(home: Path) -> bool:
-    return Path("/Applications/Antigravity.app").is_dir() or (home / "Applications" / "Antigravity.app").is_dir()
-
-
-def path_exists(path: Path) -> bool:
-    return path.exists() or path.is_symlink()
-
-
-def read_state(cfg: Path) -> dict[str, Any]:
-    path = cfg / "state.json"
-    if not path.exists():
-        return {"version": 1, "skills": {}}
-    return load_json_object(path)
-
-
-def expected_state(installed_surfaces: dict[str, Path], names: list[str]) -> dict[str, Any]:
-    return {
-        "version": 1,
-        "skills": {surface: names for surface in sorted(installed_surfaces)},
+function resolveRepo(home, cfg) {
+  if (process.env.DOT_AGENTS_REPO) {
+    const candidate = absolutePath(process.env.DOT_AGENTS_REPO);
+    if (!looksLikeRepo(candidate)) throw new RuntimeError(`DOT_AGENTS_REPO is not a dot-agents repository: ${candidate}`);
+    return candidate;
+  }
+  const scriptRepo = path.resolve(__dirname, "..");
+  if (looksLikeRepo(scriptRepo)) return scriptRepo;
+  const pointer = path.join(cfg, "repo");
+  if (isFile(pointer)) {
+    const raw = readText(pointer).trim();
+    if (raw) {
+      const candidate = absolutePath(raw);
+      if (looksLikeRepo(candidate)) return candidate;
+      throw new RuntimeError(`configured dot-agents repository is invalid: ${candidate}`);
     }
-
-
-def json_bytes(value: dict[str, Any]) -> bytes:
-    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
-
-
-def plan(repo: Path, home: Path, cfg: Path) -> tuple[list[Action], list[str]]:
-    actions: list[Action] = []
-    notes: list[str] = []
-
-    required = [
-        repo / "preferences" / "communication.md",
-        repo / "preferences" / "engineering.md",
-        repo / "harnesses" / "codex" / "AGENTS.md",
-        repo / "harnesses" / "codex" / "config.toml",
-        repo / "harnesses" / "claude" / "CLAUDE.md",
-        repo / "harnesses" / "claude" / "settings.json",
-        repo / "harnesses" / "antigravity" / "instructions.md",
-        repo / "harnesses" / "antigravity" / "settings.json",
-    ]
-    missing = [str(path) for path in required if not path.is_file()]
-    if missing:
-        raise RuntimeError("canonical source missing:\n  " + "\n  ".join(missing))
-
-    # Bootstrap metadata and user-facing launcher are also explicit sync outputs.
-    repo_pointer = cfg / "repo"
-    pointer_content = (str(repo) + "\n").encode()
-    if logical_file_bytes(repo_pointer) != pointer_content:
-        actions.append(Action("write", repo_pointer, "dot-agents repository pointer", content=pointer_content))
-
-    launcher = home / ".local" / "bin" / "dot-agents"
-    if logical_file_bytes(launcher) != launcher_content():
-        actions.append(Action("write-exec", launcher, "dot-agents command launcher", content=launcher_content()))
-
-    installed_surfaces: dict[str, Path] = {}
-    names = skill_names(repo)
-
-    if command_exists("codex"):
-        codex_home = Path(os.environ.get("CODEX_HOME", str(home / ".codex"))).expanduser()
-        override = codex_home / "AGENTS.override.md"
-        if override.is_file():
-            notes.append(f"WARN Codex: {override} exists; Codex ignores the generated AGENTS.md while it is present.")
-        target = codex_home / "AGENTS.md"
-        content = generated_codex(repo)
-        if logical_file_bytes(target) != content:
-            actions.append(Action("write", target, "Codex global instructions", content=content))
-        plan_toml_settings(
-            actions,
-            repo / "harnesses" / "codex" / "config.toml",
-            cfg / "overrides" / "codex.toml",
-            codex_home / "config.toml",
-            "Codex config",
-        )
-        installed_surfaces["codex"] = home / ".agents" / "skills"
-    else:
-        notes.append("SKIP Codex: 'codex' is not installed or not available in PATH.")
-
-    if command_exists("claude"):
-        target = home / ".claude" / "CLAUDE.md"
-        content = generated_claude(repo)
-        if logical_file_bytes(target) != content:
-            actions.append(Action("write", target, "Claude Code global instructions", content=content))
-        installed_surfaces["claude"] = home / ".claude" / "skills"
-        plan_json_settings(
-            actions,
-            repo / "harnesses" / "claude" / "settings.json",
-            cfg / "overrides" / "claude-settings.json",
-            home / ".claude" / "settings.json",
-            "Claude Code settings",
-        )
-    else:
-        notes.append("SKIP Claude Code: 'claude' is not installed or not available in PATH.")
-
-    ide = antigravity_ide_installed(home)
-    agy = command_exists("agy")
-    if ide or agy:
-        target = home / ".gemini" / "GEMINI.md"
-        content = generated_antigravity(repo)
-        if logical_file_bytes(target) != content:
-            actions.append(Action("write", target, "Google Antigravity global instructions", content=content))
-
-    if ide:
-        installed_surfaces["antigravity-ide"] = home / ".gemini" / "config" / "skills"
-    else:
-        notes.append("SKIP Google Antigravity IDE: Antigravity.app was not found.")
-
-    if agy:
-        installed_surfaces["antigravity-cli"] = home / ".gemini" / "antigravity-cli" / "skills"
-        plan_json_settings(
-            actions,
-            repo / "harnesses" / "antigravity" / "settings.json",
-            cfg / "overrides" / "antigravity-settings.json",
-            home / ".gemini" / "antigravity-cli" / "settings.json",
-            "Antigravity CLI settings",
-        )
-    else:
-        notes.append("SKIP Antigravity CLI: 'agy' is not installed or not available in PATH.")
-
-    previous_state = read_state(cfg)
-    previous_skills = previous_state.get("skills", {}) if isinstance(previous_state.get("skills"), dict) else {}
-
-    for surface, root in installed_surfaces.items():
-        for name in names:
-            source = repo / "skills" / name
-            destination = root / name
-            if tree_digest(source) != tree_digest(destination):
-                actions.append(Action("copy-tree", destination, f"{surface} skill {name}", source=source))
-
-        previously_managed = previous_skills.get(surface, [])
-        if isinstance(previously_managed, list):
-            for old_name in sorted(set(previously_managed) - set(names)):
-                destination = root / old_name
-                if path_exists(destination):
-                    actions.append(Action("remove", destination, f"removed {surface} skill {old_name}"))
-
-    state = expected_state(installed_surfaces, names)
-    state_path = cfg / "state.json"
-    if logical_file_bytes(state_path) != json_bytes(state):
-        actions.append(Action("state", state_path, "local sync ownership state", content=json_bytes(state)))
-
-    return actions, notes
-
-
-def plan_toml_settings(
-    actions: list[Action],
-    canonical_path: Path,
-    override_path: Path,
-    destination: Path,
-    label: str,
-) -> None:
-    canonical = load_toml_object(canonical_path)
-    override = load_toml_object(override_path, allow_missing=True)
-    expected = deep_merge(canonical, override)
-
-    current: dict[str, Any] = {}
-    current_text = ""
-    if path_exists(destination):
-        try:
-            current_text = destination.read_text(encoding="utf-8")
-            current = load_toml_object(destination)
-        except (RuntimeError, OSError):
-            current = {}
-            current_text = ""
-
-    if destination.is_symlink() or not contains_managed(current, expected):
-        merged_text = patch_toml_text(current_text, expected)
-        actions.append(Action("toml-merge", destination, label, content=merged_text.encode()))
-
-
-def plan_json_settings(
-    actions: list[Action],
-    canonical_path: Path,
-    override_path: Path,
-    destination: Path,
-    label: str,
-) -> None:
-    canonical = load_json_object(canonical_path)
-    override = load_json_object(override_path, allow_missing=True)
-    expected = deep_merge(canonical, override)
-
-    current: dict[str, Any] = {}
-    if path_exists(destination):
-        try:
-            current = load_json_object(destination)
-        except RuntimeError:
-            # Invalid/mismatched runtime file is still repairable by sync.
-            current = {}
-
-    # A managed settings symlink is always drift even if its current contents match.
-    if destination.is_symlink() or not contains_managed(current, expected):
-        merged = deep_merge(current, expected)
-        actions.append(Action("json-merge", destination, label, json_value=merged))
-
-
-def action_verb(action: Action) -> str:
-    if action.kind == "remove":
-        return "REMOVE"
-    if action.kind in {"json-merge", "toml-merge"}:
-        return "MERGE"
-    if action.kind == "copy-tree":
-        return "COPY"
-    if action.kind in {"state"}:
-        return "UPDATE"
-    return "REPLACE" if path_exists(action.destination) else "CREATE"
-
-
-def print_plan(actions: list[Action], notes: list[str]) -> None:
-    for note in notes:
-        print(note)
-    if not actions:
-        print("Everything is in sync.")
-        return
-    print("\nPending sync:")
-    for action in actions:
-        print(f"  - {action_verb(action)}: {action.destination} [{action.label}]")
-
-
-def backup_existing(destination: Path, backup_root: Path, manifest: list[tuple[Path, Path]]) -> None:
-    if not path_exists(destination):
-        return
-    relative = str(destination).lstrip(os.sep)
-    backup_path = backup_root / relative
-    backup_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(destination), str(backup_path))
-    manifest.append((destination, backup_path))
-
-
-def atomic_write(destination: Path, content: bytes, executable: bool = False) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=str(destination.parent))
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(content)
-        if executable:
-            os.chmod(temp_name, 0o755)
-        os.replace(temp_name, destination)
-    finally:
-        if os.path.exists(temp_name):
-            os.unlink(temp_name)
-
-
-def apply(actions: list[Action], home: Path) -> Path | None:
-    if not actions:
-        return None
-
-    backup_root = home / ".dot-agents-backups" / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
-    manifest: list[tuple[Path, Path]] = []
-
-    for action in actions:
-        if action.kind == "state":
-            # Local ownership metadata is derived state, not user/runtime content.
-            assert action.content is not None
-            atomic_write(action.destination, action.content)
-            continue
-
-        backup_existing(action.destination, backup_root, manifest)
-
-        if action.kind == "remove":
-            continue
-        if action.kind == "copy-tree":
-            assert action.source is not None
-            action.destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(action.source, action.destination, symlinks=False)
-        elif action.kind in {"write", "write-exec"}:
-            assert action.content is not None
-            atomic_write(action.destination, action.content, executable=action.kind == "write-exec")
-        elif action.kind == "json-merge":
-            assert action.json_value is not None
-            atomic_write(action.destination, json_bytes(action.json_value))
-        elif action.kind == "toml-merge":
-            assert action.content is not None
-            atomic_write(action.destination, action.content)
-        else:
-            raise RuntimeError(f"unknown action type: {action.kind}")
-
-    if manifest:
-        backup_root.mkdir(parents=True, exist_ok=True)
-        manifest_path = backup_root / "manifest.tsv"
-        manifest_path.write_text(
-            "".join(f"{original}\t{backup}\n" for original, backup in manifest),
-            encoding="utf-8",
-        )
-        return backup_root
-
-    if backup_root.exists():
-        shutil.rmtree(backup_root)
-    return None
-
-
-def run_check(repo: Path, home: Path, cfg: Path) -> int:
-    actions, notes = plan(repo, home, cfg)
-    print_plan(actions, notes)
-    return 1 if actions else 0
-
-
-def run_sync(repo: Path, home: Path, cfg: Path, assume_yes: bool) -> int:
-    actions, notes = plan(repo, home, cfg)
-    print_plan(actions, notes)
-    if not actions:
-        return 0
-
-    if not assume_yes:
-        if not sys.stdin.isatty():
-            print("ERROR: not a terminal; re-run with --yes to sync without confirmation", file=sys.stderr)
-            return 2
-        answer = input("\nType YES to apply these changes: ")
-        if answer != "YES":
-            print("ERROR: aborted (you did not type YES)", file=sys.stderr)
-            return 2
-
-    backup_root = apply(actions, home)
-    print(f"\nApplied {len(actions)} sync action(s).")
-    if backup_root:
-        print(f"Backups and rollback manifest: {backup_root}")
-
-    remaining, remaining_notes = plan(repo, home, cfg)
-    if remaining:
-        print("\nERROR: sync did not converge:", file=sys.stderr)
-        print_plan(remaining, remaining_notes)
-        return 1
-    print("Everything is in sync.")
-    return 0
-
-
-def absolute_machine_path(value: Any) -> list[str]:
-    found: list[str] = []
-    if isinstance(value, dict):
-        for item in value.values():
-            found.extend(absolute_machine_path(item))
-    elif isinstance(value, list):
-        for item in value:
-            found.extend(absolute_machine_path(item))
-    elif isinstance(value, str) and (value.startswith("/Users/") or value.startswith("/home/")):
-        found.append(value)
-    return found
-
-
-def run_doctor(repo: Path, home: Path, cfg: Path) -> int:
-    failures = 0
-    warnings = 0
-
-    def section(title: str) -> None:
-        print(f"\n{title}")
-
-    def ok(message: str) -> None:
-        print(f"  OK    {message}")
-
-    def info(message: str) -> None:
-        print(f"  INFO  {message}")
-
-    def warn(message: str) -> None:
-        nonlocal warnings
-        warnings += 1
-        print(f"  WARN  {message}")
-
-    def fail(message: str) -> None:
-        nonlocal failures
-        failures += 1
-        print(f"  FAIL  {message}")
-
-    section("Canonical sources")
-    required = [
-        "preferences/communication.md",
-        "preferences/engineering.md",
-        "harnesses/codex/AGENTS.md",
-        "harnesses/codex/config.toml",
-        "harnesses/claude/CLAUDE.md",
-        "harnesses/claude/settings.json",
-        "harnesses/antigravity/instructions.md",
-        "harnesses/antigravity/settings.json",
-        "scripts/dot-agents",
-    ]
-    for rel in required:
-        if (repo / rel).is_file():
-            ok(rel)
-        else:
-            fail(f"{rel} missing")
-
-    section("Canonical settings")
-    try:
-        value = load_toml_object(repo / "harnesses/codex/config.toml")
-        paths = absolute_machine_path(value)
-        if paths:
-            warn("harnesses/codex/config.toml contains machine-specific absolute path(s): " + ", ".join(paths))
-        else:
-            ok("harnesses/codex/config.toml is valid portable TOML")
-    except RuntimeError as exc:
-        fail(str(exc))
-
-    for rel in ["harnesses/claude/settings.json", "harnesses/antigravity/settings.json"]:
-        try:
-            value = load_json_object(repo / rel)
-            paths = absolute_machine_path(value)
-            if paths:
-                warn(f"{rel} contains machine-specific absolute path(s): {', '.join(paths)}")
-            else:
-                ok(f"{rel} is valid portable JSON")
-        except RuntimeError as exc:
-            fail(str(exc))
-
-    section("Local overrides")
-    override_paths = [
-        cfg / "overrides" / "claude-settings.json",
-        cfg / "overrides" / "antigravity-settings.json",
-    ]
-    found_override = False
-    codex_override = cfg / "overrides" / "codex.toml"
-    if codex_override.exists():
-        found_override = True
-        try:
-            load_toml_object(codex_override)
-            ok(f"{codex_override} is valid TOML")
-        except RuntimeError as exc:
-            fail(str(exc))
-    for path in override_paths:
-        if path.exists():
-            found_override = True
-            try:
-                load_json_object(path)
-                ok(f"{path} is valid JSON")
-            except RuntimeError as exc:
-                fail(str(exc))
-    if not found_override:
-        info("no device-local overrides configured")
-
-    section("Skills canonical set")
-    names = skill_names(repo)
-    broken_dirs = [
-        child.name
-        for child in sorted((repo / "skills").iterdir(), key=lambda p: p.name)
-        if child.is_dir() and not (child / "SKILL.md").is_file()
-    ]
-    for name in broken_dirs:
-        fail(f"skills/{name} is missing SKILL.md")
-    ok(f"skills/ has {len(names)} installable skill(s)")
-
-    source_symlinks: list[str] = []
-    for name in names:
-        root = repo / "skills" / name
-        for p in root.rglob("*"):
-            if p.is_symlink():
-                source_symlinks.append(str(p.relative_to(repo)))
-    if source_symlinks:
-        warn("skill source contains symlink(s); materialized copy semantics may differ: " + ", ".join(source_symlinks[:5]))
-
-    section("Sync status")
-    try:
-        actions, notes = plan(repo, home, cfg)
-        for note in notes:
-            if note.startswith("WARN "):
-                warn(note.removeprefix("WARN "))
-            else:
-                info(note.removeprefix("SKIP "))
-        if actions:
-            fail(f"{len(actions)} sync action(s) pending; run `dot-agents check` then `dot-agents sync`")
-            for action in actions[:10]:
-                print(f"        {action_verb(action)} {action.destination} [{action.label}]")
-            if len(actions) > 10:
-                print(f"        ... and {len(actions) - 10} more")
-        else:
-            ok("all managed outputs are in sync")
-    except RuntimeError as exc:
-        fail(str(exc))
-
-    section("Skill lockfile")
-    lock_path = repo / "skills-lock.json"
-    if not lock_path.exists():
-        info("skills-lock.json is absent")
-    else:
-        try:
-            data = load_json_object(lock_path)
-            entries = data.get("skills", {})
-            if not isinstance(entries, dict):
-                fail("skills-lock.json skills must be an object")
-            else:
-                missing: list[str] = []
-                managed: set[str] = set()
-                for name in entries:
-                    if (repo / "skills" / name / "SKILL.md").exists():
-                        managed.add(name)
-                    else:
-                        missing.append(name)
-                if missing:
-                    fail("lockfile entries without skills/<name>/SKILL.md: " + ", ".join(sorted(missing)))
-                else:
-                    ok(f"lockfile manages {len(entries)} external skill(s) under skills/")
-                local = sorted(set(names) - managed)
-                if local:
-                    info("local/non-lockfile skills: " + ", ".join(local))
-        except RuntimeError as exc:
-            fail(str(exc))
-
-    section("Backups")
-    backup_root = home / ".dot-agents-backups"
-    if backup_root.is_dir():
-        count = sum(1 for p in backup_root.iterdir() if p.is_dir())
-        info(f"{backup_root}: {count} backup batch(es)")
-    else:
-        info(f"{backup_root} does not exist")
-
-    print()
-    if failures:
-        print(f"{failures} FAIL, {warnings} WARN.")
-        return 1
-    if warnings:
-        print(f"No FAIL; {warnings} WARN require review.")
-    else:
-        print("All checks passed.")
-    return 0
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(prog="dot-agents", description="Check and explicitly sync dot-agents canonical configuration.")
-    sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("check", help="read-only: show pending sync actions")
-    sync = sub.add_parser("sync", help="sync canonical content into installed harness locations")
-    sync.add_argument("--yes", action="store_true", help="apply without interactive confirmation")
-    sub.add_parser("doctor", help="run canonical/source/sync diagnostics")
-
-    args = parser.parse_args()
-    home = install_home()
-    cfg = config_home(home)
-    try:
-        repo = resolve_repo(home, cfg)
-        if args.command == "check":
-            return run_check(repo, home, cfg)
-        if args.command == "sync":
-            return run_sync(repo, home, cfg, args.yes)
-        if args.command == "doctor":
-            return run_doctor(repo, home, cfg)
-    except RuntimeError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
-    return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+  }
+  throw new RuntimeError("dot-agents repository is not configured; run ./scripts/dot-agents sync from the cloned repository");
+}
+
+function readText(file) {
+  return fs.readFileSync(file, "utf8");
+}
+
+function contentBuffer(value) {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+}
+
+function generatedCodex(repo) {
+  return [
+    "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
+    readText(path.join(repo, "preferences", "communication.md")).replace(/\n+$/, "") + "\n\n",
+    readText(path.join(repo, "preferences", "engineering.md")).replace(/\n+$/, "") + "\n\n",
+    readText(path.join(repo, "harnesses", "codex", "AGENTS.md")).replace(/\n+$/, "") + "\n",
+  ].join("");
+}
+
+function generatedClaude(repo) {
+  const source = readText(path.join(repo, "harnesses", "claude", "CLAUDE.md"));
+  const lines = ["<!-- Generated from dot-agents. Do not edit directly. -->", ""];
+  const prefix = "@../../preferences/";
+  for (const line of source.split(/\r?\n/)) {
+    if (line.startsWith(prefix)) lines.push(`@${repo}/preferences/${line.slice(prefix.length)}`);
+    else lines.push(line);
+  }
+  return lines.join("\n").replace(/\n+$/, "") + "\n";
+}
+
+function generatedAntigravity(repo) {
+  return [
+    "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
+    readText(path.join(repo, "preferences", "communication.md")).replace(/\n+$/, "") + "\n\n",
+    readText(path.join(repo, "preferences", "engineering.md")).replace(/\n+$/, "") + "\n\n",
+    readText(path.join(repo, "harnesses", "antigravity", "instructions.md")).replace(/\n+$/, "") + "\n",
+  ].join("");
+}
+
+function launcherContent() {
+  return `#!/bin/sh
+set -eu
+CONFIG_HOME=\${DOT_AGENTS_CONFIG_HOME:-\${XDG_CONFIG_HOME:-\$HOME/.config}/dot-agents}
+REPO_FILE="$CONFIG_HOME/repo"
+if [ ! -f "$REPO_FILE" ]; then
+  echo "dot-agents: repository is not configured; run ./scripts/dot-agents sync from the cloned repository" >&2
+  exit 2
+fi
+REPO=\$(cat "$REPO_FILE")
+exec "$REPO/scripts/dot-agents" "$@"
+`;
+}
+
+function loadJsonObject(file, allowMissing = false) {
+  if (allowMissing && !pathExists(file)) return {};
+  let value;
+  try {
+    value = JSON.parse(readText(file));
+  } catch (error) {
+    if (error.code === "ENOENT") throw new RuntimeError(`missing JSON file: ${file}`);
+    if (error instanceof SyntaxError) throw new RuntimeError(`invalid JSON in ${file}: ${error.message}`);
+    throw error;
+  }
+  if (value === null || Array.isArray(value) || typeof value !== "object") throw new RuntimeError(`expected a JSON object in ${file}`);
+  return value;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function deepMerge(base, overlay) {
+  const result = { ...base };
+  for (const [key, value] of Object.entries(overlay)) {
+    if (isPlainObject(value) && isPlainObject(result[key])) result[key] = deepMerge(result[key], value);
+    else result[key] = value;
+  }
+  return result;
+}
+
+function deepEqual(left, right) {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => deepEqual(item, right[index]));
+  }
+  if (isPlainObject(left) || isPlainObject(right)) {
+    if (!isPlainObject(left) || !isPlainObject(right)) return false;
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && deepEqual(left[key], right[key]));
+  }
+  return false;
+}
+
+function stripTomlComment(line) {
+  let quote = null;
+  let escaped = false;
+  let depth = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === "[" || char === "{") depth += 1;
+    else if (char === "]" || char === "}") depth = Math.max(0, depth - 1);
+    else if (char === "#" && depth === 0) return line.slice(0, index);
+  }
+  return line;
+}
+
+function topLevelIndex(text, wanted) {
+  let quote = null;
+  let escaped = false;
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === "[" || char === "{") depth += 1;
+    else if (char === "]" || char === "}") depth -= 1;
+    else if (char === wanted && depth === 0) return index;
+  }
+  return -1;
+}
+
+function splitTopLevel(text, delimiter) {
+  const parts = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === "[" || char === "{") depth += 1;
+    else if (char === "]" || char === "}") depth -= 1;
+    else if (char === delimiter && depth === 0) {
+      parts.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+function parseTomlString(raw) {
+  if (raw.startsWith("'")) return raw.slice(1, -1);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const body = raw.slice(1, -1);
+    return body.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[btnfr"\\])/g, (match, token) => {
+      if (token.startsWith("u") || token.startsWith("U")) return String.fromCodePoint(parseInt(token.slice(1), 16));
+      return { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", '"': '"', "\\": "\\" }[token];
+    });
+  }
+}
+
+function parseTomlKeyPath(raw) {
+  return splitTopLevel(raw.trim(), ".").map((part) => {
+    const key = part.trim();
+    if (!key) throw new Error("empty TOML key");
+    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) return parseTomlString(key);
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new Error(`unsupported TOML key: ${key}`);
+    return key;
+  });
+}
+
+function parseTomlValue(raw) {
+  const value = raw.trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return parseTomlString(value);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value.startsWith("[") && value.endsWith("]")) {
+    const body = value.slice(1, -1).trim();
+    return body ? splitTopLevel(body, ",").filter((item) => item.trim()).map(parseTomlValue) : [];
+  }
+  if (value.startsWith("{") && value.endsWith("}")) {
+    const result = {};
+    const body = value.slice(1, -1).trim();
+    if (!body) return result;
+    for (const item of splitTopLevel(body, ",")) {
+      const equals = topLevelIndex(item, "=");
+      if (equals < 0) throw new Error(`invalid TOML inline table: ${item}`);
+      setTomlPath(result, parseTomlKeyPath(item.slice(0, equals)), parseTomlValue(item.slice(equals + 1)));
+    }
+    return result;
+  }
+  const numberValue = value.replaceAll("_", "");
+  if (/^[+-]?(?:0|[1-9][0-9]*)$/.test(numberValue)) return Number(numberValue);
+  if (/^[+-]?(?:[0-9]+\.[0-9]*|[0-9]+(?:\.[0-9]*)?[eE][+-]?[0-9]+)$/.test(numberValue)) {
+    const parsed = Number(numberValue);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (/^[+-]?0x[0-9A-Fa-f]+$/.test(numberValue)) return Number.parseInt(numberValue, 16);
+  if (/^[+-]?0o[0-7]+$/.test(numberValue)) return Number.parseInt(numberValue, 8);
+  if (/^[+-]?0b[01]+$/.test(numberValue)) return Number.parseInt(numberValue, 2);
+  if (/^\d{4}-\d{2}-\d{2}(?:T|\s)/.test(value)) return value;
+  throw new Error(`unsupported TOML value: ${value}`);
+}
+
+function setTomlPath(target, keys, value) {
+  let current = target;
+  for (let index = 0; index < keys.length - 1; index += 1) {
+    const key = keys[index];
+    if (!isPlainObject(current[key])) current[key] = {};
+    current = current[key];
+  }
+  current[keys[keys.length - 1]] = value;
+}
+
+function parseToml(text, file) {
+  const result = {};
+  let table = [];
+  try {
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = stripTomlComment(rawLine).trim();
+      if (!line) continue;
+      if (line.startsWith("[[")) throw new Error(`unsupported TOML array table: ${line}`);
+      if (line.startsWith("[")) {
+        if (!line.endsWith("]")) throw new Error(`invalid TOML table: ${line}`);
+        table = parseTomlKeyPath(line.slice(1, -1));
+        let current = result;
+        for (const key of table) {
+          if (!isPlainObject(current[key])) current[key] = {};
+          current = current[key];
+        }
+        continue;
+      }
+      const equals = topLevelIndex(line, "=");
+      if (equals < 0) throw new Error(`invalid TOML assignment: ${line}`);
+      setTomlPath(result, [...table, ...parseTomlKeyPath(line.slice(0, equals))], parseTomlValue(line.slice(equals + 1)));
+    }
+  } catch (error) {
+    throw new RuntimeError(`invalid TOML in ${file}: ${error.message}`);
+  }
+  return result;
+}
+
+function loadTomlObject(file, allowMissing = false) {
+  if (allowMissing && !pathExists(file)) return {};
+  let text;
+  try {
+    text = readText(file);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new RuntimeError(`missing TOML file: ${file}`);
+    throw error;
+  }
+  const value = parseToml(text, file);
+  if (!isPlainObject(value)) throw new RuntimeError(`expected a TOML table in ${file}`);
+  return value;
+}
+
+function tomlValue(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "nan";
+    if (value === Infinity) return "inf";
+    if (value === -Infinity) return "-inf";
+    return String(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(tomlValue).join(", ")}]`;
+  throw new RuntimeError(`unsupported managed TOML value: ${JSON.stringify(value)}`);
+}
+
+function flattenTomlLeaves(value, prefix = []) {
+  const leaves = [];
+  for (const [key, item] of Object.entries(value)) {
+    const next = [...prefix, key];
+    if (isPlainObject(item)) leaves.push(...flattenTomlLeaves(item, next));
+    else leaves.push([next, item]);
+  }
+  return leaves;
+}
+
+function patchTomlText(currentText, expected) {
+  const lines = currentText ? currentText.split(/\r?\n/) : [];
+  const tableRe = /^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$/;
+  const keyRe = /^(\s*)([A-Za-z0-9_-]+)\s*=.*$/;
+  function tableRanges() {
+    const starts = [[[], -1]];
+    lines.forEach((line, index) => {
+      const match = line.match(tableRe);
+      if (match) starts.push([match[1].split("."), index]);
+    });
+    const result = new Map();
+    starts.forEach(([table, headerIndex], index) => {
+      const end = index + 1 < starts.length ? starts[index + 1][1] : lines.length;
+      result.set(table.join("."), [headerIndex + 1, end]);
+    });
+    return result;
+  }
+  for (const [valuePath, value] of flattenTomlLeaves(expected)) {
+    const table = valuePath.slice(0, -1);
+    const key = valuePath[valuePath.length - 1];
+    const ranges = tableRanges();
+    const rendered = `${key} = ${tomlValue(value)}`;
+    const tableKey = table.join(".");
+    if (ranges.has(tableKey)) {
+      const [start, end] = ranges.get(tableKey);
+      let replaced = false;
+      for (let index = start; index < end; index += 1) {
+        const match = lines[index].match(keyRe);
+        if (match && match[2] === key) {
+          lines[index] = match[1] + rendered;
+          replaced = true;
+          break;
+        }
+      }
+      if (replaced) continue;
+      let insertAt = end;
+      while (insertAt > start && lines[insertAt - 1].trim() === "") insertAt -= 1;
+      lines.splice(insertAt, 0, rendered);
+    } else {
+      if (lines.length && lines[lines.length - 1].trim() !== "") lines.push("");
+      lines.push(`[${table.join(".")}]`, rendered);
+    }
+  }
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return `${lines.join("\n")}\n`;
+}
+
+function containsManaged(current, expected) {
+  if (isPlainObject(expected)) {
+    return isPlainObject(current) && Object.entries(expected).every(([key, value]) => Object.prototype.hasOwnProperty.call(current, key) && containsManaged(current[key], value));
+  }
+  return deepEqual(current, expected);
+}
+
+function logicalFileBytes(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (stat.isFile() && !stat.isSymbolicLink()) return fs.readFileSync(file);
+  } catch (error) {
+    if (error.code !== "ENOENT") return null;
+  }
+  return null;
+}
+
+function treeDigest(root) {
+  if (!isDirectory(root) || isSymlink(root)) return null;
+  const digest = crypto.createHash("sha256");
+  function walk(directory, relativeRoot) {
+    const entries = fs.readdirSync(directory).sort();
+    const dirs = [];
+    const files = [];
+    for (const name of entries) {
+      const full = path.join(directory, name);
+      const stat = fs.lstatSync(full);
+      if (stat.isDirectory() || stat.isSymbolicLink()) dirs.push([name, full]);
+      else files.push([name, full]);
+    }
+    for (const [name, full] of dirs) {
+      const relative = path.posix.join(relativeRoot, name);
+      digest.update(`D\0${relative}\0`);
+      if (isSymlink(full)) digest.update(`L\0${fs.readlinkSync(full)}\0`);
+      else walk(full, relative);
+    }
+    for (const [name, full] of files) {
+      const relative = path.posix.join(relativeRoot, name);
+      if (isSymlink(full)) digest.update(`L\0${relative}\0${fs.readlinkSync(full)}\0`);
+      else {
+        digest.update(`F\0${relative}\0`);
+        digest.update(fs.readFileSync(full));
+        digest.update("\0");
+      }
+    }
+  }
+  walk(root, "");
+  return digest.digest("hex");
+}
+
+function skillNames(repo) {
+  return fs.readdirSync(path.join(repo, "skills"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && isFile(path.join(repo, "skills", entry.name, "SKILL.md")))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+function commandExists(name) {
+  for (const directory of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
+    try {
+      fs.accessSync(path.join(directory, name), fs.constants.X_OK);
+      return true;
+    } catch {
+      // Continue searching PATH.
+    }
+  }
+  return false;
+}
+
+function antigravityIdeInstalled(home) {
+  return isDirectory("/Applications/Antigravity.app") || isDirectory(path.join(home, "Applications", "Antigravity.app"));
+}
+
+function readState(cfg) {
+  const file = path.join(cfg, "state.json");
+  return pathExists(file) ? loadJsonObject(file) : { version: 1, skills: {} };
+}
+
+function expectedState(installedSurfaces, names) {
+  const skills = {};
+  for (const surface of Object.keys(installedSurfaces).sort()) skills[surface] = names;
+  return { version: 1, skills };
+}
+
+function sortJson(value) {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortJson(value[key])]));
+}
+
+function jsonBytes(value) {
+  return Buffer.from(`${JSON.stringify(sortJson(value), null, 2)}\n`, "utf8");
+}
+
+function plan(repo, home, cfg) {
+  const actions = [];
+  const notes = [];
+  const required = [
+    path.join(repo, "preferences", "communication.md"),
+    path.join(repo, "preferences", "engineering.md"),
+    path.join(repo, "harnesses", "codex", "AGENTS.md"),
+    path.join(repo, "harnesses", "codex", "config.toml"),
+    path.join(repo, "harnesses", "claude", "CLAUDE.md"),
+    path.join(repo, "harnesses", "claude", "settings.json"),
+    path.join(repo, "harnesses", "antigravity", "instructions.md"),
+    path.join(repo, "harnesses", "antigravity", "settings.json"),
+  ];
+  const missing = required.filter((file) => !isFile(file));
+  if (missing.length) throw new RuntimeError(`canonical source missing:\n  ${missing.join("\n  ")}`);
+
+  const repoPointer = path.join(cfg, "repo");
+  const pointerContent = Buffer.from(`${repo}\n`);
+  const currentPointer = logicalFileBytes(repoPointer);
+  if (!currentPointer || !currentPointer.equals(pointerContent)) actions.push(new Action("write", repoPointer, "dot-agents repository pointer", { content: pointerContent }));
+  const launcher = path.join(home, ".local", "bin", "dot-agents");
+  const launcherBytes = contentBuffer(launcherContent());
+  const currentLauncher = logicalFileBytes(launcher);
+  if (!currentLauncher || !currentLauncher.equals(launcherBytes)) actions.push(new Action("write-exec", launcher, "dot-agents command launcher", { content: launcherBytes }));
+
+  const installedSurfaces = {};
+  const names = skillNames(repo);
+  if (commandExists("codex")) {
+    const codexHome = absolutePath(process.env.CODEX_HOME || path.join(home, ".codex"));
+    const agentsOverride = path.join(codexHome, "AGENTS.override.md");
+    if (isFile(agentsOverride)) notes.push(`WARN Codex: ${agentsOverride} exists; Codex ignores the generated AGENTS.md while it is present.`);
+    const target = path.join(codexHome, "AGENTS.md");
+    const content = contentBuffer(generatedCodex(repo));
+    const current = logicalFileBytes(target);
+    if (!current || !current.equals(content)) actions.push(new Action("write", target, "Codex global instructions", { content }));
+    planTomlSettings(actions, path.join(repo, "harnesses", "codex", "config.toml"), path.join(cfg, "overrides", "codex.toml"), path.join(codexHome, "config.toml"), "Codex config");
+    installedSurfaces.codex = path.join(home, ".agents", "skills");
+  } else notes.push("SKIP Codex: 'codex' is not installed or not available in PATH.");
+
+  if (commandExists("claude")) {
+    const target = path.join(home, ".claude", "CLAUDE.md");
+    const content = contentBuffer(generatedClaude(repo));
+    const current = logicalFileBytes(target);
+    if (!current || !current.equals(content)) actions.push(new Action("write", target, "Claude Code global instructions", { content }));
+    installedSurfaces.claude = path.join(home, ".claude", "skills");
+    planJsonSettings(actions, path.join(repo, "harnesses", "claude", "settings.json"), path.join(cfg, "overrides", "claude-settings.json"), path.join(home, ".claude", "settings.json"), "Claude Code settings");
+  } else notes.push("SKIP Claude Code: 'claude' is not installed or not available in PATH.");
+
+  const ide = antigravityIdeInstalled(home);
+  const agy = commandExists("agy");
+  if (ide || agy) {
+    const target = path.join(home, ".gemini", "GEMINI.md");
+    const content = contentBuffer(generatedAntigravity(repo));
+    const current = logicalFileBytes(target);
+    if (!current || !current.equals(content)) actions.push(new Action("write", target, "Google Antigravity global instructions", { content }));
+  }
+  if (ide) installedSurfaces["antigravity-ide"] = path.join(home, ".gemini", "config", "skills");
+  else notes.push("SKIP Google Antigravity IDE: Antigravity.app was not found.");
+  if (agy) {
+    installedSurfaces["antigravity-cli"] = path.join(home, ".gemini", "antigravity-cli", "skills");
+    planJsonSettings(actions, path.join(repo, "harnesses", "antigravity", "settings.json"), path.join(cfg, "overrides", "antigravity-settings.json"), path.join(home, ".gemini", "antigravity-cli", "settings.json"), "Antigravity CLI settings");
+  } else notes.push("SKIP Antigravity CLI: 'agy' is not installed or not available in PATH.");
+
+  const previousState = readState(cfg);
+  const previousSkills = isPlainObject(previousState.skills) ? previousState.skills : {};
+  for (const [surface, root] of Object.entries(installedSurfaces)) {
+    for (const name of names) {
+      const source = path.join(repo, "skills", name);
+      const destination = path.join(root, name);
+      if (treeDigest(source) !== treeDigest(destination)) actions.push(new Action("copy-tree", destination, `${surface} skill ${name}`, { source }));
+    }
+    const previouslyManaged = previousSkills[surface];
+    if (Array.isArray(previouslyManaged)) {
+      for (const oldName of [...new Set(previouslyManaged)].sort()) {
+        const destination = path.join(root, oldName);
+        if (!names.includes(oldName) && pathExists(destination)) actions.push(new Action("remove", destination, `removed ${surface} skill ${oldName}`));
+      }
+    }
+  }
+  const statePath = path.join(cfg, "state.json");
+  const stateContent = jsonBytes(expectedState(installedSurfaces, names));
+  const currentState = logicalFileBytes(statePath);
+  if (!currentState || !currentState.equals(stateContent)) actions.push(new Action("state", statePath, "local sync ownership state", { content: stateContent }));
+  return [actions, notes];
+}
+
+function planTomlSettings(actions, canonicalPath, overridePath, destination, label) {
+  const canonical = loadTomlObject(canonicalPath);
+  const override = loadTomlObject(overridePath, true);
+  const expected = deepMerge(canonical, override);
+  let current = {};
+  let currentText = "";
+  let parseFailed = false;
+  if (pathExists(destination)) {
+    try {
+      currentText = readText(destination);
+      current = loadTomlObject(destination);
+    } catch {
+      current = {};
+      parseFailed = true;
+    }
+  }
+  const mergedText = patchTomlText(currentText, expected);
+  const drift = parseFailed ? mergedText !== currentText : !containsManaged(current, expected);
+  if (isSymlink(destination) || drift) actions.push(new Action("toml-merge", destination, label, { content: contentBuffer(mergedText) }));
+}
+
+function planJsonSettings(actions, canonicalPath, overridePath, destination, label) {
+  const canonical = loadJsonObject(canonicalPath);
+  const override = loadJsonObject(overridePath, true);
+  const expected = deepMerge(canonical, override);
+  let current = {};
+  if (pathExists(destination)) {
+    try { current = loadJsonObject(destination); } catch { current = {}; }
+  }
+  if (isSymlink(destination) || !containsManaged(current, expected)) actions.push(new Action("json-merge", destination, label, { jsonValue: deepMerge(current, expected) }));
+}
+
+function actionVerb(action) {
+  if (action.kind === "remove") return "REMOVE";
+  if (action.kind === "json-merge" || action.kind === "toml-merge") return "MERGE";
+  if (action.kind === "copy-tree") return "COPY";
+  if (action.kind === "state") return "UPDATE";
+  return pathExists(action.destination) ? "REPLACE" : "CREATE";
+}
+
+function printPlan(actions, notes) {
+  for (const note of notes) console.log(note);
+  if (!actions.length) return console.log("Everything is in sync.");
+  console.log("\nPending sync:");
+  for (const action of actions) console.log(`  - ${actionVerb(action)}: ${action.destination} [${action.label}]`);
+}
+
+function ensureDirectory(directory) { fs.mkdirSync(directory, { recursive: true }); }
+
+function backupExisting(destination, backupRoot, manifest) {
+  if (!pathExists(destination)) return;
+  const relative = destination.replace(/^[/\\]+/, "");
+  const backupPath = path.join(backupRoot, relative);
+  ensureDirectory(path.dirname(backupPath));
+  fs.renameSync(destination, backupPath);
+  manifest.push([destination, backupPath]);
+}
+
+function atomicWrite(destination, content, executable = false) {
+  ensureDirectory(path.dirname(destination));
+  let tempName;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = path.join(path.dirname(destination), `.${path.basename(destination)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}`);
+    try {
+      fs.writeFileSync(candidate, contentBuffer(content), { flag: "wx" });
+      tempName = candidate;
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST" || attempt === 9) throw error;
+    }
+  }
+  try {
+    if (executable) fs.chmodSync(tempName, 0o755);
+    fs.renameSync(tempName, destination);
+  } finally {
+    if (tempName && pathExists(tempName)) fs.rmSync(tempName, { force: true });
+  }
+}
+
+function localTimestamp() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+function apply(actions, home) {
+  if (!actions.length) return null;
+  const backupRoot = path.join(home, ".dot-agents-backups", `${localTimestamp()}-${process.pid}`);
+  const manifest = [];
+  for (const action of actions) {
+    if (action.kind === "state") {
+      atomicWrite(action.destination, action.content);
+      continue;
+    }
+    backupExisting(action.destination, backupRoot, manifest);
+    if (action.kind === "remove") continue;
+    if (action.kind === "copy-tree") {
+      ensureDirectory(path.dirname(action.destination));
+      fs.cpSync(action.source, action.destination, { recursive: true, dereference: true });
+    } else if (action.kind === "write" || action.kind === "write-exec") {
+      atomicWrite(action.destination, action.content, action.kind === "write-exec");
+    } else if (action.kind === "json-merge") {
+      atomicWrite(action.destination, jsonBytes(action.jsonValue));
+    } else if (action.kind === "toml-merge") {
+      atomicWrite(action.destination, action.content);
+    } else throw new RuntimeError(`unknown action type: ${action.kind}`);
+  }
+  if (manifest.length) {
+    ensureDirectory(backupRoot);
+    fs.writeFileSync(path.join(backupRoot, "manifest.tsv"), manifest.map(([original, backup]) => `${original}\t${backup}\n`).join(""), "utf8");
+    return backupRoot;
+  }
+  if (pathExists(backupRoot)) fs.rmSync(backupRoot, { recursive: true, force: true });
+  return null;
+}
+
+function runCheck(repo, home, cfg) {
+  const [actions, notes] = plan(repo, home, cfg);
+  printPlan(actions, notes);
+  return actions.length ? 1 : 0;
+}
+
+function runSync(repo, home, cfg, assumeYes) {
+  const [actions, notes] = plan(repo, home, cfg);
+  printPlan(actions, notes);
+  if (!actions.length) return 0;
+  if (!assumeYes) {
+    if (!process.stdin.isTTY) {
+      console.error("ERROR: not a terminal; re-run with --yes to sync without confirmation");
+      return 2;
+    }
+    process.stdout.write("\nType YES to apply these changes: ");
+    const answer = fs.readFileSync(0, "utf8").trim();
+    if (answer !== "YES") {
+      console.error("ERROR: aborted (you did not type YES)");
+      return 2;
+    }
+  }
+  const backupRoot = apply(actions, home);
+  console.log(`\nApplied ${actions.length} sync action(s).`);
+  if (backupRoot) console.log(`Backups and rollback manifest: ${backupRoot}`);
+  const [remaining, remainingNotes] = plan(repo, home, cfg);
+  if (remaining.length) {
+    console.error("\nERROR: sync did not converge:");
+    printPlan(remaining, remainingNotes);
+    return 1;
+  }
+  console.log("Everything is in sync.");
+  return 0;
+}
+
+function runUpdate(repo, home, cfg, assumeYes) {
+  const status = spawnSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" });
+  if (status.error) {
+    console.error(`ERROR: cannot run git: ${status.error.message}`);
+    return 2;
+  }
+  if (status.status !== 0) {
+    const detail = (status.stderr || "").trim() || "repository is not a Git worktree";
+    console.error(`ERROR: cannot inspect canonical repository: ${detail}`);
+    return 2;
+  }
+  if ((status.stdout || "").trim()) {
+    console.error("ERROR: canonical repository has uncommitted changes; commit or stash them before `dot-agents update`.");
+    console.error(status.stdout.trimEnd());
+    return 2;
+  }
+  const pull = spawnSync("git", ["-C", repo, "pull", "--ff-only"], { stdio: "inherit" });
+  if (pull.error || pull.status !== 0) {
+    console.error("ERROR: remote update failed; no sync was applied.");
+    return pull.status ?? 2;
+  }
+  if (!looksLikeRepo(repo)) {
+    console.error("ERROR: remote update removed or invalidated the dot-agents repository.");
+    return 2;
+  }
+  const syncArgs = [path.join(repo, "scripts", "dot-agents"), "sync"];
+  if (assumeYes) syncArgs.push("--yes");
+  const sync = spawnSync(process.execPath, syncArgs, { cwd: repo, stdio: "inherit" });
+  return sync.status ?? 2;
+}
+
+function absoluteMachinePath(value) {
+  const found = [];
+  if (isPlainObject(value)) {
+    for (const item of Object.values(value)) found.push(...absoluteMachinePath(item));
+  } else if (Array.isArray(value)) {
+    for (const item of value) found.push(...absoluteMachinePath(item));
+  } else if (typeof value === "string" && (value.startsWith("/Users/") || value.startsWith("/home/"))) found.push(value);
+  return found;
+}
+
+function collectSymlinks(root, relativeRoot = "") {
+  const found = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const full = path.join(root, entry.name);
+    const relative = path.posix.join(relativeRoot, entry.name);
+    if (isSymlink(full)) found.push(relative);
+    else if (entry.isDirectory()) found.push(...collectSymlinks(full, relative));
+  }
+  return found;
+}
+
+function runDoctor(repo, home, cfg) {
+  let failures = 0;
+  let warnings = 0;
+  const section = (title) => console.log(`\n${title}`);
+  const ok = (message) => console.log(`  OK    ${message}`);
+  const info = (message) => console.log(`  INFO  ${message}`);
+  const warn = (message) => { warnings += 1; console.log(`  WARN  ${message}`); };
+  const fail = (message) => { failures += 1; console.log(`  FAIL  ${message}`); };
+
+  section("Canonical sources");
+  const required = [
+    "preferences/communication.md",
+    "preferences/engineering.md",
+    "harnesses/codex/AGENTS.md",
+    "harnesses/codex/config.toml",
+    "harnesses/claude/CLAUDE.md",
+    "harnesses/claude/settings.json",
+    "harnesses/antigravity/instructions.md",
+    "harnesses/antigravity/settings.json",
+    "scripts/dot-agents",
+  ];
+  for (const relative of required) {
+    if (isFile(path.join(repo, relative))) ok(relative);
+    else fail(`${relative} missing`);
+  }
+
+  section("Canonical settings");
+  try {
+    const value = loadTomlObject(path.join(repo, "harnesses", "codex", "config.toml"));
+    const paths = absoluteMachinePath(value);
+    if (paths.length) warn(`harnesses/codex/config.toml contains machine-specific absolute path(s): ${paths.join(", ")}`);
+    else ok("harnesses/codex/config.toml is valid portable TOML");
+  } catch (error) {
+    fail(error.message);
+  }
+  for (const relative of ["harnesses/claude/settings.json", "harnesses/antigravity/settings.json"]) {
+    try {
+      const value = loadJsonObject(path.join(repo, relative));
+      const paths = absoluteMachinePath(value);
+      if (paths.length) warn(`${relative} contains machine-specific absolute path(s): ${paths.join(", ")}`);
+      else ok(`${relative} is valid portable JSON`);
+    } catch (error) {
+      fail(error.message);
+    }
+  }
+
+  section("Local overrides");
+  const overridePaths = [path.join(cfg, "overrides", "codex.toml"), path.join(cfg, "overrides", "claude-settings.json"), path.join(cfg, "overrides", "antigravity-settings.json")];
+  let foundOverride = false;
+  for (const file of overridePaths) {
+    if (!pathExists(file)) continue;
+    foundOverride = true;
+    try {
+      if (file.endsWith(".toml")) loadTomlObject(file);
+      else loadJsonObject(file);
+      ok(`${file} is valid ${file.endsWith(".toml") ? "TOML" : "JSON"}`);
+    } catch (error) {
+      fail(error.message);
+    }
+  }
+  if (!foundOverride) info("no device-local overrides configured");
+
+  section("Skills canonical set");
+  const names = skillNames(repo);
+  const brokenDirs = fs.readdirSync(path.join(repo, "skills"), { withFileTypes: true }).filter((entry) => entry.isDirectory() && !isFile(path.join(repo, "skills", entry.name, "SKILL.md"))).map((entry) => entry.name).sort();
+  for (const name of brokenDirs) fail(`skills/${name} is missing SKILL.md`);
+  ok(`skills/ has ${names.length} installable skill(s)`);
+  const sourceSymlinks = names.flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
+  if (sourceSymlinks.length) warn(`skill source contains symlink(s); materialized copy semantics may differ: ${sourceSymlinks.slice(0, 5).join(", ")}`);
+
+  section("Sync status");
+  try {
+    const [actions, notes] = plan(repo, home, cfg);
+    for (const note of notes) {
+      if (note.startsWith("WARN ")) warn(note.slice(5));
+      else if (note.startsWith("SKIP ")) info(note.slice(5));
+    }
+    if (actions.length) {
+      fail(`${actions.length} sync action(s) pending; run \`dot-agents check\` then \`dot-agents sync\``);
+      actions.slice(0, 10).forEach((action) => console.log(`        ${actionVerb(action)} ${action.destination} [${action.label}]`));
+      if (actions.length > 10) console.log(`        ... and ${actions.length - 10} more`);
+    } else ok("all managed outputs are in sync");
+  } catch (error) {
+    fail(error.message);
+  }
+
+  section("Skill lockfile");
+  const lockPath = path.join(repo, "skills-lock.json");
+  if (!pathExists(lockPath)) info("skills-lock.json is absent");
+  else {
+    try {
+      const data = loadJsonObject(lockPath);
+      const entries = data.skills ?? {};
+      if (!isPlainObject(entries)) fail("skills-lock.json skills must be an object");
+      else {
+        const missing = Object.keys(entries).filter((name) => !isFile(path.join(repo, "skills", name, "SKILL.md"))).sort();
+        if (missing.length) fail(`lockfile entries without skills/<name>/SKILL.md: ${missing.join(", ")}`);
+        else ok(`lockfile manages ${Object.keys(entries).length} external skill(s) under skills/`);
+        const managed = new Set(Object.keys(entries));
+        const local = names.filter((name) => !managed.has(name));
+        if (local.length) info(`local/non-lockfile skills: ${local.join(", ")}`);
+      }
+    } catch (error) {
+      fail(error.message);
+    }
+  }
+
+  section("Backups");
+  const backupRoot = path.join(home, ".dot-agents-backups");
+  if (isDirectory(backupRoot)) {
+    const count = fs.readdirSync(backupRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length;
+    info(`${backupRoot}: ${count} backup batch(es)`);
+  } else info(`${backupRoot} does not exist`);
+
+  console.log();
+  if (failures) {
+    console.log(`${failures} FAIL, ${warnings} WARN.`);
+    return 1;
+  }
+  if (warnings) console.log(`No FAIL; ${warnings} WARN require review.`);
+  else console.log("All checks passed.");
+  return 0;
+}
+
+function printUsage(command = null) {
+  if (command === "update") return console.log("usage: dot-agents update [--yes]\n\nFast-forward the remote repository, then sync updated content.");
+  console.log("usage: dot-agents <check|sync|update|doctor> [--yes]\n\nCheck and explicitly sync dot-agents canonical configuration.\n\n  check             read-only: show pending sync actions\n  sync [--yes]      sync canonical content into installed harness locations\n  update [--yes]    fast-forward remote repository, then sync updated content\n  doctor            run canonical/source/sync diagnostics");
+}
+
+function parseArgs(argv) {
+  if (!argv.length || argv[0] === "--help" || argv[0] === "-h") return { help: true };
+  const command = argv[0];
+  if (!["check", "sync", "update", "doctor"].includes(command)) throw new RuntimeError(`unknown command: ${command}`);
+  if (argv[1] === "--help" || argv[1] === "-h") return { command, help: true };
+  const extra = argv.slice(1);
+  const yes = extra.length > 0 && extra.every((arg) => arg === "--yes");
+  if (!yes && argv.length > 1) throw new RuntimeError("unrecognized option; use --help for usage");
+  if (yes && !["sync", "update"].includes(command)) throw new RuntimeError(`--yes is not valid for ${command}`);
+  return { command, yes };
+}
+
+function main() {
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    console.error(`ERROR: ${error.message}`);
+    printUsage();
+    return 2;
+  }
+  if (args.help) {
+    printUsage(args.command ?? null);
+    return 0;
+  }
+  const home = installHome();
+  const cfg = configHome(home);
+  try {
+    const repo = resolveRepo(home, cfg);
+    if (args.command === "check") return runCheck(repo, home, cfg);
+    if (args.command === "sync") return runSync(repo, home, cfg, args.yes);
+    if (args.command === "update") return runUpdate(repo, home, cfg, args.yes);
+    if (args.command === "doctor") return runDoctor(repo, home, cfg);
+  } catch (error) {
+    console.error(`ERROR: ${error.message}`);
+    return 2;
+  }
+  return 2;
+}
+
+if (require.main === module) process.exitCode = main();

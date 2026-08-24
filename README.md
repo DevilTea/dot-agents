@@ -125,6 +125,8 @@ Antigravity IDE settings 目前仍不由本 repository 管理，因為尚無可�
 ./scripts/dot-agents sync
 ```
 
+`scripts/dot-agents` 是 Node.js CLI，不依賴 Python；請確保 `node` 在 `PATH` 中。
+
 第一次 `sync` 會另外 materialize 一個很小的 launcher 到：
 
 ```text
@@ -143,8 +145,12 @@ Antigravity IDE settings 目前仍不由本 repository 管理，因為尚無可�
 dot-agents check          # 唯讀；完全同步 exit 0，有 drift exit 1
 dot-agents sync           # 列出 plan，互動要求輸入 YES
 dot-agents sync --yes     # 非互動套用
+dot-agents update         # git pull --ff-only 後同步最新 canonical source
+dot-agents update --yes   # 同上，非互動套用 sync
 dot-agents doctor         # canonical / override / sync / lockfile diagnostics
 ```
+
+`dot-agents update` 要求 canonical repository worktree 沒有未提交變更；remote pull 失敗或不是 fast-forward 時不會執行 sync，也不會自動解衝突。
 
 `./scripts/setup.sh --dry-run` 與 `./scripts/setup.sh` 保留為相容入口，分別等同 `dot-agents check` 與 `dot-agents sync`；新流程不再以 setup 作為主要介面。
 
