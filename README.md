@@ -83,8 +83,8 @@ materialized harness files / directories
 
 | 安裝位置 | 同步方式 | 來源 |
 | --- | --- | --- |
-| `~/.codex/AGENTS.md` | generate | `preferences/` ×2 + `harnesses/codex/AGENTS.md` |
-| `~/.codex/config.toml` | managed TOML key merge | `harnesses/codex/config.toml` + local override + existing runtime config |
+| `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | `preferences/` ×2 + `harnesses/codex/AGENTS.md` |
+| `$CODEX_HOME/config.toml` | managed TOML key merge | `harnesses/codex/config.toml` + local override + existing runtime config |
 | `~/.agents/skills/<name>` | copy | `skills/<name>` |
 | `~/.claude/CLAUDE.md` | generate | `harnesses/claude/CLAUDE.md`（`@path` 改寫為 canonical repo 絕對路徑） |
 | `~/.claude/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |

@@ -364,7 +364,11 @@ def plan(repo: Path, home: Path, cfg: Path) -> tuple[list[Action], list[str]]:
     names = skill_names(repo)
 
     if command_exists("codex"):
-        target = home / ".codex" / "AGENTS.md"
+        codex_home = Path(os.environ.get("CODEX_HOME", str(home / ".codex"))).expanduser()
+        override = codex_home / "AGENTS.override.md"
+        if override.is_file():
+            notes.append(f"WARN Codex: {override} exists; Codex ignores the generated AGENTS.md while it is present.")
+        target = codex_home / "AGENTS.md"
         content = generated_codex(repo)
         if logical_file_bytes(target) != content:
             actions.append(Action("write", target, "Codex global instructions", content=content))
@@ -372,7 +376,7 @@ def plan(repo: Path, home: Path, cfg: Path) -> tuple[list[Action], list[str]]:
             actions,
             repo / "harnesses" / "codex" / "config.toml",
             cfg / "overrides" / "codex.toml",
-            home / ".codex" / "config.toml",
+            codex_home / "config.toml",
             "Codex config",
         )
         installed_surfaces["codex"] = home / ".agents" / "skills"
@@ -751,7 +755,10 @@ def run_doctor(repo: Path, home: Path, cfg: Path) -> int:
     try:
         actions, notes = plan(repo, home, cfg)
         for note in notes:
-            info(note.removeprefix("SKIP "))
+            if note.startswith("WARN "):
+                warn(note.removeprefix("WARN "))
+            else:
+                info(note.removeprefix("SKIP "))
         if actions:
             fail(f"{len(actions)} sync action(s) pending; run `dot-agents check` then `dot-agents sync`")
             for action in actions[:10]:
