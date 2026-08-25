@@ -23,6 +23,10 @@ const HARNESS_LABELS = {
   claude: "Claude Code",
   antigravity: "Google Antigravity",
 };
+const SKILL_RUNTIME_REQUIREMENTS = [
+  { runtime: "cmux", executable: "cmux", matches: (name) => name === "cmux" || name.startsWith("cmux-") },
+  { runtime: "herdr", executable: "herdr", matches: (name) => name === "herdr" || name.startsWith("herdr-") },
+];
 
 class Action {
   constructor(kind, destination, label, options = {}) {
@@ -558,6 +562,33 @@ function skillNames(repo) {
     .sort();
 }
 
+function syncSkillNames(repo, notes) {
+  const available = new Map();
+  const skipped = new Map();
+  const active = [];
+  for (const name of skillNames(repo)) {
+    const requirement = SKILL_RUNTIME_REQUIREMENTS.find((item) => item.matches(name));
+    if (!requirement) {
+      active.push(name);
+      continue;
+    }
+    if (!available.has(requirement.runtime)) available.set(requirement.runtime, commandExists(requirement.executable));
+    if (available.get(requirement.runtime)) {
+      active.push(name);
+      continue;
+    }
+    if (!skipped.has(requirement.runtime)) skipped.set(requirement.runtime, []);
+    skipped.get(requirement.runtime).push(name);
+  }
+  for (const requirement of SKILL_RUNTIME_REQUIREMENTS) {
+    const names = skipped.get(requirement.runtime);
+    if (names?.length) {
+      notes.push(`SKIP runtime ${requirement.runtime}: '${requirement.executable}' is not installed or not available in PATH; skipped skills: ${names.join(", ")}.`);
+    }
+  }
+  return active;
+}
+
 function commandExists(name) {
   for (const directory of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
     try {
@@ -634,7 +665,7 @@ function plan(repo, home, cfg, options = {}) {
   if (!currentLauncher || !currentLauncher.equals(launcherBytes)) actions.push(new Action("write-exec", launcher, "dot-agents command launcher", { content: launcherBytes }));
 
   const installedSurfaces = {};
-  const names = skillNames(repo);
+  const names = syncSkillNames(repo, notes);
   const codexAvailable = commandExists("codex");
   if (wantsHarness("codex") && codexAvailable) {
     const codexHome = absolutePath(process.env.CODEX_HOME || path.join(home, ".codex"));
