@@ -102,7 +102,7 @@ existing runtime state
         ← device-local override
 ```
 
-Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、sandbox、comment 或本機設定。
+Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、project-specific entries、comment 或本機設定。
 
 Device-local override 放在：
 

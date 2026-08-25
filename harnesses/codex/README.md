@@ -24,6 +24,6 @@ Canonical source 修改後先用 `dot-agents check` 查看 drift，再以 `dot-a
 
 Personal skills 的官方位置是 `~/.agents/skills/`。`dot-agents sync` 將 `skills/<name>/` 完整 copy 到該位置，不使用 symlink，因此 repository 修改不會在未 sync 時偷偷改變執行中環境。
 
-`harnesses/codex/config.toml` 保存跨裝置 shared defaults；目前管理 `model`、`model_reasoning_effort` 與 `[agents]` 的 default subagent model/effort。`dot-agents sync` 對 `~/.codex/config.toml` 做 key-level patch，不整份重寫，因此 canonical 未管理的 MCP、sandbox、comments 與本機設定會保留。裝置差異可放在 `~/.config/dot-agents/overrides/codex.toml`，其 key precedence 高於 canonical。
+`harnesses/codex/config.toml` 保存跨裝置 shared defaults；目前管理 `model`、`model_reasoning_effort`、`approvals_reviewer`、`sandbox_mode`、`[agents]` 的 default subagent model/effort，以及 `[tui]` 的 status line 偏好。`dot-agents sync` 對 `~/.codex/config.toml` 做 key-level patch，不整份重寫，因此 canonical 未管理的 MCP、project-specific entries、comments 與其他本機設定會保留。`sandbox_mode = "danger-full-access"` 是明確的全域預設，會取消 Codex command sandbox；若不同裝置需要不同安全邊界，請移到 `~/.config/dot-agents/overrides/codex.toml`。裝置差異可放在該 override，且其 key precedence 高於 canonical。
 
 來源：[OpenAI Codex `AGENTS.md` 文件](https://learn.chatgpt.com/docs/agent-configuration/agents-md.md)。

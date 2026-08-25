@@ -460,13 +460,20 @@ function flattenTomlLeaves(value, prefix = []) {
 
 function patchTomlText(currentText, expected) {
   const lines = currentText ? currentText.split(/\r?\n/) : [];
-  const tableRe = /^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$/;
+  const tableRe = /^\s*\[(.*)\]\s*(?:#.*)?$/;
   const keyRe = /^(\s*)([A-Za-z0-9_-]+)\s*=.*$/;
   function tableRanges() {
     const starts = [[[], -1]];
     lines.forEach((line, index) => {
       const match = line.match(tableRe);
-      if (match) starts.push([match[1].split("."), index]);
+      if (match && !line.trim().startsWith("[[")) {
+        try {
+          starts.push([parseTomlKeyPath(match[1]), index]);
+        } catch {
+          // Leave unsupported table syntax untouched; it still marks a new range.
+          starts.push([match[1].split("."), index]);
+        }
+      }
     });
     const result = new Map();
     starts.forEach(([table, headerIndex], index) => {
