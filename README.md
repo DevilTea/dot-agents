@@ -118,14 +118,31 @@ Antigravity IDE settings 目前仍不由本 repository 管理，因為尚無可�
 
 ## Commands
 
-第一次 clone 後，直接從 repository 執行：
+第一次 clone 後，直接執行互動式 setup：
 
 ```bash
-./scripts/dot-agents check
-./scripts/dot-agents sync
+./scripts/setup.sh
 ```
 
-`scripts/dot-agents` 是 Node.js CLI，不依賴 Python；請確保 `node` 在 `PATH` 中。
+setup 會分別詢問 Codex、Claude Code、Google Antigravity 是否要納入管理；預設值依目前是否偵測到該 harness 決定。它只安裝 dot-agents 的設定與 skill，不會下載或安裝 harness 本身。每個 harness 都可以單獨選擇，最後會列出完整 plan 並要求輸入 `YES`。
+
+給 agent 或其他非互動環境時，明確指定選擇並跳過最後確認：
+
+```bash
+./scripts/setup.sh --harness codex --harness claude --yes
+./scripts/setup.sh --harnesses codex,claude --dry-run
+./scripts/setup.sh --all --yes
+```
+
+`--harness` 可重複使用；可用名稱是 `codex`、`claude`、`antigravity`。指定選擇代表完整的管理清單；`--none` 可明確選擇不管理任何 harness。從管理清單移除 harness 不會刪除既有 runtime 檔案，只會停止後續同步；需要移除時應先人工確認，再依備份／runtime 狀態處理。互動模式不需要記住這些參數。`scripts/dot-agents` 是同一個 Node.js CLI 入口，不依賴 Python；請確保 `node` 在 `PATH` 中。
+
+選擇會記錄在：
+
+```text
+~/.config/dot-agents/harnesses.json
+```
+
+之後的 `check`、`sync`、`update` 都沿用這份選擇，不會把未選的 harness 自動加入。還沒有這份檔案的既有安裝會維持原本的 PATH／app 自動偵測行為。
 
 第一次 `sync` 會另外 materialize 一個很小的 launcher 到：
 
@@ -145,6 +162,8 @@ Antigravity IDE settings 目前仍不由本 repository 管理，因為尚無可�
 dot-agents check          # 唯讀；完全同步 exit 0，有 drift exit 1
 dot-agents sync           # 列出 plan，互動要求輸入 YES
 dot-agents sync --yes     # 非互動套用
+dot-agents setup          # 重新逐一選擇三個 harness
+dot-agents setup --all --yes
 dot-agents update         # git pull --ff-only 後同步最新 canonical source
 dot-agents update --yes   # 同上，非互動套用 sync
 dot-agents doctor         # canonical / override / sync / lockfile diagnostics
@@ -152,9 +171,9 @@ dot-agents doctor         # canonical / override / sync / lockfile diagnostics
 
 `dot-agents update` 要求 canonical repository worktree 沒有未提交變更；remote pull 失敗或不是 fast-forward 時不會執行 sync，也不會自動解衝突。
 
-`./scripts/setup.sh --dry-run` 與 `./scripts/setup.sh` 保留為相容入口，分別等同 `dot-agents check` 與 `dot-agents sync`；新流程不再以 setup 作為主要介面。
+`./scripts/setup.sh` 是 `dot-agents setup` 的 bootstrap wrapper，適合剛 clone 下來、尚未有 global `dot-agents` launcher 的情境。互動 setup 沒有選擇旗標時會逐一詢問三個 harness；agent 應使用明確的 `--harness`／`--all` 搭配 `--yes`，避免依賴 TTY。
 
-Sync 不下載 harness、不修改 project repository。未安裝的 harness 會顯示 skip reason。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。
+Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。
 
 有異動時，既有 managed entry 會先移至：
 
@@ -167,8 +186,8 @@ Sync 不下載 harness、不修改 project repository。未安裝的 harness 會
 要在不動真實 `$HOME` 的情況下測試：
 
 ```bash
-DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/dot-agents check
-DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/dot-agents sync --yes
+DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --dry-run
+DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 ```
 
 ## Backup cleanup
@@ -192,6 +211,7 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/dot-agents sync --yes
 - canonical source 與 JSON 是否有效
 - canonical settings 是否誤帶常見 machine-specific absolute path
 - device-local override JSON 是否有效
+- harness selection 是否有效，以及目前選擇的管理清單
 - `skills/` 是否缺少 `SKILL.md` 或含 symlink
 - 是否有 pending sync
 - `skills-lock.json` 的每個 entry 是否都有對應的 `skills/<name>/SKILL.md`
@@ -256,7 +276,7 @@ Project-local instructions 可以補充或覆蓋個人偏好。實際 precedence
 本 repository 由早期的單一 `AGENTS.md` 加 Claude 專屬 setup 演進而來。主要決定：
 
 - 通用語氣與工程原則拆到 `preferences/`；execution、validation、reporting 等依 harness 能力拆到 `harnesses/<harness>/`。
-- `scripts/setup-claude.sh` 曾由多 harness `scripts/setup.sh` 取代；目前主要介面已改為 explicit `dot-agents check`／`dot-agents sync`。
+- `scripts/setup-claude.sh` 曾由多 harness `scripts/setup.sh` 取代；目前以 `dot-agents setup` 作為 bootstrap，日常則使用 explicit `dot-agents check`／`dot-agents sync`。
 - 所有 harness deployment 都不再 symlink 回 repository；instructions generate、skills materialize copy、mutable JSON settings 採 managed merge。
 - Pi CLI 與 Node.js extension 不恢復；目前 `dot-agents` 只是 repository-local sync CLI，不是 agent framework 或發布套件。
 

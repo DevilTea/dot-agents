@@ -17,6 +17,13 @@ const { spawnSync } = require("node:child_process");
 
 class RuntimeError extends Error {}
 
+const HARNESS_NAMES = ["codex", "claude", "antigravity"];
+const HARNESS_LABELS = {
+  codex: "Codex",
+  claude: "Claude Code",
+  antigravity: "Google Antigravity",
+};
+
 class Action {
   constructor(kind, destination, label, options = {}) {
     this.kind = kind;
@@ -120,6 +127,34 @@ function resolveRepo(home, cfg) {
 
 function readText(file) {
   return fs.readFileSync(file, "utf8");
+}
+
+function normalizeHarnesses(values) {
+  if (!Array.isArray(values)) throw new RuntimeError("harness selection must be an array");
+  const selected = new Set();
+  for (const value of values) {
+    if (typeof value !== "string" || !value.trim()) throw new RuntimeError("harness names must be non-empty strings");
+    const name = value.trim().toLowerCase();
+    if (!HARNESS_NAMES.includes(name)) throw new RuntimeError(`unknown harness: ${value}; expected ${HARNESS_NAMES.join(", ")}`);
+    selected.add(name);
+  }
+  return HARNESS_NAMES.filter((name) => selected.has(name));
+}
+
+function harnessSelectionPath(cfg) {
+  return path.join(cfg, "harnesses.json");
+}
+
+function readHarnessSelection(cfg) {
+  const file = harnessSelectionPath(cfg);
+  if (!pathExists(file)) return null;
+  const value = loadJsonObject(file);
+  if (value.version !== 1) throw new RuntimeError(`unsupported harness selection version in ${file}`);
+  return normalizeHarnesses(value.harnesses);
+}
+
+function harnessSelectionBytes(harnesses) {
+  return jsonBytes({ version: 1, harnesses: normalizeHarnesses(harnesses) });
 }
 
 function contentBuffer(value) {
@@ -560,9 +595,22 @@ function jsonBytes(value) {
   return Buffer.from(`${JSON.stringify(sortJson(value), null, 2)}\n`, "utf8");
 }
 
-function plan(repo, home, cfg) {
+function plan(repo, home, cfg, options = {}) {
   const actions = [];
   const notes = [];
+  const storedHarnesses = options.selectedHarnesses === undefined ? readHarnessSelection(cfg) : null;
+  const selectedHarnesses = options.selectedHarnesses === undefined
+    ? storedHarnesses
+    : normalizeHarnesses(options.selectedHarnesses);
+  const selectionFile = harnessSelectionPath(cfg);
+  if (options.selectedHarnesses !== undefined) {
+    const expectedSelection = harnessSelectionBytes(selectedHarnesses);
+    const currentSelection = logicalFileBytes(selectionFile);
+    if (!currentSelection || !currentSelection.equals(expectedSelection)) {
+      actions.push(new Action("selection", selectionFile, "selected harnesses", { content: expectedSelection }));
+    }
+  }
+  const wantsHarness = (name) => selectedHarnesses === null || selectedHarnesses.includes(name);
   const required = [
     path.join(repo, "preferences", "communication.md"),
     path.join(repo, "preferences", "engineering.md"),
@@ -587,7 +635,8 @@ function plan(repo, home, cfg) {
 
   const installedSurfaces = {};
   const names = skillNames(repo);
-  if (commandExists("codex")) {
+  const codexAvailable = commandExists("codex");
+  if (wantsHarness("codex") && codexAvailable) {
     const codexHome = absolutePath(process.env.CODEX_HOME || path.join(home, ".codex"));
     const agentsOverride = path.join(codexHome, "AGENTS.override.md");
     if (isFile(agentsOverride)) notes.push(`WARN Codex: ${agentsOverride} exists; Codex ignores the generated AGENTS.md while it is present.`);
@@ -597,31 +646,40 @@ function plan(repo, home, cfg) {
     if (!current || !current.equals(content)) actions.push(new Action("write", target, "Codex global instructions", { content }));
     planTomlSettings(actions, path.join(repo, "harnesses", "codex", "config.toml"), path.join(cfg, "overrides", "codex.toml"), path.join(codexHome, "config.toml"), "Codex config");
     installedSurfaces.codex = path.join(home, ".agents", "skills");
-  } else notes.push("SKIP Codex: 'codex' is not installed or not available in PATH.");
+  } else if (!wantsHarness("codex")) notes.push("SKIP Codex: not selected.");
+  else if (selectedHarnesses !== null) notes.push("WAIT Codex: selected, but 'codex' is not installed or not available in PATH.");
+  else notes.push("SKIP Codex: 'codex' is not installed or not available in PATH.");
 
-  if (commandExists("claude")) {
+  const claudeAvailable = commandExists("claude");
+  if (wantsHarness("claude") && claudeAvailable) {
     const target = path.join(home, ".claude", "CLAUDE.md");
     const content = contentBuffer(generatedClaude(repo));
     const current = logicalFileBytes(target);
     if (!current || !current.equals(content)) actions.push(new Action("write", target, "Claude Code global instructions", { content }));
     installedSurfaces.claude = path.join(home, ".claude", "skills");
     planJsonSettings(actions, path.join(repo, "harnesses", "claude", "settings.json"), path.join(cfg, "overrides", "claude-settings.json"), path.join(home, ".claude", "settings.json"), "Claude Code settings");
-  } else notes.push("SKIP Claude Code: 'claude' is not installed or not available in PATH.");
+  } else if (!wantsHarness("claude")) notes.push("SKIP Claude Code: not selected.");
+  else if (selectedHarnesses !== null) notes.push("WAIT Claude Code: selected, but 'claude' is not installed or not available in PATH.");
+  else notes.push("SKIP Claude Code: 'claude' is not installed or not available in PATH.");
 
   const ide = antigravityIdeInstalled(home);
   const agy = commandExists("agy");
-  if (ide || agy) {
+  if (wantsHarness("antigravity") && (ide || agy)) {
     const target = path.join(home, ".gemini", "GEMINI.md");
     const content = contentBuffer(generatedAntigravity(repo));
     const current = logicalFileBytes(target);
     if (!current || !current.equals(content)) actions.push(new Action("write", target, "Google Antigravity global instructions", { content }));
   }
-  if (ide) installedSurfaces["antigravity-ide"] = path.join(home, ".gemini", "config", "skills");
+  if (wantsHarness("antigravity") && ide) installedSurfaces["antigravity-ide"] = path.join(home, ".gemini", "config", "skills");
+  else if (!wantsHarness("antigravity")) notes.push("SKIP Google Antigravity IDE: not selected.");
+  else if (selectedHarnesses !== null) notes.push("WAIT Google Antigravity IDE: selected, but Antigravity.app was not found.");
   else notes.push("SKIP Google Antigravity IDE: Antigravity.app was not found.");
-  if (agy) {
+  if (wantsHarness("antigravity") && agy) {
     installedSurfaces["antigravity-cli"] = path.join(home, ".gemini", "antigravity-cli", "skills");
     planJsonSettings(actions, path.join(repo, "harnesses", "antigravity", "settings.json"), path.join(cfg, "overrides", "antigravity-settings.json"), path.join(home, ".gemini", "antigravity-cli", "settings.json"), "Antigravity CLI settings");
-  } else notes.push("SKIP Antigravity CLI: 'agy' is not installed or not available in PATH.");
+  } else if (!wantsHarness("antigravity")) notes.push("SKIP Antigravity CLI: not selected.");
+  else if (selectedHarnesses !== null) notes.push("WAIT Antigravity CLI: selected, but 'agy' is not installed or not available in PATH.");
+  else notes.push("SKIP Antigravity CLI: 'agy' is not installed or not available in PATH.");
 
   const previousState = readState(cfg);
   const previousSkills = isPlainObject(previousState.skills) ? previousState.skills : {};
@@ -680,6 +738,7 @@ function planJsonSettings(actions, canonicalPath, overridePath, destination, lab
 
 function actionVerb(action) {
   if (action.kind === "remove") return "REMOVE";
+  if (action.kind === "selection") return "UPDATE";
   if (action.kind === "json-merge" || action.kind === "toml-merge") return "MERGE";
   if (action.kind === "copy-tree") return "COPY";
   if (action.kind === "state") return "UPDATE";
@@ -736,7 +795,7 @@ function apply(actions, home) {
   const backupRoot = path.join(home, ".dot-agents-backups", `${localTimestamp()}-${process.pid}`);
   const manifest = [];
   for (const action of actions) {
-    if (action.kind === "state") {
+    if (action.kind === "state" || action.kind === "selection") {
       atomicWrite(action.destination, action.content);
       continue;
     }
@@ -762,23 +821,38 @@ function apply(actions, home) {
   return null;
 }
 
-function runCheck(repo, home, cfg) {
-  const [actions, notes] = plan(repo, home, cfg);
+function readLineSync() {
+  const bytes = [];
+  const buffer = Buffer.alloc(1);
+  while (true) {
+    const count = fs.readSync(0, buffer, 0, 1, null);
+    if (!count || buffer[0] === 10) break;
+    if (buffer[0] !== 13) bytes.push(buffer[0]);
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+function runCheck(repo, home, cfg, options = {}) {
+  const [actions, notes] = plan(repo, home, cfg, options);
   printPlan(actions, notes);
   return actions.length ? 1 : 0;
 }
 
-function runSync(repo, home, cfg, assumeYes) {
-  const [actions, notes] = plan(repo, home, cfg);
+function runSync(repo, home, cfg, assumeYes, options = {}) {
+  const [actions, notes] = plan(repo, home, cfg, options);
   printPlan(actions, notes);
   if (!actions.length) return 0;
+  if (options.dryRun) {
+    console.log("\nDry-run complete. No files were modified.");
+    return 0;
+  }
   if (!assumeYes) {
     if (!process.stdin.isTTY) {
       console.error("ERROR: not a terminal; re-run with --yes to sync without confirmation");
       return 2;
     }
     process.stdout.write("\nType YES to apply these changes: ");
-    const answer = fs.readFileSync(0, "utf8").trim();
+    const answer = readLineSync().trim();
     if (answer !== "YES") {
       console.error("ERROR: aborted (you did not type YES)");
       return 2;
@@ -787,7 +861,7 @@ function runSync(repo, home, cfg, assumeYes) {
   const backupRoot = apply(actions, home);
   console.log(`\nApplied ${actions.length} sync action(s).`);
   if (backupRoot) console.log(`Backups and rollback manifest: ${backupRoot}`);
-  const [remaining, remainingNotes] = plan(repo, home, cfg);
+  const [remaining, remainingNotes] = plan(repo, home, cfg, options);
   if (remaining.length) {
     console.error("\nERROR: sync did not converge:");
     printPlan(remaining, remainingNotes);
@@ -795,6 +869,57 @@ function runSync(repo, home, cfg, assumeYes) {
   }
   console.log("Everything is in sync.");
   return 0;
+}
+
+function harnessAvailability(home) {
+  return {
+    codex: commandExists("codex"),
+    claude: commandExists("claude"),
+    antigravity: antigravityIdeInstalled(home) || commandExists("agy"),
+  };
+}
+
+function askYesNo(prompt, defaultValue) {
+  while (true) {
+    process.stdout.write(`${prompt} ${defaultValue ? "[Y/n]" : "[y/N]"} `);
+    const answer = readLineSync().trim().toLowerCase();
+    if (!answer) return defaultValue;
+    if (["y", "yes"].includes(answer)) return true;
+    if (["n", "no"].includes(answer)) return false;
+    console.log("Please answer y/yes or n/no.");
+  }
+}
+
+function promptHarnessSelection(home, cfg) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new RuntimeError("interactive setup requires a terminal; use --harness <name> or --all together with --yes");
+  }
+  const current = readHarnessSelection(cfg);
+  const available = harnessAvailability(home);
+  console.log("dot-agents setup");
+  console.log("This configures dot-agents files for selected harnesses; it does not install the harness software.");
+  console.log("Press Enter to accept the default shown for each harness.\n");
+  const selected = [];
+  for (const name of HARNESS_NAMES) {
+    const defaultValue = current === null ? available[name] : current.includes(name);
+    const status = available[name] ? "detected" : "not detected";
+    if (askYesNo(`Configure ${HARNESS_LABELS[name]} (${status})?`, defaultValue)) selected.push(name);
+  }
+  return normalizeHarnesses(selected);
+}
+
+function runSetup(repo, home, cfg, assumeYes, dryRun, explicitHarnesses) {
+  const selectedHarnesses = explicitHarnesses === undefined
+    ? promptHarnessSelection(home, cfg)
+    : normalizeHarnesses(explicitHarnesses);
+  const summary = selectedHarnesses.length
+    ? selectedHarnesses.map((name) => HARNESS_LABELS[name]).join(", ")
+    : "none";
+  if (explicitHarnesses !== undefined) {
+    console.log(`dot-agents setup: selected harnesses: ${summary}`);
+    console.log("This configures dot-agents files; it does not install the harness software.");
+  }
+  return runSync(repo, home, cfg, assumeYes, { selectedHarnesses, dryRun });
 }
 
 function runUpdate(repo, home, cfg, assumeYes) {
@@ -911,6 +1036,16 @@ function runDoctor(repo, home, cfg) {
   }
   if (!foundOverride) info("no device-local overrides configured");
 
+  section("Harness selection");
+  try {
+    const selected = readHarnessSelection(cfg);
+    if (selected === null) info("no explicit harness selection; sync uses PATH/app detection");
+    else if (selected.length) ok(`selected: ${selected.map((name) => HARNESS_LABELS[name]).join(", ")}`);
+    else ok("selected: none");
+  } catch (error) {
+    fail(error.message);
+  }
+
   section("Skills canonical set");
   const names = skillNames(repo);
   const brokenDirs = fs.readdirSync(path.join(repo, "skills"), { withFileTypes: true }).filter((entry) => entry.isDirectory() && !isFile(path.join(repo, "skills", entry.name, "SKILL.md"))).map((entry) => entry.name).sort();
@@ -925,6 +1060,7 @@ function runDoctor(repo, home, cfg) {
     for (const note of notes) {
       if (note.startsWith("WARN ")) warn(note.slice(5));
       else if (note.startsWith("SKIP ")) info(note.slice(5));
+      else if (note.startsWith("WAIT ")) info(note.slice(5));
     }
     if (actions.length) {
       fail(`${actions.length} sync action(s) pending; run \`dot-agents check\` then \`dot-agents sync\``);
@@ -975,19 +1111,66 @@ function runDoctor(repo, home, cfg) {
 
 function printUsage(command = null) {
   if (command === "update") return console.log("usage: dot-agents update [--yes]\n\nFast-forward the remote repository, then sync updated content.");
-  console.log("usage: dot-agents <check|sync|update|doctor> [--yes]\n\nCheck and explicitly sync dot-agents canonical configuration.\n\n  check             read-only: show pending sync actions\n  sync [--yes]      sync canonical content into installed harness locations\n  update [--yes]    fast-forward remote repository, then sync updated content\n  doctor            run canonical/source/sync diagnostics");
+  if (command === "setup") {
+    return console.log("usage: dot-agents setup [--harness NAME ... | --harnesses LIST | --all | --none] [--yes] [--dry-run]\n\nSelect which harnesses dot-agents should manage, then sync them.\n\n  --harness NAME    select one harness; repeat or use a comma-separated list\n  --harnesses LIST  select a comma-separated list\n  --all             select Codex, Claude Code, and Google Antigravity\n  --none            select no harness (only local dot-agents metadata is set)\n  --yes             skip the final confirmation; required for non-interactive use\n  --dry-run         show the plan without modifying files\n\nWithout a selection flag, setup asks about all three harnesses interactively.\nHarness names: codex, claude, antigravity");
+  }
+  console.log("usage: dot-agents <setup|check|sync|update|doctor> [options]\n\nCheck and explicitly sync dot-agents canonical configuration.\n\n  setup             select harnesses interactively, then sync\n  check             read-only: show pending sync actions\n  sync [--yes]      sync selected/detected harness locations\n  update [--yes]    fast-forward remote repository, then sync updated content\n  doctor            run canonical/source/sync diagnostics");
+}
+
+function parseHarnessList(raw) {
+  const values = String(raw).split(",").map((value) => value.trim()).filter(Boolean);
+  if (!values.length) throw new RuntimeError("--harness expects at least one harness name");
+  return normalizeHarnesses(values);
 }
 
 function parseArgs(argv) {
   if (!argv.length || argv[0] === "--help" || argv[0] === "-h") return { help: true };
   const command = argv[0];
-  if (!["check", "sync", "update", "doctor"].includes(command)) throw new RuntimeError(`unknown command: ${command}`);
-  if (argv[1] === "--help" || argv[1] === "-h") return { command, help: true };
+  if (!["check", "sync", "setup", "update", "doctor"].includes(command)) throw new RuntimeError(`unknown command: ${command}`);
+  if (argv.slice(1).some((arg) => arg === "--help" || arg === "-h")) return { command, help: true };
   const extra = argv.slice(1);
-  const yes = extra.length > 0 && extra.every((arg) => arg === "--yes");
-  if (!yes && argv.length > 1) throw new RuntimeError("unrecognized option; use --help for usage");
-  if (yes && !["sync", "update"].includes(command)) throw new RuntimeError(`--yes is not valid for ${command}`);
-  return { command, yes };
+  if (command !== "setup") {
+    const yes = extra.length > 0 && extra.every((arg) => arg === "--yes");
+    if (!yes && argv.length > 1) throw new RuntimeError("unrecognized option; use --help for usage");
+    if (yes && !["sync", "update"].includes(command)) throw new RuntimeError(`--yes is not valid for ${command}`);
+    return { command, yes };
+  }
+
+  let yes = false;
+  let dryRun = false;
+  let selectionSpecified = false;
+  let selectionMode = null;
+  let selected = [];
+  const addSelection = (raw) => {
+    if (selectionMode && selectionMode !== "list") throw new RuntimeError("--all/--none cannot be combined with --harness");
+    selectionMode = "list";
+    selectionSpecified = true;
+    selected = [...selected, ...parseHarnessList(raw)];
+  };
+  for (let index = 0; index < extra.length; index += 1) {
+    const arg = extra[index];
+    if (arg === "--yes") yes = true;
+    else if (arg === "--dry-run") dryRun = true;
+    else if (arg === "--all") {
+      if (selectionSpecified) throw new RuntimeError("--all cannot be combined with another harness selection flag");
+      selectionMode = "all";
+      selectionSpecified = true;
+      selected = [...HARNESS_NAMES];
+    } else if (arg === "--none") {
+      if (selectionSpecified) throw new RuntimeError("--none cannot be combined with another harness selection flag");
+      selectionMode = "none";
+      selectionSpecified = true;
+      selected = [];
+    } else if (arg === "--harness" || arg === "--harnesses") {
+      if (index + 1 >= extra.length) throw new RuntimeError(`${arg} expects a value`);
+      addSelection(extra[++index]);
+    } else if (arg.startsWith("--harness=") || arg.startsWith("--harnesses=")) {
+      addSelection(arg.slice(arg.indexOf("=") + 1));
+    } else {
+      throw new RuntimeError(`unrecognized setup option: ${arg}`);
+    }
+  }
+  return { command, yes, dryRun, selectedHarnesses: selectionSpecified ? normalizeHarnesses(selected) : undefined };
 }
 
 function main() {
@@ -996,7 +1179,7 @@ function main() {
     args = parseArgs(process.argv.slice(2));
   } catch (error) {
     console.error(`ERROR: ${error.message}`);
-    printUsage();
+    printUsage(process.argv[2] === "setup" ? "setup" : null);
     return 2;
   }
   if (args.help) {
@@ -1009,6 +1192,7 @@ function main() {
     const repo = resolveRepo(home, cfg);
     if (args.command === "check") return runCheck(repo, home, cfg);
     if (args.command === "sync") return runSync(repo, home, cfg, args.yes);
+    if (args.command === "setup") return runSetup(repo, home, cfg, args.yes, args.dryRun, args.selectedHarnesses);
     if (args.command === "update") return runUpdate(repo, home, cfg, args.yes);
     if (args.command === "doctor") return runDoctor(repo, home, cfg);
   } catch (error) {
