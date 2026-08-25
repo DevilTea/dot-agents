@@ -3,7 +3,7 @@
 # Verify slugs and effort ranges against each harness's current model list
 # before editing (Codex: ~/.codex/models_cache.json; Claude Code: /model).
 
-version: 1
+version: 2
 updated: "2026-08-24"
 
 principles:
@@ -140,12 +140,13 @@ harnesses:
       subagents: "[agents] default_subagent_model / default_subagent_reasoning_effort."
 
   antigravity:
-    # Policy: only Gemini 3.6 Flash (High) is used in Antigravity. Other Gemini
-    # models are intentionally not listed. Large or complex tasks are NOT
-    # routed to this harness — hand them to Claude Code or Codex CLI.
+    # Model slugs verified with `agy models` on 2026-08-25.
+    # Policy: Gemini 3.7 Flash High executes local work. Large or complex tasks
+    # are NOT routed to this harness — hand them to Claude Code or Codex CLI.
     models:
       flash:
-        id: gemini-3.6-flash-high
+        id: gemini-3.7-flash-high
+        efforts: [high]
     assignments:
       orchestration:
         route_elsewhere: true
@@ -155,13 +156,17 @@ harnesses:
         note: "use Claude Code or Codex CLI"
       implementation:
         model: flash
+        effort: high
         note: "small, well-specified changes only; otherwise route elsewhere"
       review-verification:
         route_elsewhere: true
         note: "use Claude Code or Codex CLI"
       search-retrieval:
         model: flash
+        effort: high
       mechanical:
         model: flash
+        effort: high
       writing-docs:
         model: flash
+        effort: high
