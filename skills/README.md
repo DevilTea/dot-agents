@@ -12,7 +12,7 @@
 - Skill 內出現 Claude Code、Codex 或特定 tool syntax 時，應視為標示清楚的 integration section 或範例，而非全域 policy。
 - 保守遷移優先：除非已驗證替代方式，不為格式純粹而移除仍在使用的 adapter。
 
-目前已知 adapters：`agent-browser` 的部分 frontmatter 為 Claude Code metadata；`maintain-skill` 內有明確 Tool Mapping；`collab` 的 `disable-model-invocation` 與 `argument-hint` 為 Claude Code 欄位，且其通知環節依賴 cmux 與 `cmux-browser` skill。未支援這些 adapter 的 harness 仍可使用其共通 playbook。
+目前已知 adapters：`agent-browser` 的部分 frontmatter 為 Claude Code metadata；`maintain-skill` 內有明確 Tool Mapping。未支援這些 adapter 的 harness 仍可使用其共通 playbook。
 
 ## Composition
 
