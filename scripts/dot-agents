@@ -435,6 +435,14 @@ function loadTomlObject(file, allowMissing = false) {
   return value;
 }
 
+function tomlKey(key) {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
+}
+
+function tomlPathIdentity(parts) {
+  return JSON.stringify(parts);
+}
+
 function tomlValue(value) {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -461,7 +469,6 @@ function flattenTomlLeaves(value, prefix = []) {
 function patchTomlText(currentText, expected) {
   const lines = currentText ? currentText.split(/\r?\n/) : [];
   const tableRe = /^\s*\[(.*)\]\s*(?:#.*)?$/;
-  const keyRe = /^(\s*)([A-Za-z0-9_-]+)\s*=.*$/;
   function tableRanges() {
     const starts = [[[], -1]];
     lines.forEach((line, index) => {
@@ -478,7 +485,7 @@ function patchTomlText(currentText, expected) {
     const result = new Map();
     starts.forEach(([table, headerIndex], index) => {
       const end = index + 1 < starts.length ? starts[index + 1][1] : lines.length;
-      result.set(table.join("."), [headerIndex + 1, end]);
+      result.set(tomlPathIdentity(table), [headerIndex + 1, end]);
     });
     return result;
   }
@@ -486,15 +493,25 @@ function patchTomlText(currentText, expected) {
     const table = valuePath.slice(0, -1);
     const key = valuePath[valuePath.length - 1];
     const ranges = tableRanges();
-    const rendered = `${key} = ${tomlValue(value)}`;
-    const tableKey = table.join(".");
+    const rendered = `${tomlKey(key)} = ${tomlValue(value)}`;
+    const tableKey = tomlPathIdentity(table);
     if (ranges.has(tableKey)) {
       const [start, end] = ranges.get(tableKey);
       let replaced = false;
       for (let index = start; index < end; index += 1) {
-        const match = lines[index].match(keyRe);
-        if (match && match[2] === key) {
-          lines[index] = match[1] + rendered;
+        const rawLine = lines[index];
+        const line = stripTomlComment(rawLine);
+        const equals = topLevelIndex(line, "=");
+        if (equals < 0) continue;
+        let assignmentPath;
+        try {
+          assignmentPath = parseTomlKeyPath(line.slice(0, equals));
+        } catch {
+          continue;
+        }
+        if (assignmentPath.length === 1 && assignmentPath[0] === key) {
+          const indent = rawLine.match(/^\s*/)[0];
+          lines[index] = indent + rendered;
           replaced = true;
           break;
         }
@@ -505,7 +522,7 @@ function patchTomlText(currentText, expected) {
       lines.splice(insertAt, 0, rendered);
     } else {
       if (lines.length && lines[lines.length - 1].trim() !== "") lines.push("");
-      lines.push(`[${table.join(".")}]`, rendered);
+      lines.push(`[${table.map(tomlKey).join(".")}]`, rendered);
     }
   }
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
