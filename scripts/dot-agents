@@ -586,6 +586,28 @@ function skillNames(repo) {
     .sort();
 }
 
+function surfaceHarness(surface) {
+  if (surface === "antigravity-ide" || surface === "antigravity-cli") return "antigravity";
+  if (HARNESS_NAMES.includes(surface)) return surface;
+  throw new RuntimeError(`unknown skill deployment surface: ${surface}`);
+}
+
+function skillTargetMap(repo, names) {
+  const targets = new Map();
+  for (const name of names) {
+    const metadataPath = path.join(repo, "skills", name, "dot-agents.json");
+    if (!pathExists(metadataPath)) {
+      targets.set(name, new Set(HARNESS_NAMES));
+      continue;
+    }
+    const metadata = loadJsonObject(metadataPath);
+    if (metadata.version !== 1) throw new RuntimeError(`unsupported dot-agents metadata version in ${metadataPath}`);
+    if (!Array.isArray(metadata.targets) || !metadata.targets.length) throw new RuntimeError(`dot-agents metadata targets must be a non-empty array in ${metadataPath}`);
+    targets.set(name, new Set(normalizeHarnesses(metadata.targets)));
+  }
+  return targets;
+}
+
 function syncSkillNames(repo, notes) {
   const available = new Map();
   const skipped = new Map();
@@ -634,9 +656,12 @@ function readState(cfg) {
   return pathExists(file) ? loadJsonObject(file) : { version: 1, skills: {} };
 }
 
-function expectedState(installedSurfaces, names) {
+function expectedState(installedSurfaces, names, targets) {
   const skills = {};
-  for (const surface of Object.keys(installedSurfaces).sort()) skills[surface] = names;
+  for (const surface of Object.keys(installedSurfaces).sort()) {
+    const harness = surfaceHarness(surface);
+    skills[surface] = names.filter((name) => targets.get(name).has(harness));
+  }
   return { version: 1, skills };
 }
 
@@ -690,6 +715,13 @@ function plan(repo, home, cfg, options = {}) {
 
   const installedSurfaces = {};
   const names = syncSkillNames(repo, notes);
+  const targets = skillTargetMap(repo, names);
+  for (const name of names) {
+    const targetNames = [...targets.get(name)];
+    if (targetNames.length < HARNESS_NAMES.length) {
+      notes.push(`SKIP target ${name}: deployed only to ${targetNames.join(", ")}; not to ${HARNESS_NAMES.filter((harness) => !targets.get(name).has(harness)).join(", ")}.`);
+    }
+  }
   const codexAvailable = commandExists("codex");
   if (wantsHarness("codex") && codexAvailable) {
     const codexHome = absolutePath(process.env.CODEX_HOME || path.join(home, ".codex"));
@@ -739,7 +771,8 @@ function plan(repo, home, cfg, options = {}) {
   const previousState = readState(cfg);
   const previousSkills = isPlainObject(previousState.skills) ? previousState.skills : {};
   for (const [surface, root] of Object.entries(installedSurfaces)) {
-    for (const name of names) {
+    const surfaceNames = names.filter((name) => targets.get(name).has(surfaceHarness(surface)));
+    for (const name of surfaceNames) {
       const source = path.join(repo, "skills", name);
       const destination = path.join(root, name);
       if (treeDigest(source) !== treeDigest(destination)) actions.push(new Action("copy-tree", destination, `${surface} skill ${name}`, { source }));
@@ -748,12 +781,12 @@ function plan(repo, home, cfg, options = {}) {
     if (Array.isArray(previouslyManaged)) {
       for (const oldName of [...new Set(previouslyManaged)].sort()) {
         const destination = path.join(root, oldName);
-        if (!names.includes(oldName) && pathExists(destination)) actions.push(new Action("remove", destination, `removed ${surface} skill ${oldName}`));
+        if (!surfaceNames.includes(oldName) && pathExists(destination)) actions.push(new Action("remove", destination, `removed ${surface} skill ${oldName}`));
       }
     }
   }
   const statePath = path.join(cfg, "state.json");
-  const stateContent = jsonBytes(expectedState(installedSurfaces, names));
+  const stateContent = jsonBytes(expectedState(installedSurfaces, names, targets));
   const currentState = logicalFileBytes(statePath);
   if (!currentState || !currentState.equals(stateContent)) actions.push(new Action("state", statePath, "local sync ownership state", { content: stateContent }));
   return [actions, notes];
@@ -1106,6 +1139,14 @@ function runDoctor(repo, home, cfg) {
   const brokenDirs = fs.readdirSync(path.join(repo, "skills"), { withFileTypes: true }).filter((entry) => entry.isDirectory() && !isFile(path.join(repo, "skills", entry.name, "SKILL.md"))).map((entry) => entry.name).sort();
   for (const name of brokenDirs) fail(`skills/${name} is missing SKILL.md`);
   ok(`skills/ has ${names.length} installable skill(s)`);
+  try {
+    const targets = skillTargetMap(repo, names);
+    const restricted = names.filter((name) => targets.get(name).size < HARNESS_NAMES.length).map((name) => `${name} (${[...targets.get(name)].join(", ")})`);
+    if (restricted.length) info(`harness-targeted skills: ${restricted.join(", ")}`);
+    else ok("all skills target every supported harness");
+  } catch (error) {
+    fail(error.message);
+  }
   const sourceSymlinks = names.flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
   if (sourceSymlinks.length) warn(`skill source contains symlink(s); materialized copy semantics may differ: ${sourceSymlinks.slice(0, 5).join(", ")}`);
 

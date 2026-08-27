@@ -239,6 +239,8 @@ Pending sync 視為 `FAIL`；`WARN` 表示 canonical content 本身仍需要人�
 **新增自己撰寫的 skill**
 建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），再執行 `dot-agents sync` materialize 到各 harness。撰寫與稽核流程見 `maintain-skill` skill。
 
+若 skill 只支援特定 harness，可在 skill 目錄放置 repository-private 的 `dot-agents.json`，例如 `{"version": 1, "targets": ["codex", "claude"]}`。未指定 target 的 skill 維持部署到所有已選 harness；target-restricted skill 不會部署到未列出的 harness，既有且由 dot-agents 管理的 stale copy 也會在下一次 sync 清理。
+
 **安裝或更新外部來源的 skill**
 以 `npx skills` 管理。從 repository root 執行：
 

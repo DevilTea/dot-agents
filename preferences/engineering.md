@@ -2,6 +2,7 @@
 
 - Understand the existing structure, constraints, and conventions before changing it.
 - Prefer local, maintainable, and reversible changes.
+- Prefer Node.js and shell tools for scripts, helpers, and validation; treat Python as optional and do not make Python or PyYAML a required dependency unless the user explicitly requests it.
 - Avoid broad refactors without a demonstrated need.
 - Do not silently expand scope or modify unrelated content.
 - Respect the repository's existing architecture and conventions unless the task explicitly changes them.

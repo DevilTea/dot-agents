@@ -1,0 +1,7 @@
+interface:
+  display_name: "Cross-agent code review"
+  short_description: "Cross-check code with independent review agents"
+  default_prompt: "Use $x-review to review the current diff with independent Codex or Claude Code agents."
+
+policy:
+  allow_implicit_invocation: true
