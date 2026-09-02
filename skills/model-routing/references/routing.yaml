@@ -140,12 +140,12 @@ harnesses:
       subagents: "[agents] default_subagent_model / default_subagent_reasoning_effort."
 
   antigravity:
-    # Model slugs verified with `agy models` on 2026-08-25.
-    # Policy: Gemini 3.7 Flash High executes local work. Large or complex tasks
+    # Model slugs verified with `agy models` on 2026-09-03.
+    # Policy: Gemini 3.8 Flash High executes local work. Large or complex tasks
     # are NOT routed to this harness — hand them to Claude Code or Codex CLI.
     models:
       flash:
-        id: gemini-3.7-flash-high
+        id: gemini-3.8-flash-high
         efforts: [high]
     assignments:
       orchestration:
