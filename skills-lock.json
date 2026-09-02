@@ -67,6 +67,12 @@
       "skillPath": "skills/eli5/SKILL.md",
       "computedHash": "ebe7a298b60d28ac26da8aa505d28dc97d124882abc7f33eddeb0d01e9852058"
     },
+    "gh": {
+      "source": "cli/cli",
+      "sourceType": "github",
+      "skillPath": "skills/gh/SKILL.md",
+      "computedHash": "d60297badbe5f8c59397e533e41d2ed454e72fbdf08b9348aa0a166366d4c20b"
+    },
     "herdr": {
       "source": "herdrdev/herdr",
       "sourceType": "github",

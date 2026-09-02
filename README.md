@@ -175,7 +175,7 @@ dot-agents doctor         # canonical / override / sync / lockfile diagnostics
 
 Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。
 
-`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
+`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable。`gh` skill 由 `cli/cli` 官方來源維護，包含 Issue／PR／comment 的 `--attach` 圖片與影片附件操作，因此 agent 不需要每次重新研究 GitHub upload flow。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
 
 有異動時，既有 managed entry 會先移至：
 
