@@ -3,10 +3,11 @@
 # 清除 dot-agents sync / scripts/setup.sh 產生的備份批次。
 #
 # sync 有異動時，會把既有 entry 移到 ~/.dot-agents-backups/<timestamp>-<pid>/，
-# 並在該目錄寫下 manifest.tsv 供 rollback；sync 自己永遠不刪除這些批次。本腳本
-# 是唯一的清理入口：先列出計畫，再要求確認，只動符合 sync backup 命名規則的批次目錄。
+# 並在該目錄寫下 manifest.json transaction journal 與 manifest.tsv backup mapping。
+# sync 自己永遠不刪除需要保留的 recovery batch。本腳本是唯一的清理入口：
+# 先列出計畫，再要求確認，只動符合命名規則且狀態可安全清除的批次目錄。
 #
-# 只要還可能需要 rollback，就不要清除對應批次。
+# prepared/applying/failed/invalid/unknown transaction 一律 protected，不由本腳本刪除。
 
 set -euo pipefail
 
@@ -20,7 +21,7 @@ usage() {
   cat <<'EOF'
 Usage: clean-backups.sh [--dry-run] [--keep N] [--yes]
 
-清除 dot-agents sync / scripts/setup.sh 產生的備份批次（~/.dot-agents-backups/<timestamp>-<pid>/）。
+清除 dot-agents sync / scripts/setup.sh 產生、且 transaction 狀態可安全清除的備份批次（~/.dot-agents-backups/<timestamp>-<pid>/）。
 
   --dry-run   只列出將刪除的批次，不修改任何檔案
   --keep N    保留最新的 N 份（預設 0，即全部清除）
@@ -74,9 +75,46 @@ while IFS= read -r batch; do
   esac
 done <<< "$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)"
 
+transaction_status() {
+  local batch="$1"
+  if [ ! -f "$batch/manifest.json" ]; then
+    printf 'legacy'
+    return
+  fi
+  node - "$batch/manifest.json" <<'NODE_STATUS'
+const fs = require("node:fs");
+const file = process.argv[2];
+try {
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  process.stdout.write(typeof manifest.status === "string" && manifest.status ? manifest.status : "unknown");
+} catch {
+  process.stdout.write("invalid");
+}
+NODE_STATUS
+}
+
+declare -a CLEANABLE=()
+declare -a PROTECTED=()
+for batch in "${BATCHES[@]}"; do
+  status="$(transaction_status "$batch")"
+  case "$status" in
+    committed|rolled-back|legacy) CLEANABLE+=("$batch") ;;
+    *) PROTECTED+=("$batch") ;;
+  esac
+done
+
+if [ "${#PROTECTED[@]}" -gt 0 ]; then
+  printf 'Protected transaction batch(es), never removed by cleanup:\n'
+  for batch in "${PROTECTED[@]}"; do
+    printf '  - %s [status=%s]\n' "$(tilde "$batch")" "$(transaction_status "$batch")"
+  done
+  printf '\n'
+fi
+
+BATCHES=("${CLEANABLE[@]}")
 total="${#BATCHES[@]}"
 if [ "$total" -eq 0 ]; then
-  note "$(tilde "$BACKUP_ROOT") 沒有 sync 產生的備份批次。"
+  note "$(tilde "$BACKUP_ROOT") 沒有可安全清除的備份批次。"
   exit 0
 fi
 
@@ -90,7 +128,7 @@ batch_summary() {
     entries="$(grep -c . "$batch/manifest.tsv" || printf '0')"
   fi
   size="$(du -sh "$batch" 2>/dev/null | awk '{print $1}')"
-  printf '%s [%s, %s entries]' "$(tilde "$batch")" "${size:-?}" "$entries"
+  printf '%s [%s, %s entries, status=%s]' "$(tilde "$batch")" "${size:-?}" "$entries" "$(transaction_status "$batch")"
 }
 
 printf 'Backups in %s: %s batch(es), keeping newest %s.\n' "$(tilde "$BACKUP_ROOT")" "$total" "$KEEP"

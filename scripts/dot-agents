@@ -14,6 +14,10 @@ const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const { generatedAntigravity, generatedClaude, generatedCodex } = require("../lib/instructions");
+const { apply, inspectTransactions } = require("../lib/transaction");
+const { loadTomlObject, patchTomlText } = require("../lib/toml");
+const { validateCodexRouting } = require("../lib/routing");
 
 class RuntimeError extends Error {}
 
@@ -36,7 +40,6 @@ class Action {
     this.label = label;
     this.source = options.source ?? null;
     this.content = options.content ?? null;
-    this.jsonValue = options.jsonValue ?? null;
   }
 }
 
@@ -167,37 +170,6 @@ function contentBuffer(value) {
   return Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
 }
 
-function generatedCodex(repo) {
-  return [
-    "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
-    readText(path.join(repo, "preferences", "communication.md")).replace(/\n+$/, "") + "\n\n",
-    readText(path.join(repo, "preferences", "reasoning.md")).replace(/\n+$/, "") + "\n\n",
-    readText(path.join(repo, "preferences", "engineering.md")).replace(/\n+$/, "") + "\n\n",
-    readText(path.join(repo, "harnesses", "codex", "AGENTS.md")).replace(/\n+$/, "") + "\n",
-  ].join("");
-}
-
-function generatedClaude(repo) {
-  const source = readText(path.join(repo, "harnesses", "claude", "CLAUDE.md"));
-  const lines = ["<!-- Generated from dot-agents. Do not edit directly. -->", ""];
-  const prefix = "@../../preferences/";
-  for (const line of source.split(/\r?\n/)) {
-    if (line.startsWith(prefix)) lines.push(`@${repo}/preferences/${line.slice(prefix.length)}`);
-    else lines.push(line);
-  }
-  return lines.join("\n").replace(/\n+$/, "") + "\n";
-}
-
-function generatedAntigravity(repo) {
-  return [
-    "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
-    readText(path.join(repo, "preferences", "communication.md")).replace(/\n+$/, "") + "\n\n",
-    readText(path.join(repo, "preferences", "reasoning.md")).replace(/\n+$/, "") + "\n\n",
-    readText(path.join(repo, "preferences", "engineering.md")).replace(/\n+$/, "") + "\n\n",
-    readText(path.join(repo, "harnesses", "antigravity", "instructions.md")).replace(/\n+$/, "") + "\n",
-  ].join("");
-}
-
 function launcherContent() {
   return `#!/bin/sh
 set -eu
@@ -251,286 +223,6 @@ function deepEqual(left, right) {
     return leftKeys.length === rightKeys.length && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && deepEqual(left[key], right[key]));
   }
   return false;
-}
-
-function stripTomlComment(line) {
-  let quote = null;
-  let escaped = false;
-  let depth = 0;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (quote === '"') {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quote = null;
-      continue;
-    }
-    if (quote === "'") {
-      if (char === "'") quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") quote = char;
-    else if (char === "[" || char === "{") depth += 1;
-    else if (char === "]" || char === "}") depth = Math.max(0, depth - 1);
-    else if (char === "#" && depth === 0) return line.slice(0, index);
-  }
-  return line;
-}
-
-function topLevelIndex(text, wanted) {
-  let quote = null;
-  let escaped = false;
-  let depth = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (quote === '"') {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quote = null;
-      continue;
-    }
-    if (quote === "'") {
-      if (char === "'") quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") quote = char;
-    else if (char === "[" || char === "{") depth += 1;
-    else if (char === "]" || char === "}") depth -= 1;
-    else if (char === wanted && depth === 0) return index;
-  }
-  return -1;
-}
-
-function splitTopLevel(text, delimiter) {
-  const parts = [];
-  let start = 0;
-  let quote = null;
-  let escaped = false;
-  let depth = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (quote === '"') {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quote = null;
-      continue;
-    }
-    if (quote === "'") {
-      if (char === "'") quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") quote = char;
-    else if (char === "[" || char === "{") depth += 1;
-    else if (char === "]" || char === "}") depth -= 1;
-    else if (char === delimiter && depth === 0) {
-      parts.push(text.slice(start, index));
-      start = index + 1;
-    }
-  }
-  parts.push(text.slice(start));
-  return parts;
-}
-
-function parseTomlString(raw) {
-  if (raw.startsWith("'")) return raw.slice(1, -1);
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const body = raw.slice(1, -1);
-    return body.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[btnfr"\\])/g, (match, token) => {
-      if (token.startsWith("u") || token.startsWith("U")) return String.fromCodePoint(parseInt(token.slice(1), 16));
-      return { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", '"': '"', "\\": "\\" }[token];
-    });
-  }
-}
-
-function parseTomlKeyPath(raw) {
-  return splitTopLevel(raw.trim(), ".").map((part) => {
-    const key = part.trim();
-    if (!key) throw new Error("empty TOML key");
-    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) return parseTomlString(key);
-    if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new Error(`unsupported TOML key: ${key}`);
-    return key;
-  });
-}
-
-function parseTomlValue(raw) {
-  const value = raw.trim();
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return parseTomlString(value);
-  if (value === "true") return true;
-  if (value === "false") return false;
-  if (value.startsWith("[") && value.endsWith("]")) {
-    const body = value.slice(1, -1).trim();
-    return body ? splitTopLevel(body, ",").filter((item) => item.trim()).map(parseTomlValue) : [];
-  }
-  if (value.startsWith("{") && value.endsWith("}")) {
-    const result = {};
-    const body = value.slice(1, -1).trim();
-    if (!body) return result;
-    for (const item of splitTopLevel(body, ",")) {
-      const equals = topLevelIndex(item, "=");
-      if (equals < 0) throw new Error(`invalid TOML inline table: ${item}`);
-      setTomlPath(result, parseTomlKeyPath(item.slice(0, equals)), parseTomlValue(item.slice(equals + 1)));
-    }
-    return result;
-  }
-  const numberValue = value.replaceAll("_", "");
-  if (/^[+-]?(?:0|[1-9][0-9]*)$/.test(numberValue)) return Number(numberValue);
-  if (/^[+-]?(?:[0-9]+\.[0-9]*|[0-9]+(?:\.[0-9]*)?[eE][+-]?[0-9]+)$/.test(numberValue)) {
-    const parsed = Number(numberValue);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  if (/^[+-]?0x[0-9A-Fa-f]+$/.test(numberValue)) return Number.parseInt(numberValue, 16);
-  if (/^[+-]?0o[0-7]+$/.test(numberValue)) return Number.parseInt(numberValue, 8);
-  if (/^[+-]?0b[01]+$/.test(numberValue)) return Number.parseInt(numberValue, 2);
-  if (/^\d{4}-\d{2}-\d{2}(?:T|\s)/.test(value)) return value;
-  throw new Error(`unsupported TOML value: ${value}`);
-}
-
-function setTomlPath(target, keys, value) {
-  let current = target;
-  for (let index = 0; index < keys.length - 1; index += 1) {
-    const key = keys[index];
-    if (!isPlainObject(current[key])) current[key] = {};
-    current = current[key];
-  }
-  current[keys[keys.length - 1]] = value;
-}
-
-function parseToml(text, file) {
-  const result = {};
-  let table = [];
-  try {
-    for (const rawLine of text.split(/\r?\n/)) {
-      const line = stripTomlComment(rawLine).trim();
-      if (!line) continue;
-      if (line.startsWith("[[")) throw new Error(`unsupported TOML array table: ${line}`);
-      if (line.startsWith("[")) {
-        if (!line.endsWith("]")) throw new Error(`invalid TOML table: ${line}`);
-        table = parseTomlKeyPath(line.slice(1, -1));
-        let current = result;
-        for (const key of table) {
-          if (!isPlainObject(current[key])) current[key] = {};
-          current = current[key];
-        }
-        continue;
-      }
-      const equals = topLevelIndex(line, "=");
-      if (equals < 0) throw new Error(`invalid TOML assignment: ${line}`);
-      setTomlPath(result, [...table, ...parseTomlKeyPath(line.slice(0, equals))], parseTomlValue(line.slice(equals + 1)));
-    }
-  } catch (error) {
-    throw new RuntimeError(`invalid TOML in ${file}: ${error.message}`);
-  }
-  return result;
-}
-
-function loadTomlObject(file, allowMissing = false) {
-  if (allowMissing && !pathExists(file)) return {};
-  let text;
-  try {
-    text = readText(file);
-  } catch (error) {
-    if (error.code === "ENOENT") throw new RuntimeError(`missing TOML file: ${file}`);
-    throw error;
-  }
-  const value = parseToml(text, file);
-  if (!isPlainObject(value)) throw new RuntimeError(`expected a TOML table in ${file}`);
-  return value;
-}
-
-function tomlKey(key) {
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
-}
-
-function tomlPathIdentity(parts) {
-  return JSON.stringify(parts);
-}
-
-function tomlValue(value) {
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") {
-    if (Number.isNaN(value)) return "nan";
-    if (value === Infinity) return "inf";
-    if (value === -Infinity) return "-inf";
-    return String(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(tomlValue).join(", ")}]`;
-  throw new RuntimeError(`unsupported managed TOML value: ${JSON.stringify(value)}`);
-}
-
-function flattenTomlLeaves(value, prefix = []) {
-  const leaves = [];
-  for (const [key, item] of Object.entries(value)) {
-    const next = [...prefix, key];
-    if (isPlainObject(item)) leaves.push(...flattenTomlLeaves(item, next));
-    else leaves.push([next, item]);
-  }
-  return leaves;
-}
-
-function patchTomlText(currentText, expected) {
-  const lines = currentText ? currentText.split(/\r?\n/) : [];
-  const tableRe = /^\s*\[(.*)\]\s*(?:#.*)?$/;
-  function tableRanges() {
-    const starts = [[[], -1]];
-    lines.forEach((line, index) => {
-      const match = line.match(tableRe);
-      if (match && !line.trim().startsWith("[[")) {
-        try {
-          starts.push([parseTomlKeyPath(match[1]), index]);
-        } catch {
-          // Leave unsupported table syntax untouched; it still marks a new range.
-          starts.push([match[1].split("."), index]);
-        }
-      }
-    });
-    const result = new Map();
-    starts.forEach(([table, headerIndex], index) => {
-      const end = index + 1 < starts.length ? starts[index + 1][1] : lines.length;
-      result.set(tomlPathIdentity(table), [headerIndex + 1, end]);
-    });
-    return result;
-  }
-  for (const [valuePath, value] of flattenTomlLeaves(expected)) {
-    const table = valuePath.slice(0, -1);
-    const key = valuePath[valuePath.length - 1];
-    const ranges = tableRanges();
-    const rendered = `${tomlKey(key)} = ${tomlValue(value)}`;
-    const tableKey = tomlPathIdentity(table);
-    if (ranges.has(tableKey)) {
-      const [start, end] = ranges.get(tableKey);
-      let replaced = false;
-      for (let index = start; index < end; index += 1) {
-        const rawLine = lines[index];
-        const line = stripTomlComment(rawLine);
-        const equals = topLevelIndex(line, "=");
-        if (equals < 0) continue;
-        let assignmentPath;
-        try {
-          assignmentPath = parseTomlKeyPath(line.slice(0, equals));
-        } catch {
-          continue;
-        }
-        if (assignmentPath.length === 1 && assignmentPath[0] === key) {
-          const indent = rawLine.match(/^\s*/)[0];
-          lines[index] = indent + rendered;
-          replaced = true;
-          break;
-        }
-      }
-      if (replaced) continue;
-      let insertAt = end;
-      while (insertAt > start && lines[insertAt - 1].trim() === "") insertAt -= 1;
-      lines.splice(insertAt, 0, rendered);
-    } else {
-      if (lines.length && lines[lines.length - 1].trim() !== "") lines.push("");
-      lines.push(`[${table.map(tomlKey).join(".")}]`, rendered);
-    }
-  }
-  while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  return `${lines.join("\n")}\n`;
 }
 
 function containsManaged(current, expected) {
@@ -720,6 +412,10 @@ function plan(repo, home, cfg, options = {}) {
 
   const installedSurfaces = {};
   const names = syncSkillNames(repo, notes);
+  const sourceSymlinks = names.flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
+  if (sourceSymlinks.length) {
+    throw new RuntimeError(`canonical skill source must not contain symlinks: ${sourceSymlinks.slice(0, 10).join(", ")}`);
+  }
   const targets = skillTargetMap(repo, names);
   for (const name of names) {
     const targetNames = [...targets.get(name)];
@@ -826,7 +522,7 @@ function planJsonSettings(actions, canonicalPath, overridePath, destination, lab
   if (pathExists(destination)) {
     try { current = loadJsonObject(destination); } catch { current = {}; }
   }
-  if (isSymlink(destination) || !containsManaged(current, expected)) actions.push(new Action("json-merge", destination, label, { jsonValue: deepMerge(current, expected) }));
+  if (isSymlink(destination) || !containsManaged(current, expected)) actions.push(new Action("json-merge", destination, label, { content: jsonBytes(deepMerge(current, expected)) }));
 }
 
 function actionVerb(action) {
@@ -843,75 +539,6 @@ function printPlan(actions, notes) {
   if (!actions.length) return console.log("Everything is in sync.");
   console.log("\nPending sync:");
   for (const action of actions) console.log(`  - ${actionVerb(action)}: ${action.destination} [${action.label}]`);
-}
-
-function ensureDirectory(directory) { fs.mkdirSync(directory, { recursive: true }); }
-
-function backupExisting(destination, backupRoot, manifest) {
-  if (!pathExists(destination)) return;
-  const relative = destination.replace(/^[/\\]+/, "");
-  const backupPath = path.join(backupRoot, relative);
-  ensureDirectory(path.dirname(backupPath));
-  fs.renameSync(destination, backupPath);
-  manifest.push([destination, backupPath]);
-}
-
-function atomicWrite(destination, content, executable = false) {
-  ensureDirectory(path.dirname(destination));
-  let tempName;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const candidate = path.join(path.dirname(destination), `.${path.basename(destination)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}`);
-    try {
-      fs.writeFileSync(candidate, contentBuffer(content), { flag: "wx" });
-      tempName = candidate;
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST" || attempt === 9) throw error;
-    }
-  }
-  try {
-    if (executable) fs.chmodSync(tempName, 0o755);
-    fs.renameSync(tempName, destination);
-  } finally {
-    if (tempName && pathExists(tempName)) fs.rmSync(tempName, { force: true });
-  }
-}
-
-function localTimestamp() {
-  const now = new Date();
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-}
-
-function apply(actions, home) {
-  if (!actions.length) return null;
-  const backupRoot = path.join(home, ".dot-agents-backups", `${localTimestamp()}-${process.pid}`);
-  const manifest = [];
-  for (const action of actions) {
-    if (action.kind === "state" || action.kind === "selection") {
-      atomicWrite(action.destination, action.content);
-      continue;
-    }
-    backupExisting(action.destination, backupRoot, manifest);
-    if (action.kind === "remove") continue;
-    if (action.kind === "copy-tree") {
-      ensureDirectory(path.dirname(action.destination));
-      fs.cpSync(action.source, action.destination, { recursive: true, dereference: true });
-    } else if (action.kind === "write" || action.kind === "write-exec") {
-      atomicWrite(action.destination, action.content, action.kind === "write-exec");
-    } else if (action.kind === "json-merge") {
-      atomicWrite(action.destination, jsonBytes(action.jsonValue));
-    } else if (action.kind === "toml-merge") {
-      atomicWrite(action.destination, action.content);
-    } else throw new RuntimeError(`unknown action type: ${action.kind}`);
-  }
-  if (manifest.length) {
-    ensureDirectory(backupRoot);
-    fs.writeFileSync(path.join(backupRoot, "manifest.tsv"), manifest.map(([original, backup]) => `${original}\t${backup}\n`).join(""), "utf8");
-    return backupRoot;
-  }
-  if (pathExists(backupRoot)) fs.rmSync(backupRoot, { recursive: true, force: true });
-  return null;
 }
 
 function readLineSync() {
@@ -1154,7 +781,8 @@ function runDoctor(repo, home, cfg) {
     fail(error.message);
   }
   const sourceSymlinks = names.flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
-  if (sourceSymlinks.length) warn(`skill source contains symlink(s); materialized copy semantics may differ: ${sourceSymlinks.slice(0, 5).join(", ")}`);
+  if (sourceSymlinks.length) fail(`skill source contains forbidden symlink(s): ${sourceSymlinks.slice(0, 5).join(", ")}`);
+  else ok("skill source contains no symlinks");
 
   section("Sync status");
   try {
@@ -1172,6 +800,16 @@ function runDoctor(repo, home, cfg) {
   } catch (error) {
     fail(error.message);
   }
+
+  section("Model routing");
+  const codexHome = absolutePath(process.env.CODEX_HOME || path.join(home, ".codex"));
+  const routing = validateCodexRouting(
+    path.join(repo, "skills", "model-routing", "references", "routing.yaml"),
+    path.join(codexHome, "models_cache.json"),
+  );
+  for (const message of routing.info) info(message);
+  for (const message of routing.verified) ok(`routing ${message}`);
+  for (const message of routing.warnings) warn(message);
 
   section("Skill lockfile");
   const lockPath = path.join(repo, "skills-lock.json");
@@ -1192,6 +830,18 @@ function runDoctor(repo, home, cfg) {
     } catch (error) {
       fail(error.message);
     }
+  }
+
+  section("Transactions");
+  const transactions = inspectTransactions(home);
+  if (!transactions.length) info("no transaction journals found");
+  else {
+    const incomplete = transactions.filter((transaction) => ["prepared", "applying", "failed", "invalid", "unknown"].includes(transaction.status));
+    const rolledBack = transactions.filter((transaction) => transaction.status === "rolled-back");
+    const committed = transactions.filter((transaction) => transaction.status === "committed");
+    for (const transaction of incomplete) fail(`transaction ${transaction.batch} is ${transaction.status}; inspect ${transaction.path}`);
+    if (rolledBack.length) info(`${rolledBack.length} transaction(s) rolled back cleanly`);
+    if (committed.length) ok(`${committed.length} committed transaction journal(s)`);
   }
 
   section("Backups");

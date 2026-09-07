@@ -1,7 +1,3 @@
-@../../preferences/communication.md
-@../../preferences/reasoning.md
-@../../preferences/engineering.md
-
 # Claude Code-specific policy
 
 ## Choosing a workflow

@@ -53,17 +53,26 @@
 │   ├── codex/
 │   ├── claude/
 │   └── antigravity/
-└── scripts/
-    ├── clean-backups.sh
-    ├── dot-agents
-    ├── doctor.sh
-    └── setup.sh
+├── lib/
+│   ├── instructions.js
+│   ├── routing.js
+│   ├── toml.js
+│   └── transaction.js
+├── scripts/
+│   ├── clean-backups.sh
+│   ├── dot-agents
+│   ├── doctor.sh
+│   └── setup.sh
+└── tests/
+    └── dot-agents.test.js
 ```
 
 - `preferences/` 是跨 harness 的可攜 intent，見 [preferences/README.md](./preferences/README.md)。
 - `skills/` 是 global discovery set，見 [skills/README.md](./skills/README.md)。
 - `optional-skills/` 是 project opt-in catalog，只記錄來源與安裝方式、不 vendor skill 內容，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
+- `lib/` 保存 instruction generation、TOML handling、model-routing diagnostics 與 transactional apply 等 CLI 內部模組；`scripts/dot-agents` 保留 orchestration、planning 與 command surface。
+- `tests/` 使用 Node.js 內建 test runner，在 isolated temporary repo／HOME 下驗證 sync contract，不需要第三方 test dependency。
 - `skills-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它由 `npx skills` 維護，不是 prompt，也不是 portability contract。
 
 ## Sync model
@@ -84,13 +93,13 @@ materialized harness files / directories
 
 | 安裝位置 | 同步方式 | 來源 |
 | --- | --- | --- |
-| `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | `preferences/` ×2 + `harnesses/codex/AGENTS.md` |
+| `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | `preferences/` ×3 + `harnesses/codex/AGENTS.md` |
 | `$CODEX_HOME/config.toml` | managed TOML key merge | `harnesses/codex/config.toml` + local override + existing runtime config |
 | `~/.agents/skills/<name>` | copy | `skills/<name>` |
-| `~/.claude/CLAUDE.md` | generate | `harnesses/claude/CLAUDE.md`（`@path` 改寫為 canonical repo 絕對路徑） |
+| `~/.claude/CLAUDE.md` | generate | `preferences/` ×3 + `harnesses/claude/CLAUDE.md` |
 | `~/.claude/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
 | `~/.claude/skills/<name>` | copy | `skills/<name>` |
-| `~/.gemini/GEMINI.md` | generate | `preferences/` ×2 + `harnesses/antigravity/instructions.md` |
+| `~/.gemini/GEMINI.md` | generate | `preferences/` ×3 + `harnesses/antigravity/instructions.md` |
 | `~/.gemini/antigravity-cli/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
 | `~/.gemini/antigravity-cli/skills/<name>` | copy | `skills/<name>` |
 | `~/.gemini/config/skills/<name>`（IDE） | copy | `skills/<name>` |
@@ -167,7 +176,7 @@ dot-agents setup          # 重新逐一選擇三個 harness
 dot-agents setup --all --yes
 dot-agents update         # git pull --ff-only 後同步最新 canonical source
 dot-agents update --yes   # 同上，非互動套用 sync
-dot-agents doctor         # canonical / override / sync / lockfile diagnostics
+dot-agents doctor         # canonical / sync / routing / transaction diagnostics
 ```
 
 `dot-agents update` 要求 canonical repository worktree 沒有未提交變更；remote pull 失敗或不是 fast-forward 時不會執行 sync，也不會自動解衝突。
@@ -184,7 +193,7 @@ Sync 不下載 harness、不修改 project repository。已選但尚未安裝的
 ~/.dot-agents-backups/<timestamp>-<pid>/
 ```
 
-`manifest.tsv` 記錄原路徑與備份路徑。Derived local sync state 不需要 rollback，因此不進 backup manifest。
+每次有 sync action 時會先建立 transaction journal。`manifest.json` 記錄 `prepared → applying → committed / rolled-back / failed` 狀態與 action lifecycle，`manifest.tsv` 保留既有 entry 的原路徑與備份路徑。所有 managed writes（包含 selection 與 local ownership state）都在同一個 transaction 內；apply 中途失敗時會逆序 rollback。若 process 在 rollback 前被強制終止，`dot-agents doctor` 會把未完成 journal 視為 `FAIL`。
 
 要在不動真實 `$HOME` 的情況下測試：
 
@@ -195,7 +204,7 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 
 ## Backup cleanup
 
-清除 setup 留下的備份批次。與 setup 相同：先列出計畫，再要求輸入 `YES`。
+清除 sync transaction 留下、且狀態可安全清除的備份批次。先列出計畫，再要求輸入 `YES`。
 
 ```bash
 ./scripts/clean-backups.sh --dry-run   # 只列出
@@ -203,9 +212,9 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 ./scripts/clean-backups.sh --keep 1    # 保留最新 1 份
 ```
 
-只處理符合 `<YYYYmmdd-HHMMSS>-<pid>` 命名的 depth-1 目錄，手動放進 `~/.dot-agents-backups/` 的其他內容一律不動；批次全數清除且該目錄已空時會一併移除。`--yes` 跳過確認供非互動環境使用，非 TTY 且未指定時腳本直接失敗而非盲刪。
+只處理符合 `<YYYYmmdd-HHMMSS>-<pid>` 命名的 depth-1 目錄，手動放進 `~/.dot-agents-backups/` 的其他內容一律不動。Transaction status 為 `prepared`、`applying`、`failed`、`invalid` 或未知時，該 batch 會標為 protected 並永遠跳過；cleanup 只會刪除 `committed`、`rolled-back` 與舊版 legacy batch。`--keep` 只計算可安全清除的批次。批次全數清除且該目錄已空時才會移除 backup root。`--yes` 跳過確認供非互動環境使用，非 TTY 且未指定時腳本直接失敗而非盲刪。
 
-清除即失去對應的 rollback 路徑，只在確認安裝正常後執行。
+清除即失去對應的 rollback 路徑，只在確認安裝正常後執行；若有 protected transaction，先用 `dot-agents doctor` 檢查，不要手動刪除 recovery data。
 
 ## Doctor
 
@@ -215,16 +224,28 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 - canonical settings 是否誤帶常見 machine-specific absolute path
 - device-local override JSON 是否有效
 - harness selection 是否有效，以及目前選擇的管理清單
-- `skills/` 是否缺少 `SKILL.md` 或含 symlink
+- `skills/` 是否缺少 `SKILL.md`；canonical skill tree 含 symlink 直接視為 `FAIL`
 - 是否有 pending sync
 - `skills-lock.json` 的每個 entry 是否都有對應的 `skills/<name>/SKILL.md`
+- Codex `model-routing` 宣告的 model／effort 是否仍存在於本機 `models_cache.json`，以及 cache 是否過舊
+- transaction journal 是否有 `prepared`／`applying`／`failed` 等未完成狀態
 - setup/sync backups 現況
 
 ```bash
 dot-agents doctor
 ```
 
-Pending sync 視為 `FAIL`；`WARN` 表示 canonical content 本身仍需要人工判斷。
+Pending sync 與未完成 transaction 視為 `FAIL`；model-routing capability mismatch 等可由本機 cache 新鮮度影響的項目視為 `WARN`。
+
+## Tests
+
+不需要安裝 test framework；直接使用 Node.js 內建 runner：
+
+```bash
+node --test tests/dot-agents.test.js
+```
+
+測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge、override precedence、skill ownership cleanup、WAIT semantics、transaction rollback、protected cleanup 與 model-routing validation，不會修改真實 runtime。
 
 ## 日常操作
 
