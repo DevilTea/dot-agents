@@ -15,8 +15,9 @@ Canonical sources：[`AGENTS.md`](./AGENTS.md) 與 [`config.toml`](./config.toml
 `dot-agents sync` 依固定順序生成 `$CODEX_HOME/AGENTS.md`（`CODEX_HOME` 未設定時為 `~/.codex`）：
 
 1. `preferences/communication.md`
-2. `preferences/engineering.md`
-3. `harnesses/codex/AGENTS.md`
+2. `preferences/reasoning.md`
+3. `preferences/engineering.md`
+4. `harnesses/codex/AGENTS.md`
 
 若 `$CODEX_HOME/AGENTS.override.md` 存在，Codex 會忽略生成的 `AGENTS.md`；`check`／`sync`／`doctor` 會對此發出 WARN，不會代為刪除該檔。
 

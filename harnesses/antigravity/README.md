@@ -8,7 +8,7 @@ Canonical sources：
 
 ## Sync model
 
-Antigravity global rules 位於 `~/.gemini/GEMINI.md`。`dot-agents sync` 依固定順序生成完整檔案：communication、engineering、Antigravity-specific guidance。
+Antigravity global rules 位於 `~/.gemini/GEMINI.md`。`dot-agents sync` 依固定順序生成完整檔案：communication、reasoning、engineering、Antigravity-specific guidance。
 
 Skills 路徑依 surface 不同：
 

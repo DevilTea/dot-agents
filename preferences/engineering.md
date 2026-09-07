@@ -15,4 +15,6 @@
 - Do not state an unverified assumption as a confirmed fact.
 - Make destructive operations explicit and visible before execution.
 - Prefer the simplest approach that satisfies the current need without removing necessary validation, error handling, security, or accessibility.
+- Prefer clear module boundaries: keep behavior that changes for the same reason together, expose narrow interfaces between distinct responsibilities, and avoid unnecessary cross-module knowledge or dependencies.
+- Do not introduce abstractions solely for theoretical purity. Split or abstract only when it improves an actual boundary, reduces coupling, clarifies ownership, narrows required context, or makes behavior easier to validate and change independently.
 - Preserve public behavior unless the requested change requires otherwise.
