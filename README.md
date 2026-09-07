@@ -41,6 +41,7 @@
 ├── preferences/
 │   ├── README.md
 │   ├── communication.md
+│   ├── reasoning.md
 │   └── engineering.md
 ├── skills/
 │   ├── README.md

@@ -103,6 +103,7 @@ function isSymlink(file) {
 function looksLikeRepo(repo) {
   return (
     isFile(path.join(repo, "preferences", "communication.md")) &&
+    isFile(path.join(repo, "preferences", "reasoning.md")) &&
     isFile(path.join(repo, "preferences", "engineering.md")) &&
     isDirectory(path.join(repo, "harnesses")) &&
     isDirectory(path.join(repo, "skills")) &&
@@ -170,6 +171,7 @@ function generatedCodex(repo) {
   return [
     "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
     readText(path.join(repo, "preferences", "communication.md")).replace(/\n+$/, "") + "\n\n",
+    readText(path.join(repo, "preferences", "reasoning.md")).replace(/\n+$/, "") + "\n\n",
     readText(path.join(repo, "preferences", "engineering.md")).replace(/\n+$/, "") + "\n\n",
     readText(path.join(repo, "harnesses", "codex", "AGENTS.md")).replace(/\n+$/, "") + "\n",
   ].join("");
@@ -190,6 +192,7 @@ function generatedAntigravity(repo) {
   return [
     "<!-- Generated from dot-agents. Do not edit directly. -->\n\n",
     readText(path.join(repo, "preferences", "communication.md")).replace(/\n+$/, "") + "\n\n",
+    readText(path.join(repo, "preferences", "reasoning.md")).replace(/\n+$/, "") + "\n\n",
     readText(path.join(repo, "preferences", "engineering.md")).replace(/\n+$/, "") + "\n\n",
     readText(path.join(repo, "harnesses", "antigravity", "instructions.md")).replace(/\n+$/, "") + "\n",
   ].join("");
@@ -694,6 +697,7 @@ function plan(repo, home, cfg, options = {}) {
   const wantsHarness = (name) => selectedHarnesses === null || selectedHarnesses.includes(name);
   const required = [
     path.join(repo, "preferences", "communication.md"),
+    path.join(repo, "preferences", "reasoning.md"),
     path.join(repo, "preferences", "engineering.md"),
     path.join(repo, "harnesses", "codex", "AGENTS.md"),
     path.join(repo, "harnesses", "codex", "config.toml"),
@@ -1075,6 +1079,7 @@ function runDoctor(repo, home, cfg) {
   section("Canonical sources");
   const required = [
     "preferences/communication.md",
+    "preferences/reasoning.md",
     "preferences/engineering.md",
     "harnesses/codex/AGENTS.md",
     "harnesses/codex/config.toml",
