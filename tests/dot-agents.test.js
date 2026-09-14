@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -32,7 +33,7 @@ function addExecutable(fixture, name) {
 
 function runCli(fixture, args, extraEnv = {}) {
   const command = path.join(fixture.repo, "scripts", "dot-agents");
-  return spawnSync(command, args, {
+  return spawnSync(process.execPath, [command, ...args], {
     cwd: fixture.repo,
     encoding: "utf8",
     env: {
@@ -40,10 +41,44 @@ function runCli(fixture, args, extraEnv = {}) {
       DOT_AGENTS_SETUP_HOME: fixture.home,
       DOT_AGENTS_REPO: fixture.repo,
       CODEX_HOME: path.join(fixture.home, ".codex"),
-      PATH: [fixture.bin, path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
+      XDG_DATA_HOME: path.join(fixture.home, ".local", "share"),
+      PATH: fixture.bin,
       ...extraEnv,
     },
   });
+}
+
+function projectionRoot(fixture) {
+  return path.join(fixture.home, ".local", "share", "dot-agents", "skill-projection", "v1");
+}
+
+function fixtureTreeDigest(root) {
+  const digest = crypto.createHash("sha256");
+  function walk(directory, relativeRoot) {
+    const entries = fs.readdirSync(directory).sort();
+    const dirs = [];
+    const files = [];
+    for (const name of entries) {
+      const full = path.join(directory, name);
+      const stat = fs.lstatSync(full);
+      if (stat.isDirectory() || stat.isSymbolicLink()) dirs.push([name, full]);
+      else files.push([name, full]);
+    }
+    for (const [name, full] of dirs) {
+      const relative = path.posix.join(relativeRoot, name);
+      digest.update(`D\0${relative}\0`);
+      if (fs.lstatSync(full).isSymbolicLink()) digest.update(`L\0${fs.readlinkSync(full)}\0`);
+      else walk(full, relative);
+    }
+    for (const [name, full] of files) {
+      const relative = path.posix.join(relativeRoot, name);
+      digest.update(`F\0${relative}\0`);
+      digest.update(fs.readFileSync(full));
+      digest.update("\0");
+    }
+  }
+  walk(root, "");
+  return digest.digest("hex");
 }
 
 function setupHarness(fixture, harness) {
@@ -148,6 +183,207 @@ test("second sync converges to zero pending actions", () => {
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 0, check.stderr || check.stdout);
     assert.match(check.stdout, /Everything is in sync/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("publishes a projection when no harness is selected", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+
+    const root = projectionRoot(fixture);
+    const catalog = JSON.parse(fs.readFileSync(path.join(root, "catalog.json"), "utf8"));
+    assert.equal(catalog.version, 1);
+    assert.equal(catalog.source, "dot-agents");
+    assert.ok(catalog.skills.some((skill) => skill.name === "commit"));
+    assert.ok(fs.existsSync(path.join(root, "skills", "commit", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".agents", "skills")));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("setup home keeps projection isolated from ambient XDG data home", () => {
+  const fixture = makeFixture();
+  try {
+    const ambientDataHome = path.join(fixture.root, "ambient-xdg-data");
+    const setup = runCli(fixture, ["setup", "--none", "--yes"], { XDG_DATA_HOME: ambientDataHome });
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    assert.ok(fs.existsSync(path.join(projectionRoot(fixture), "catalog.json")));
+    assert.ok(!fs.existsSync(path.join(ambientDataHome, "dot-agents", "skill-projection", "v1", "catalog.json")));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("projection accepts unrelated nested standard frontmatter metadata", () => {
+  const fixture = makeFixture();
+  try {
+    const skillPath = path.join(fixture.repo, "skills", "commit", "SKILL.md");
+    const original = fs.readFileSync(skillPath, "utf8");
+    fs.writeFileSync(skillPath, original.replace("---\n\n# Commit", "metadata:\n  version: 1\n  owner: local\n---\n\n# Commit"));
+
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const catalog = JSON.parse(fs.readFileSync(path.join(projectionRoot(fixture), "catalog.json"), "utf8"));
+    assert.ok(catalog.skills.some((skill) => skill.name === "commit"));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("projection accepts folded and literal block-scalar descriptions", () => {
+  const fixture = makeFixture();
+  try {
+    const commitPath = path.join(fixture.repo, "skills", "commit", "SKILL.md");
+    fs.writeFileSync(commitPath, "---\nname: commit\ndescription: >\n  Commit repository changes\n  with a portable workflow.\n---\n\n# Commit\n");
+    const eli5Path = path.join(fixture.repo, "skills", "eli5", "SKILL.md");
+    fs.writeFileSync(eli5Path, "---\nname: eli5\ndescription: |\n  Explain clearly.\n  Keep useful detail.\n---\n\n# ELI5\n");
+
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const catalog = JSON.parse(fs.readFileSync(path.join(projectionRoot(fixture), "catalog.json"), "utf8"));
+    assert.equal(catalog.skills.find((skill) => skill.name === "commit").description, "Commit repository changes with a portable workflow.");
+    assert.equal(catalog.skills.find((skill) => skill.name === "eli5").description, "Explain clearly.\nKeep useful detail.");
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("projection rejects non-portable canonical skill names before mutation", () => {
+  const fixture = makeFixture();
+  try {
+    const invalid = path.join(fixture.repo, "skills", "Bad_Name");
+    fs.mkdirSync(invalid, { recursive: true });
+    fs.writeFileSync(path.join(invalid, "SKILL.md"), "---\nname: Bad_Name\ndescription: invalid portable name fixture\n---\n");
+
+    const sync = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(sync.status, 2, sync.stderr || sync.stdout);
+    assert.match(`${sync.stdout}\n${sync.stderr}`, /not a portable skill name/);
+    assert.ok(!fs.existsSync(projectionRoot(fixture)));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("projection respects runtime gates independently of harness selection", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const root = projectionRoot(fixture);
+    assert.ok(!fs.existsSync(path.join(root, "skills", "gh")));
+    assert.ok(!fs.existsSync(path.join(root, "skills", "cmux")));
+    assert.ok(!fs.existsSync(path.join(root, "skills", "herdr")));
+
+    addExecutable(fixture, "gh");
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 0, sync.stderr || sync.stdout);
+    assert.ok(fs.existsSync(path.join(root, "skills", "gh", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(root, "skills", "cmux")));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("projection ignores harness target restrictions", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const catalog = JSON.parse(fs.readFileSync(path.join(projectionRoot(fixture), "catalog.json"), "utf8"));
+    assert.ok(catalog.skills.some((skill) => skill.name === "x-review"));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("projection catalog metadata and tree hashes are deterministic", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const catalogPath = path.join(projectionRoot(fixture), "catalog.json");
+    const firstBytes = fs.readFileSync(catalogPath);
+    const catalog = JSON.parse(firstBytes);
+    assert.deepEqual(catalog.skills.map((skill) => skill.name), [...catalog.skills].map((skill) => skill.name).sort());
+    for (const skill of catalog.skills) {
+      assert.equal(skill.entrypoint, "SKILL.md");
+      assert.match(skill.description, /\S/);
+      assert.equal(skill.hash, `sha256:${fixtureTreeDigest(path.join(fixture.repo, "skills", skill.name))}`);
+    }
+
+    const second = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(second.status, 0, second.stderr || second.stdout);
+    assert.deepEqual(fs.readFileSync(catalogPath), firstBytes);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("projection source drift is detected by check", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const catalogPath = path.join(projectionRoot(fixture), "catalog.json");
+    const before = fs.readFileSync(catalogPath);
+    fs.appendFileSync(path.join(fixture.repo, "skills", "commit", "SKILL.md"), "\nprojection drift\n");
+
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 1, check.stderr || check.stdout);
+    assert.match(check.stdout, /skill projection commit/);
+    assert.deepEqual(fs.readFileSync(catalogPath), before);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("stale projected skills are cleaned without touching unrelated files", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const skillsRoot = path.join(projectionRoot(fixture), "skills");
+    const unrelated = path.join(skillsRoot, "manual-skill");
+    fs.mkdirSync(unrelated, { recursive: true });
+    fs.writeFileSync(path.join(unrelated, "SKILL.md"), "manual\n");
+    fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
+
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 1, check.stderr || check.stdout);
+    assert.match(check.stdout, /removed skill projection eli5/);
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 0, sync.stderr || sync.stdout);
+    assert.ok(!fs.existsSync(path.join(skillsRoot, "eli5")));
+    assert.ok(fs.existsSync(path.join(unrelated, "SKILL.md")));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("malformed skill frontmatter fails before projection mutation", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const root = projectionRoot(fixture);
+    const catalogPath = path.join(root, "catalog.json");
+    const statePath = path.join(fixture.home, ".config", "dot-agents", "state.json");
+    const beforeCatalog = fs.readFileSync(catalogPath);
+    const beforeState = fs.readFileSync(statePath);
+    fs.writeFileSync(path.join(fixture.repo, "skills", "commit", "SKILL.md"), "---\nname: wrong-name\ndescription: invalid fixture\n---\n");
+
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 2, sync.stderr || sync.stdout);
+    assert.match(`${sync.stdout}\n${sync.stderr}`, /does not match directory/);
+    assert.deepEqual(fs.readFileSync(catalogPath), beforeCatalog);
+    assert.deepEqual(fs.readFileSync(statePath), beforeState);
+    const backupRoot = path.join(fixture.home, ".dot-agents-backups");
+    assert.ok(!fs.existsSync(backupRoot) || fs.readdirSync(backupRoot).length === 0);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

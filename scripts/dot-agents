@@ -358,6 +358,7 @@ function expectedState(installedSurfaces, names, targets) {
     const harness = surfaceHarness(surface);
     skills[surface] = names.filter((name) => targets.get(name).has(harness));
   }
+  skills.projection = names;
   return { version: 1, skills };
 }
 
@@ -369,6 +370,143 @@ function sortJson(value) {
 
 function jsonBytes(value) {
   return Buffer.from(`${JSON.stringify(sortJson(value), null, 2)}\n`, "utf8");
+}
+
+function dataHome(home) {
+  if (process.env.XDG_DATA_HOME && !process.env.DOT_AGENTS_SETUP_HOME) return absolutePath(process.env.XDG_DATA_HOME);
+  return path.join(home, ".local", "share");
+}
+
+function skillProjectionRoot(home) {
+  return path.join(dataHome(home), "dot-agents", "skill-projection", "v1");
+}
+
+const PORTABLE_SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function parseFrontmatterString(rawValue, key, file) {
+  const value = rawValue.trim();
+  if (!value) return "";
+  if (value.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed !== "string") throw new Error("expected a string");
+      return parsed;
+    } catch (error) {
+      throw new RuntimeError(`invalid ${key} value in ${file}: ${error.message}`);
+    }
+  }
+  if (value.startsWith("'")) {
+    if (!value.endsWith("'") || value.length === 1) throw new RuntimeError(`invalid ${key} value in ${file}: unmatched single quote`);
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+  if (["[", "{"].some((prefix) => value.startsWith(prefix))) {
+    throw new RuntimeError(`unsupported ${key} value in ${file}; use a plain or quoted string`);
+  }
+  if (value.endsWith('"') || value.endsWith("'")) throw new RuntimeError(`invalid ${key} value in ${file}: unmatched quote`);
+  return value;
+}
+
+function parseFrontmatterBlock(lines, start, closing, rawValue, key, file) {
+  const match = /^([|>])([+-]?)$/.exec(rawValue.trim());
+  if (!match) return null;
+  const content = [];
+  for (let index = start + 1; index < closing; index += 1) {
+    const line = lines[index];
+    if (line && !/^\s/.test(line)) break;
+    content.push(line);
+  }
+  if (!content.length) return { value: "", consumed: 0 };
+  const nonEmpty = content.filter((line) => line.trim());
+  const indent = nonEmpty.length
+    ? Math.min(...nonEmpty.map((line) => line.match(/^\s*/)[0].length))
+    : 0;
+  const normalized = content.map((line) => line.slice(Math.min(indent, line.length)));
+  const value = match[1] === ">"
+    ? normalized.map((line) => line.trim()).join(" ").replace(/\s+/g, " ").trim()
+    : normalized.join("\n").trim();
+  if (!value) throw new RuntimeError(`skill frontmatter ${key} is empty in ${file}`);
+  return { value, consumed: content.length };
+}
+
+function skillFrontmatter(file, expectedName) {
+  const lines = readText(file).split(/\r?\n/);
+  if (!/^---\s*$/.test(lines[0] ?? "")) throw new RuntimeError(`skill frontmatter is missing in ${file}`);
+  const closing = lines.findIndex((line, index) => index > 0 && /^---\s*$/.test(line));
+  if (closing < 0) throw new RuntimeError(`skill frontmatter is not terminated in ${file}`);
+
+  const values = {};
+  for (let index = 1; index < closing; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+    if (/^\s/.test(line)) continue;
+    const separator = line.indexOf(":");
+    const key = separator > 0 ? line.slice(0, separator).trim() : "";
+    if (key !== "name" && key !== "description") continue;
+    if (Object.prototype.hasOwnProperty.call(values, key)) throw new RuntimeError(`malformed skill frontmatter in ${file}: duplicate key '${key}'`);
+    const rawValue = separator === line.length - 1 ? "" : line.slice(separator + 1).trim();
+    const block = parseFrontmatterBlock(lines, index, closing, rawValue, key, file);
+    if (block) {
+      values[key] = block.value;
+      index += block.consumed;
+    } else {
+      values[key] = rawValue;
+    }
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(values, "name")) throw new RuntimeError(`skill frontmatter is missing name in ${file}`);
+  if (!Object.prototype.hasOwnProperty.call(values, "description")) throw new RuntimeError(`skill frontmatter is missing description in ${file}`);
+  const name = parseFrontmatterString(values.name, "name", file);
+  const description = parseFrontmatterString(values.description, "description", file);
+  if (name.length > 64 || !PORTABLE_SKILL_NAME.test(name)) throw new RuntimeError(`skill frontmatter name '${name}' is not a portable skill name in ${file}`);
+  if (name !== expectedName) throw new RuntimeError(`skill frontmatter name '${name}' does not match directory '${expectedName}' in ${file}`);
+  if (!description) throw new RuntimeError(`skill frontmatter description is empty in ${file}`);
+  return { name, description };
+}
+
+function skillProjectionCatalog(repo, names) {
+  return {
+    version: 1,
+    source: "dot-agents",
+    skills: names.map((name) => {
+      const source = path.join(repo, "skills", name);
+      const metadata = skillFrontmatter(path.join(source, "SKILL.md"), name);
+      const digest = treeDigest(source);
+      if (!digest) throw new RuntimeError(`canonical skill source is not a directory: ${source}`);
+      return {
+        name: metadata.name,
+        description: metadata.description,
+        entrypoint: "SKILL.md",
+        hash: `sha256:${digest}`,
+      };
+    }),
+  };
+}
+
+function safeManagedSkillName(value) {
+  return typeof value === "string" && value.length > 0 && value !== "." && value !== ".." && !value.includes("/") && !value.includes("\\") && path.basename(value) === value;
+}
+
+function planSkillProjection(actions, repo, root, names, previouslyManaged) {
+  if (pathExists(root) && (isSymlink(root) || !isDirectory(root))) throw new RuntimeError(`skill projection root must be a real directory: ${root}`);
+  const skillsRoot = path.join(root, "skills");
+  if (pathExists(skillsRoot) && (isSymlink(skillsRoot) || !isDirectory(skillsRoot))) throw new RuntimeError(`skill projection skills path must be a real directory: ${skillsRoot}`);
+  const catalog = skillProjectionCatalog(repo, names);
+  for (const name of names) {
+    const source = path.join(repo, "skills", name);
+    const destination = path.join(skillsRoot, name);
+    if (treeDigest(source) !== treeDigest(destination)) actions.push(new Action("copy-tree", destination, `skill projection ${name}`, { source }));
+  }
+  if (Array.isArray(previouslyManaged)) {
+    for (const oldName of [...new Set(previouslyManaged)].sort()) {
+      if (!safeManagedSkillName(oldName)) continue;
+      const destination = path.join(skillsRoot, oldName);
+      if (!names.includes(oldName) && pathExists(destination)) actions.push(new Action("remove", destination, `removed skill projection ${oldName}`));
+    }
+  }
+  const catalogPath = path.join(root, "catalog.json");
+  const catalogContent = jsonBytes(catalog);
+  const currentCatalog = logicalFileBytes(catalogPath);
+  if (!currentCatalog || !currentCatalog.equals(catalogContent)) actions.push(new Action("write", catalogPath, "skill projection catalog", { content: catalogContent }));
 }
 
 function plan(repo, home, cfg, options = {}) {
@@ -417,6 +555,9 @@ function plan(repo, home, cfg, options = {}) {
     throw new RuntimeError(`canonical skill source must not contain symlinks: ${sourceSymlinks.slice(0, 10).join(", ")}`);
   }
   const targets = skillTargetMap(repo, names);
+  const previousState = readState(cfg);
+  const previousSkills = isPlainObject(previousState.skills) ? previousState.skills : {};
+  planSkillProjection(actions, repo, skillProjectionRoot(home), names, previousSkills.projection);
   for (const name of names) {
     const targetNames = [...targets.get(name)];
     if (targetNames.length < HARNESS_NAMES.length) {
@@ -469,8 +610,6 @@ function plan(repo, home, cfg, options = {}) {
   else if (selectedHarnesses !== null) notes.push("WAIT Antigravity CLI: selected, but 'agy' is not installed or not available in PATH.");
   else notes.push("SKIP Antigravity CLI: 'agy' is not installed or not available in PATH.");
 
-  const previousState = readState(cfg);
-  const previousSkills = isPlainObject(previousState.skills) ? previousState.skills : {};
   for (const [surface, root] of Object.entries(installedSurfaces)) {
     const surfaceNames = names.filter((name) => targets.get(name).has(surfaceHarness(surface)));
     for (const name of surfaceNames) {

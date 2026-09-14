@@ -96,6 +96,8 @@ materialized harness files / directories
 | `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | `preferences/` ×3 + `harnesses/codex/AGENTS.md` |
 | `$CODEX_HOME/config.toml` | managed TOML key merge | `harnesses/codex/config.toml` + local override + existing runtime config |
 | `~/.agents/skills/<name>` | copy | `skills/<name>` |
+| `$XDG_DATA_HOME/dot-agents/skill-projection/v1/skills/<name>` | copy | runtime-eligible `skills/<name>` |
+| `$XDG_DATA_HOME/dot-agents/skill-projection/v1/catalog.json` | generate | canonical skill frontmatter + tree digest |
 | `~/.claude/CLAUDE.md` | generate | `preferences/` ×3 + `harnesses/claude/CLAUDE.md` |
 | `~/.claude/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
 | `~/.claude/skills/<name>` | copy | `skills/<name>` |
@@ -103,6 +105,37 @@ materialized harness files / directories
 | `~/.gemini/antigravity-cli/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
 | `~/.gemini/antigravity-cli/skills/<name>` | copy | `skills/<name>` |
 | `~/.gemini/config/skills/<name>`（IDE） | copy | `skills/<name>` |
+
+### Host-facing skill projection
+
+`dot-agents sync` 會 materialize 一份與 harness 無關的本機 skill projection；`dot-agents check` 只會唯讀驗證並回報是否需要同步。預設位置是：
+
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/dot-agents/skill-projection/v1/
+├── catalog.json
+└── skills/<name>/...
+```
+
+這是 agent-vm-mcp 與其他 host 可讀取的 consumer-neutral 發布介面；它不會建立 ChatGPT-specific skill copy，也不會分叉 `SKILL.md`。projection 只包含目前 runtime 可用的 canonical skills（`cmux`／`gh`／`herdr` 等既有 runtime gate 仍適用），但不套用 `dot-agents.json` 的 harness `targets` 限制，因此 `x-review` 等 target-restricted skill 仍可出現在 projection。
+
+`catalog.json` 是 deterministic v1 JSON，欄位如下：
+
+```json
+{
+  "version": 1,
+  "source": "dot-agents",
+  "skills": [
+    {
+      "name": "example",
+      "description": "...",
+      "entrypoint": "SKILL.md",
+      "hash": "sha256:<skill-tree-digest>"
+    }
+  ]
+}
+```
+
+`skills` 依名稱排序；`hash` 是整個 canonical skill directory 的既有 deterministic tree digest，以 `sha256:<digest>` 表示。同步會驗證每個 `SKILL.md` 的標準 frontmatter `name`／`description`，缺少、格式錯誤或與目錄名稱不一致時會在任何 runtime mutation 前失敗。projection 的 skill ownership 會記錄在 local sync state；因此 canonical skill 移除或 runtime gate 關閉後，sync 只會清理先前由 dot-agents 管理的 projection skill，不會刪除其他檔案。
 
 Managed settings merge 的 precedence：
 
@@ -183,7 +216,7 @@ dot-agents doctor         # canonical / sync / routing / transaction diagnostics
 
 `./scripts/setup.sh` 是 `dot-agents setup` 的 bootstrap wrapper，適合剛 clone 下來、尚未有 global `dot-agents` launcher 的情境。互動 setup 沒有選擇旗標時會逐一詢問三個 harness；agent 應使用明確的 `--harness`／`--all` 搭配 `--yes`，避免依賴 TTY。
 
-Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。
+Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
 
 `cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable。`gh` skill 由 `cli/cli` 官方來源維護，包含 Issue／PR／comment 的 `--attach` 圖片與影片附件操作，因此 agent 不需要每次重新研究 GitHub upload flow。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
 
@@ -245,7 +278,7 @@ Pending sync 與未完成 transaction 視為 `FAIL`；model-routing capability m
 node --test tests/dot-agents.test.js
 ```
 
-測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge、override precedence、skill ownership cleanup、WAIT semantics、transaction rollback、protected cleanup 與 model-routing validation，不會修改真實 runtime。
+測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge、override precedence、skill ownership cleanup、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback、protected cleanup 與 model-routing validation，不會修改真實 runtime。
 
 ## 日常操作
 
