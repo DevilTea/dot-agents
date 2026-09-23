@@ -431,6 +431,8 @@ test("TOML merge preserves unmanaged sections and comments while override wins",
     assert.match(merged, /\[projects\."\/tmp\/example"\]/);
     assert.match(merged, /trust_level = "trusted"/);
     assert.match(merged, /model_reasoning_effort = "high"/);
+    assert.match(merged, /^model = "gpt-6-luna"$/m);
+    assert.match(merged, /^default_subagent_model = "gpt-6-luna"$/m);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -484,7 +486,7 @@ test("Codex routing validation reports verified and stale declarations", () => {
       models: [
         { slug: "gpt-5.6-sol", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"].map((effort) => ({ effort })) },
         { slug: "gpt-5.6-terra", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"].map((effort) => ({ effort })) },
-        { slug: "gpt-5.6-luna", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max"].map((effort) => ({ effort })) },
+        { slug: "gpt-6-luna", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max"].map((effort) => ({ effort })) },
       ],
     }, null, 2));
     const routingPath = path.join(fixture.repo, "skills", "model-routing", "references", "routing.yaml");
@@ -492,10 +494,10 @@ test("Codex routing validation reports verified and stale declarations", () => {
     assert.equal(valid.warnings.length, 0);
     assert.equal(valid.verified.length, 3);
 
-    const routing = fs.readFileSync(routingPath, "utf8").replace("id: gpt-5.6-luna", "id: gpt-5.6-missing");
+    const routing = fs.readFileSync(routingPath, "utf8").replace("id: gpt-6-luna", "id: gpt-6-missing");
     fs.writeFileSync(routingPath, routing);
     const stale = validateCodexRouting(routingPath, cachePath);
-    assert.ok(stale.warnings.some((message) => message.includes("gpt-5.6-missing")));
+    assert.ok(stale.warnings.some((message) => message.includes("gpt-6-missing")));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

@@ -4,7 +4,7 @@
 # before editing (Codex: ~/.codex/models_cache.json; Claude Code: /model).
 
 version: 2
-updated: "2026-08-24"
+updated: "2026-09-23"
 
 principles:
   - "Explicit user instruction and project policy override this table."
@@ -105,9 +105,9 @@ harnesses:
         efforts: [low, medium, high, xhigh, max, ultra]
         pricing_per_mtok: { in: 2.5, out: 15 }
       luna:
-        id: gpt-5.6-luna
+        id: gpt-6-luna
         efforts: [low, medium, high, xhigh, max]
-        pricing_per_mtok: { in: 1, out: 6 }
+        pricing_per_mtok: { in: 0.1, out: 0.5 }
     assignments:
       orchestration:
         model: sol
@@ -116,7 +116,7 @@ harnesses:
       deep-reasoning:
         model: luna
         effort: max
-        note: "bounded-hard sweet spot (~sol-medium quality at ~1/6 cost); use sol max when the problem is ambiguous, not just hard"
+        note: "For well-scoped difficult tasks; use sol when judgment or ambiguity exceeds the task's bounds"
       implementation:
         model: luna
         effort: xhigh
