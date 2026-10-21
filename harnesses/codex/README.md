@@ -12,7 +12,7 @@ Canonical sources：[`AGENTS.md`](./AGENTS.md) 與 [`config.toml`](./config.toml
 - instruction chain 每次 run／TUI session 啟動時建立。
 - 預設 project instruction 總上限為 32 KiB，可由 `project_doc_max_bytes` 調整。
 
-`dot-agents sync` 依固定順序生成 `$CODEX_HOME/AGENTS.md`（`CODEX_HOME` 未設定時為 `~/.codex`）：
+`dot-agents sync` 依固定順序生成 `$CODEX_HOME/AGENTS.md`（`CODEX_HOME` 未設定、或設定了 `DOT_AGENTS_SETUP_HOME` 沙箱時，為該 home 下的 `.codex`）：
 
 1. `preferences/communication.md`
 2. `preferences/reasoning.md`

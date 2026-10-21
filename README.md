@@ -144,7 +144,7 @@ existing runtime state
         ← device-local override
 ```
 
-Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、project-specific entries、comment 或本機設定。跨多行的 value（例如多行 array）會整段替換；runtime 以 dotted key 定義的 managed key 會沿用 dotted 形式。若 managed table 在 runtime 中被定義成 inline table 或 scalar，或 patch 後的結果無法通過 parse 驗證，sync／check 會在 mutation 前失敗，需人工修正 runtime 檔。
+Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、project-specific entries、comment 或本機設定。跨多行的 value（例如多行 array）會整段替換；runtime 以 dotted key 定義的 managed key 會沿用 dotted 形式。若 managed table 在 runtime 中被定義成 inline table 或 scalar，或 patch 後的結果無法通過 parse 驗證，sync／check 會在 mutation 前失敗，需人工修正 runtime 檔。runtime JSON settings 若不是合法的 JSON object，sync 同樣拒絕 merge（`doctor` 列為 `FAIL`），不會以只含 managed key 的內容覆寫。
 
 Device-local override 放在：
 
@@ -217,7 +217,7 @@ dot-agents doctor         # canonical / sync / transaction diagnostics
 
 Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。harness 未被選取或暫時不在 PATH（`SKIP`／`WAIT`）時，該 surface 的 ownership 紀錄會原樣保留，待 harness 再次可用時仍能清理期間被移除的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
 
-`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
+`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable；`agent-browser` skill 要求 `agent-browser` executable（只靠 `npx agent-browser` 執行時不會部署）。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
 
 有異動時，既有 managed entry 會先移至：
 
@@ -225,7 +225,7 @@ Sync 不下載 harness、不修改 project repository。已選但尚未安裝的
 ~/.dot-agents-backups/<timestamp>-<pid>/
 ```
 
-每次有 sync action 時會先建立 transaction journal。`manifest.json` 記錄 `prepared → applying → committed / rolled-back / failed` 狀態與 action lifecycle，`manifest.tsv` 保留既有 entry 的原路徑與備份路徑。所有 managed writes（包含 selection 與 local ownership state）都在同一個 transaction 內；apply 中途失敗時會逆序 rollback。若 process 在 rollback 前被強制終止，`dot-agents doctor` 會把未完成 journal 視為 `FAIL`。
+每次有 sync action 時會先建立 transaction journal。`manifest.json` 記錄 `prepared → applying → committed / rolled-back / failed` 狀態與 action lifecycle，`manifest.tsv` 保留既有 entry 的原路徑與備份路徑。所有 managed writes（包含 selection 與 local ownership state）都在同一個 transaction 內；apply 中途失敗時會逆序 rollback。settings merge 的內容在 plan 時就已算好；若 runtime 檔在 plan 之後（例如等待輸入 `YES` 期間）被 harness 改寫，apply 會在備份前偵測到並中止整個 transaction，重新執行 sync 即可以最新內容重新規劃。若 process 在 rollback 前被強制終止，`dot-agents doctor` 會把未完成 journal 視為 `FAIL`。
 
 要在不動真實 `$HOME` 的情況下測試：
 
@@ -233,6 +233,8 @@ Sync 不下載 harness、不修改 project repository。已選但尚未安裝的
 DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --dry-run
 DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 ```
+
+設定 `DOT_AGENTS_SETUP_HOME` 時，`XDG_CONFIG_HOME`、`XDG_DATA_HOME` 與 `CODEX_HOME` 都會被忽略，所有輸出都落在該目錄下。
 
 ## Backup cleanup
 
@@ -276,7 +278,7 @@ Pending sync 與未完成 transaction 視為 `FAIL`。
 node --test tests/dot-agents.test.js
 ```
 
-測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge（含多行 value、dotted key 與無法安全 patch 的拒絕）、override precedence、skill ownership cleanup（含 harness 暫時缺席與不安全的 ownership entry）、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup（含無可清除批次），不會修改真實 runtime。
+測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge（含多行 value、dotted key、無法安全 patch 與不合法 runtime JSON 的拒絕）、plan 後 runtime 變動的中止、`CODEX_HOME` 隔離、override precedence、skill ownership cleanup（含 harness 暫時缺席與不安全的 ownership entry）、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup（含無可清除批次），不會修改真實 runtime。
 
 ## 日常操作
 
