@@ -95,7 +95,8 @@ NODE_STATUS
 
 declare -a CLEANABLE=()
 declare -a PROTECTED=()
-for batch in "${BATCHES[@]}"; do
+# `${ARR[@]+"${ARR[@]}"}` keeps empty arrays safe under `set -u` on macOS bash 3.2.
+for batch in ${BATCHES[@]+"${BATCHES[@]}"}; do
   status="$(transaction_status "$batch")"
   case "$status" in
     committed|rolled-back|legacy) CLEANABLE+=("$batch") ;;
@@ -111,7 +112,7 @@ if [ "${#PROTECTED[@]}" -gt 0 ]; then
   printf '\n'
 fi
 
-BATCHES=("${CLEANABLE[@]}")
+BATCHES=(${CLEANABLE[@]+"${CLEANABLE[@]}"})
 total="${#BATCHES[@]}"
 if [ "$total" -eq 0 ]; then
   note "$(tilde "$BACKUP_ROOT") 沒有可安全清除的備份批次。"

@@ -16,7 +16,7 @@ const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { generatedAntigravity, generatedClaude, generatedCodex } = require("../lib/instructions");
 const { apply, inspectTransactions } = require("../lib/transaction");
-const { loadTomlObject, patchTomlText } = require("../lib/toml");
+const { loadTomlObject, parseToml, patchTomlText } = require("../lib/toml");
 
 class RuntimeError extends Error {}
 
@@ -351,8 +351,19 @@ function readState(cfg) {
   return pathExists(file) ? loadJsonObject(file) : { version: 1, skills: {} };
 }
 
-function expectedState(installedSurfaces, names, targets) {
+const SKILL_SURFACES = ["codex", "claude", "antigravity-ide", "antigravity-cli"];
+
+function expectedState(installedSurfaces, names, targets, previousSkills) {
   const skills = {};
+  // A surface skipped this run (harness deselected or temporarily missing from
+  // PATH) keeps its ownership record so a later sync can still clean its stale
+  // copies.
+  for (const surface of SKILL_SURFACES) {
+    const previous = previousSkills[surface];
+    if (!Object.prototype.hasOwnProperty.call(installedSurfaces, surface) && Array.isArray(previous)) {
+      skills[surface] = [...new Set(previous.filter(safeManagedSkillName))].sort();
+    }
+  }
   for (const surface of Object.keys(installedSurfaces).sort()) {
     const harness = surfaceHarness(surface);
     skills[surface] = names.filter((name) => targets.get(name).has(harness));
@@ -619,13 +630,14 @@ function plan(repo, home, cfg, options = {}) {
     const previouslyManaged = previousSkills[surface];
     if (Array.isArray(previouslyManaged)) {
       for (const oldName of [...new Set(previouslyManaged)].sort()) {
+        if (!safeManagedSkillName(oldName)) continue;
         const destination = path.join(root, oldName);
         if (!surfaceNames.includes(oldName) && pathExists(destination)) actions.push(new Action("remove", destination, `removed ${surface} skill ${oldName}`));
       }
     }
   }
   const statePath = path.join(cfg, "state.json");
-  const stateContent = jsonBytes(expectedState(installedSurfaces, names, targets));
+  const stateContent = jsonBytes(expectedState(installedSurfaces, names, targets, previousSkills));
   const currentState = logicalFileBytes(statePath);
   if (!currentState || !currentState.equals(stateContent)) actions.push(new Action("state", statePath, "local sync ownership state", { content: stateContent }));
   return [actions, notes];
@@ -647,7 +659,23 @@ function planTomlSettings(actions, canonicalPath, overridePath, destination, lab
       parseFailed = true;
     }
   }
-  const mergedText = patchTomlText(currentText, expected);
+  let mergedText;
+  try {
+    mergedText = patchTomlText(currentText, expected);
+  } catch (error) {
+    throw new RuntimeError(`${label}: ${error.message} in ${destination}; fix the runtime file manually`);
+  }
+  // When the runtime file was parseable, the patched result must stay
+  // parseable and contain every managed value; otherwise refuse to write it.
+  if (!parseFailed) {
+    let patched;
+    try {
+      patched = parseToml(mergedText, destination);
+    } catch (error) {
+      throw new RuntimeError(`${label}: patching would produce invalid TOML (${error.message}); fix ${destination} manually`);
+    }
+    if (!containsManaged(patched, expected)) throw new RuntimeError(`${label}: patching ${destination} would not apply every managed value; fix the runtime file manually`);
+  }
   const drift = parseFailed ? mergedText !== currentText : !containsManaged(current, expected);
   if (isSymlink(destination) || drift) actions.push(new Action("toml-merge", destination, label, { content: contentBuffer(mergedText) }));
 }

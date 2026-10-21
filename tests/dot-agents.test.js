@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
+const { parseToml } = require("../lib/toml");
 const { apply, inspectTransactions } = require("../lib/transaction");
 
 const SOURCE_REPO = path.resolve(__dirname, "..");
@@ -437,6 +438,113 @@ test("TOML merge preserves unmanaged sections and comments while override wins",
   }
 });
 
+test("TOML merge replaces multi-line and dotted managed keys without corrupting config", () => {
+  const fixture = makeFixture();
+  try {
+    const runtime = path.join(fixture.home, ".codex", "config.toml");
+    fs.mkdirSync(path.dirname(runtime), { recursive: true });
+    fs.writeFileSync(runtime, [
+      'agents.default_subagent_model = "old"',
+      "",
+      "[tui]",
+      "status_line = [",
+      '  "model", # comment',
+      '  "git-branch",',
+      "]",
+      "",
+      "[mcp_servers.example]",
+      "args = [",
+      '  "--flag=value",',
+      "]",
+      "",
+    ].join("\n"));
+
+    setupHarness(fixture, "codex");
+    const merged = fs.readFileSync(runtime, "utf8");
+    const parsed = parseToml(merged, runtime);
+    assert.equal(parsed.agents.default_subagent_model, "gpt-6-luna");
+    assert.match(merged, /^agents\.default_subagent_model = "gpt-6-luna"$/m);
+    assert.doesNotMatch(merged, /^\[agents\]$/m);
+    assert.ok(Array.isArray(parsed.tui.status_line) && parsed.tui.status_line.includes("task-progress"));
+    assert.doesNotMatch(merged, /"git-branch",\n\]/);
+    assert.deepEqual(parsed.mcp_servers.example.args, ["--flag=value"]);
+
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 0, check.stderr || check.stdout);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("TOML merge refuses to patch a managed table defined as an inline table", () => {
+  const fixture = makeFixture();
+  try {
+    const runtime = path.join(fixture.home, ".codex", "config.toml");
+    const before = 'agents = { default_subagent_model = "old" }\n';
+    fs.mkdirSync(path.dirname(runtime), { recursive: true });
+    fs.writeFileSync(runtime, before);
+    addExecutable(fixture, "codex");
+
+    const sync = runCli(fixture, ["setup", "--harness", "codex", "--yes"]);
+    assert.equal(sync.status, 2, sync.stderr || sync.stdout);
+    assert.match(sync.stderr, /cannot patch agents\.default_subagent_model/);
+    assert.equal(fs.readFileSync(runtime, "utf8"), before);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("skill ownership survives a sync while the harness is missing from PATH", () => {
+  const fixture = makeFixture();
+  try {
+    setupHarness(fixture, "codex");
+    const stale = path.join(fixture.home, ".agents", "skills", "eli5");
+    assert.ok(fs.existsSync(stale));
+
+    fs.rmSync(path.join(fixture.bin, "codex"));
+    const missing = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(missing.status, 0, missing.stderr || missing.stdout);
+    const state = JSON.parse(fs.readFileSync(path.join(fixture.home, ".config", "dot-agents", "state.json"), "utf8"));
+    assert.ok(state.skills.codex.includes("eli5"));
+
+    fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
+    addExecutable(fixture, "codex");
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 1, check.stderr || check.stdout);
+    assert.match(check.stdout, /REMOVE.*codex skill eli5/);
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 0, sync.stderr || sync.stdout);
+    assert.ok(!fs.existsSync(stale));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("unsafe ownership entries never remove the runtime skills root", () => {
+  const fixture = makeFixture();
+  try {
+    setupHarness(fixture, "codex");
+    const runtimeSkills = path.join(fixture.home, ".agents", "skills");
+    const manual = path.join(runtimeSkills, "manual-skill");
+    fs.mkdirSync(manual, { recursive: true });
+    fs.writeFileSync(path.join(manual, "SKILL.md"), "manual\n");
+    const statePath = path.join(fixture.home, ".config", "dot-agents", "state.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    state.skills.codex.push("", ".", "..", "../escape");
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 0, sync.stderr || sync.stdout);
+    assert.doesNotMatch(sync.stdout, /REMOVE/);
+    assert.ok(fs.existsSync(manual));
+    assert.ok(fs.existsSync(path.join(runtimeSkills, "commit", "SKILL.md")));
+    const cleaned = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    assert.ok(cleaned.skills.codex.every((name) => !["", ".", "..", "../escape"].includes(name)));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("removed managed skills are cleaned up without touching unmanaged runtime skills", () => {
   const fixture = makeFixture();
   try {
@@ -540,6 +648,34 @@ test("backup cleanup never removes incomplete transaction journals", () => {
     assert.equal(cleanup.status, 0, cleanup.stderr || cleanup.stdout);
     assert.match(cleanup.stdout, /Protected transaction batch/);
     assert.ok(!fs.existsSync(committed));
+    assert.ok(fs.existsSync(applying));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("backup cleanup succeeds when no batch is cleanable", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-empty-"));
+  const home = path.join(root, "home");
+  const backupRoot = path.join(home, ".dot-agents-backups");
+  const applying = path.join(backupRoot, "20260907-000001-222");
+  const env = {
+    ...process.env,
+    DOT_AGENTS_SETUP_HOME: home,
+    PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
+  };
+  const script = path.join(SOURCE_REPO, "scripts", "clean-backups.sh");
+  try {
+    fs.mkdirSync(backupRoot, { recursive: true });
+    const empty = spawnSync(script, ["--dry-run"], { encoding: "utf8", env });
+    assert.equal(empty.status, 0, empty.stderr || empty.stdout);
+    assert.match(empty.stdout, /沒有可安全清除的備份批次/);
+
+    fs.mkdirSync(applying, { recursive: true });
+    fs.writeFileSync(path.join(applying, "manifest.json"), JSON.stringify({ status: "applying" }, null, 2) + "\n");
+    const protectedOnly = spawnSync(script, ["--yes"], { encoding: "utf8", env });
+    assert.equal(protectedOnly.status, 0, protectedOnly.stderr || protectedOnly.stdout);
+    assert.match(protectedOnly.stdout, /Protected transaction batch/);
     assert.ok(fs.existsSync(applying));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
