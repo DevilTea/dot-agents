@@ -53,9 +53,8 @@ efforts: [low, medium, high, xhigh, max]
 
 policy:
   session_default:
-    model: opus
-    variant: "opus[1m]"
-    note: "settings.json default; switch to fable per-session via /model only when conducting an orchestration run"
+    model: null
+    note: "settings.json does not pin a model; Claude Code's own default applies. Switch to fable per-session via /model only when conducting an orchestration run"
   fable:
     reserved_for:
       - "orchestration as the main session — planning, decomposition, cross-agent integration, final synthesis"
