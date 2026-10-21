@@ -15,7 +15,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { generatedAntigravity, generatedClaude, generatedCodex } = require("../lib/instructions");
-const { apply, inspectTransactions } = require("../lib/transaction");
+const { apply, inspectTransactions, snapshotBytes } = require("../lib/transaction");
 const { loadTomlObject, parseToml, patchTomlText } = require("../lib/toml");
 
 class RuntimeError extends Error {}
@@ -27,6 +27,7 @@ const HARNESS_LABELS = {
   antigravity: "Google Antigravity",
 };
 const SKILL_RUNTIME_REQUIREMENTS = [
+  { runtime: "agent-browser", executable: "agent-browser", matches: (name) => name === "agent-browser" },
   { runtime: "cmux", executable: "cmux", matches: (name) => name === "cmux" || name.startsWith("cmux-") },
   { runtime: "gh", executable: "gh", matches: (name) => name === "gh" },
   { runtime: "herdr", executable: "herdr", matches: (name) => name === "herdr" || name.startsWith("herdr-") },
@@ -39,6 +40,8 @@ class Action {
     this.label = label;
     this.source = options.source ?? null;
     this.content = options.content ?? null;
+    // Bytes the action was planned against; apply aborts if they changed.
+    this.baseline = options.baseline;
   }
 }
 
@@ -387,6 +390,13 @@ function dataHome(home) {
   return path.join(home, ".local", "share");
 }
 
+// Like the XDG variables, CODEX_HOME is ignored under DOT_AGENTS_SETUP_HOME so
+// a sandboxed run never writes the real Codex configuration.
+function codexHomePath(home) {
+  if (process.env.CODEX_HOME && !process.env.DOT_AGENTS_SETUP_HOME) return absolutePath(process.env.CODEX_HOME);
+  return path.join(home, ".codex");
+}
+
 function skillProjectionRoot(home) {
   return path.join(dataHome(home), "dot-agents", "skill-projection", "v1");
 }
@@ -576,7 +586,7 @@ function plan(repo, home, cfg, options = {}) {
   }
   const codexAvailable = commandExists("codex");
   if (wantsHarness("codex") && codexAvailable) {
-    const codexHome = absolutePath(process.env.CODEX_HOME || path.join(home, ".codex"));
+    const codexHome = codexHomePath(home);
     const agentsOverride = path.join(codexHome, "AGENTS.override.md");
     if (isFile(agentsOverride)) notes.push(`WARN Codex: ${agentsOverride} exists; Codex ignores the generated AGENTS.md while it is present.`);
     const target = path.join(codexHome, "AGENTS.md");
@@ -647,17 +657,14 @@ function planTomlSettings(actions, canonicalPath, overridePath, destination, lab
   const canonical = loadTomlObject(canonicalPath);
   const override = loadTomlObject(overridePath, true);
   const expected = deepMerge(canonical, override);
+  const baseline = snapshotBytes(destination);
+  const currentText = baseline ? baseline.toString("utf8") : "";
   let current = {};
-  let currentText = "";
   let parseFailed = false;
-  if (pathExists(destination)) {
-    try {
-      currentText = readText(destination);
-      current = loadTomlObject(destination);
-    } catch {
-      current = {};
-      parseFailed = true;
-    }
+  try {
+    current = parseToml(currentText, destination);
+  } catch {
+    parseFailed = true;
   }
   let mergedText;
   try {
@@ -677,18 +684,26 @@ function planTomlSettings(actions, canonicalPath, overridePath, destination, lab
     if (!containsManaged(patched, expected)) throw new RuntimeError(`${label}: patching ${destination} would not apply every managed value; fix the runtime file manually`);
   }
   const drift = parseFailed ? mergedText !== currentText : !containsManaged(current, expected);
-  if (isSymlink(destination) || drift) actions.push(new Action("toml-merge", destination, label, { content: contentBuffer(mergedText) }));
+  if (isSymlink(destination) || drift) actions.push(new Action("toml-merge", destination, label, { content: contentBuffer(mergedText), baseline }));
 }
 
 function planJsonSettings(actions, canonicalPath, overridePath, destination, label) {
   const canonical = loadJsonObject(canonicalPath);
   const override = loadJsonObject(overridePath, true);
   const expected = deepMerge(canonical, override);
+  const baseline = snapshotBytes(destination);
   let current = {};
-  if (pathExists(destination)) {
-    try { current = loadJsonObject(destination); } catch { current = {}; }
+  // Refuse to merge into an unreadable runtime file instead of silently
+  // replacing its content with only the managed keys.
+  if (baseline) {
+    try {
+      current = JSON.parse(baseline.toString("utf8"));
+    } catch (error) {
+      throw new RuntimeError(`${label}: ${destination} is not valid JSON (${error.message}); fix or remove it manually`);
+    }
+    if (!isPlainObject(current)) throw new RuntimeError(`${label}: ${destination} must contain a JSON object; fix or remove it manually`);
   }
-  if (isSymlink(destination) || !containsManaged(current, expected)) actions.push(new Action("json-merge", destination, label, { content: jsonBytes(deepMerge(current, expected)) }));
+  if (isSymlink(destination) || !containsManaged(current, expected)) actions.push(new Action("json-merge", destination, label, { content: jsonBytes(deepMerge(current, expected)), baseline }));
 }
 
 function actionVerb(action) {

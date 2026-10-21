@@ -278,11 +278,14 @@ test("projection respects runtime gates independently of harness selection", () 
     assert.ok(!fs.existsSync(path.join(root, "skills", "gh")));
     assert.ok(!fs.existsSync(path.join(root, "skills", "cmux")));
     assert.ok(!fs.existsSync(path.join(root, "skills", "herdr")));
+    assert.ok(!fs.existsSync(path.join(root, "skills", "agent-browser")));
 
     addExecutable(fixture, "gh");
+    addExecutable(fixture, "agent-browser");
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(fs.existsSync(path.join(root, "skills", "gh", "SKILL.md")));
+    assert.ok(fs.existsSync(path.join(root, "skills", "agent-browser", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(root, "skills", "cmux")));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -679,5 +682,69 @@ test("backup cleanup succeeds when no batch is cleanable", () => {
     assert.ok(fs.existsSync(applying));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("apply aborts and rolls back when a merge target changed after planning", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-baseline-"));
+  const home = path.join(root, "home");
+  const first = path.join(root, "runtime", "first.txt");
+  const settings = path.join(root, "runtime", "settings.json");
+  try {
+    fs.mkdirSync(path.dirname(first), { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(first, "first-before\n");
+    fs.writeFileSync(settings, "{\"planned\":true}\n");
+    const baseline = fs.readFileSync(settings);
+    fs.writeFileSync(settings, "{\"planned\":true,\"addedByHarness\":true}\n");
+
+    assert.throws(
+      () => apply([
+        { kind: "write", destination: first, content: "first-after\n" },
+        { kind: "json-merge", destination: settings, content: "{\"planned\":true,\"managed\":1}\n", baseline },
+      ], home),
+      /changed after the sync plan was made.*runtime changes were rolled back/,
+    );
+    assert.equal(fs.readFileSync(first, "utf8"), "first-before\n");
+    assert.equal(fs.readFileSync(settings, "utf8"), "{\"planned\":true,\"addedByHarness\":true}\n");
+    assert.equal(inspectTransactions(home)[0].status, "rolled-back");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("invalid runtime JSON settings are refused instead of overwritten", () => {
+  const fixture = makeFixture();
+  try {
+    setupHarness(fixture, "claude");
+    const runtime = path.join(fixture.home, ".claude", "settings.json");
+    const broken = "{ \"permissions\": { \"allow\": [\"Bash(ls)\"] },\n";
+    fs.writeFileSync(runtime, broken);
+
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 2, sync.stderr || sync.stdout);
+    assert.match(sync.stderr, /is not valid JSON/);
+    assert.equal(fs.readFileSync(runtime, "utf8"), broken);
+
+    const doctor = runCli(fixture, ["doctor"]);
+    assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
+    assert.match(doctor.stdout, /FAIL.*is not valid JSON/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("setup home ignores an ambient CODEX_HOME", () => {
+  const fixture = makeFixture();
+  const ambientCodexHome = path.join(fixture.root, "ambient-codex");
+  try {
+    addExecutable(fixture, "codex");
+    const setup = runCli(fixture, ["setup", "--harness", "codex", "--yes"], { CODEX_HOME: ambientCodexHome });
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    assert.ok(!fs.existsSync(ambientCodexHome));
+    assert.ok(fs.existsSync(path.join(fixture.home, ".codex", "AGENTS.md")));
+    assert.ok(fs.existsSync(path.join(fixture.home, ".codex", "config.toml")));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
