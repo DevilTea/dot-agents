@@ -144,7 +144,7 @@ existing runtime state
         ← device-local override
 ```
 
-Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、project-specific entries、comment 或本機設定。
+Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、project-specific entries、comment 或本機設定。跨多行的 value（例如多行 array）會整段替換；runtime 以 dotted key 定義的 managed key 會沿用 dotted 形式。若 managed table 在 runtime 中被定義成 inline table 或 scalar，或 patch 後的結果無法通過 parse 驗證，sync／check 會在 mutation 前失敗，需人工修正 runtime 檔。
 
 Device-local override 放在：
 
@@ -215,9 +215,9 @@ dot-agents doctor         # canonical / sync / transaction diagnostics
 
 `./scripts/setup.sh` 是 `dot-agents setup` 的 bootstrap wrapper，適合剛 clone 下來、尚未有 global `dot-agents` launcher 的情境。互動 setup 沒有選擇旗標時會逐一詢問三個 harness；agent 應使用明確的 `--harness`／`--all` 搭配 `--yes`，避免依賴 TTY。
 
-Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
+Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。harness 未被選取或暫時不在 PATH（`SKIP`／`WAIT`）時，該 surface 的 ownership 紀錄會原樣保留，待 harness 再次可用時仍能清理期間被移除的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
 
-`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable。`gh` skill 由 `cli/cli` 官方來源維護，包含 Issue／PR／comment 的 `--attach` 圖片與影片附件操作，因此 agent 不需要每次重新研究 GitHub upload flow。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
+`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
 
 有異動時，既有 managed entry 會先移至：
 
@@ -276,7 +276,7 @@ Pending sync 與未完成 transaction 視為 `FAIL`。
 node --test tests/dot-agents.test.js
 ```
 
-測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge、override precedence、skill ownership cleanup、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup，不會修改真實 runtime。
+測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge（含多行 value、dotted key 與無法安全 patch 的拒絕）、override precedence、skill ownership cleanup（含 harness 暫時缺席與不安全的 ownership entry）、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup（含無可清除批次），不會修改真實 runtime。
 
 ## 日常操作
 
@@ -305,7 +305,7 @@ npx skills add <source> --skill <name> --agent openclaw --copy -y
 
 更新就是用同一條指令重跑。**不要使用 `npx skills update`** —— 它內部重新呼叫 `add` 但不帶 `--agent` 與 `--copy`，會依偵測結果在 repository 內另外建立 `.agents/skills/`、`.claude/skills/`，並改用 symlink。
 
-不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋。lockfile 的 `skillPath` 記錄的是 **來源 repository 內** 的路徑，不是本地路徑；本地位置一律是 `skills/<name>/`。三個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
+不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋。lockfile 的 `skillPath` 記錄的是 **來源 repository 內** 的路徑，不是本地路徑；本地位置一律是 `skills/<name>/`。兩個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
 
 哪些 skill 屬於外部來源以 `skills-lock.json` 為準，其餘為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈，不需在文件中複述清單。
 

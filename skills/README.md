@@ -12,17 +12,17 @@
 - Skill 內出現 Claude Code、Codex 或特定 tool syntax 時，應視為標示清楚的 integration section 或範例，而非全域 policy。
 - 保守遷移優先：除非已驗證替代方式，不為格式純粹而移除仍在使用的 adapter。
 
-目前已知 adapters：`agent-browser` 的部分 frontmatter 為 Claude Code metadata；`maintain-skill` 內有明確 Tool Mapping。未支援這些 adapter 的 harness 仍可使用其共通 playbook。
+目前已知 adapters：`agent-browser` frontmatter 的 `allowed-tools`、`hidden` 為 harness-specific 欄位；cmux 系列的 `agents/openai.yaml` 是 OpenAI／Codex 介面的 display metadata。未支援這些 adapter 的 harness 仍可使用其共通 playbook。
 
 ## Composition
 
-實際清單以此目錄的內容為準，不在文件中複述。Global skills 分兩類：本 repository 自行撰寫的，以及由外部來源安裝、provenance 記於 [`../skills-lock.json`](../skills-lock.json) 的（目前為 `agent-browser`、[`manaflow-ai/cmux`](https://github.com/manaflow-ai/cmux) 的 `cmux` 系列、[`cli/cli`](https://github.com/cli/cli) 的 `gh`、[`herdrdev/herdr`](https://github.com/herdrdev/herdr) 的 `herdr`，以及 [`dreambigou/eli5`](https://github.com/dreambigou/eli5) 的 `eli5`）。lockfile 未涵蓋者即為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈。
+實際清單以此目錄的內容為準，不在文件中複述。Global skills 分兩類：本 repository 自行撰寫的，以及由外部來源安裝、provenance 記於 [`../skills-lock.json`](../skills-lock.json) 的。lockfile 未涵蓋者即為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈。
 
 cmux 系列只安裝 end-user 導向的 skill（topology、workspace、browser、settings、diagnostics、customization 等）。針對 cmux 原始碼開發的 skill（architecture、backend、testing、release 等）不安裝：本機沒有 cmux 原始碼，它們永遠不會正確觸發，只會佔用每個 session 的 context 並稀釋 skill 選擇。同一標準適用於其他外部來源 —— 只安裝與實際使用情境相符的 skill，不整包引入。
 
 `cmux`／`cmux-*`、`gh`、`herdr`／`herdr-*` 都是 runtime-gated skills：`dot-agents sync` 只有在對應 executable 存在於 `PATH` 時才部署它們。`gh` skill 來自 GitHub CLI 官方 repository，固定保存 `gh` 的 agent 操作知識，包括 Issue／PR／comment 的 `--attach` 圖片與影片附件流程。Runtime 不可用時會列出被略過的 skill；若曾經部署過，sync 會透過 local ownership state 清理 stale copies，避免 runtime 消失後殘留不可用的 skill。
 
-Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)，也不會因 canonical source 少了一個 entry 就自動刪除目的地內容。
+Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)。canonical skill 移除後，sync 只會清理 local ownership state 記錄為 dot-agents 管理的 copy，不碰 harness 自己或使用者手動放置的 skill。
 
 ## Host-facing projection
 
@@ -32,4 +32,4 @@ Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](.
 ${XDG_DATA_HOME:-$HOME/.local/share}/dot-agents/skill-projection/v1/
 ```
 
-這份 projection 是 consumer-neutral 的本機介面，不是任何 harness 的 skill copy，也不建立 ChatGPT-specific 版本。它完整複製 `skills/<name>/`，並以 deterministic `catalog.json` 提供 discovery metadata；catalog 的 `source` 固定為 `dot-agents`，entrypoint 固定為 `SKILL.md`，每個 `hash` 都是整個 skill directory 的 `sha256:<digest>`。runtime gate 會套用，但 `dot-agents.json` 的 harness target restriction 不會套用。`name`／`description` frontmatter 若缺少、格式錯誤或與目錄名稱不一致，sync/check 會在 mutation 前失敗。
+runtime gate 會套用，但 `dot-agents.json` 的 harness target restriction 不會套用。`catalog.json` 格式、frontmatter 驗證與 stale cleanup 規則見 [root README](../README.md#host-facing-skill-projection)。
