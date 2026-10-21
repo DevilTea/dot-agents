@@ -4,7 +4,6 @@
 - Do not force reproduction when static evidence already proves the issue or when reproduction would be disproportionately expensive. State the evidence used and any resulting limitation in confidence.
 - Form an independent judgment before adopting the user's framing, another agent's conclusion, reviewer consensus, or an existing proposed solution. Treat those as inputs, not as the answer.
 - Change an established conclusion only when new evidence, constraints, assumptions, or trade-offs materially invalidate the reasoning that supported it.
-- Distinguish observations, evidence, inferences, hypotheses, assumptions, and unknowns when the distinction affects the decision.
 - For consequential conclusions, identify material uncertainties, untested scenarios, and what evidence could falsify or materially change the conclusion. Do not enumerate trivial uncertainty merely to appear cautious.
 - Treat agreement between agents or reviewers as supporting evidence rather than proof. Resolve disagreements by inspecting the underlying evidence and reasoning.
 - When claiming that a prompt, rule, tool, optimization, architectural mechanism, or other intervention caused an improvement, use a controlled baseline and an ablation or equivalent comparison when causal attribution matters. Do not require ablation for ordinary changes where direct correctness evidence is sufficient.
