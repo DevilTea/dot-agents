@@ -294,7 +294,7 @@ test("projection ignores harness target restrictions", () => {
     const setup = runCli(fixture, ["setup", "--none", "--yes"]);
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
     const catalog = JSON.parse(fs.readFileSync(path.join(projectionRoot(fixture), "catalog.json"), "utf8"));
-    assert.ok(catalog.skills.some((skill) => skill.name === "x-review"));
+    assert.ok(catalog.skills.some((skill) => skill.name === "model-routing"));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
