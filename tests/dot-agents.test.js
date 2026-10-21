@@ -8,7 +8,6 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 const { apply, inspectTransactions } = require("../lib/transaction");
-const { validateCodexRouting } = require("../lib/routing");
 
 const SOURCE_REPO = path.resolve(__dirname, "..");
 
@@ -475,34 +474,6 @@ test("selected but unavailable harness stays WAIT without materializing runtime"
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
-
-test("Codex routing validation reports verified and stale declarations", () => {
-  const fixture = makeFixture();
-  try {
-    const cachePath = path.join(fixture.home, ".codex", "models_cache.json");
-    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-    fs.writeFileSync(cachePath, JSON.stringify({
-      fetched_at: new Date().toISOString(),
-      models: [
-        { slug: "gpt-5.6-sol", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"].map((effort) => ({ effort })) },
-        { slug: "gpt-5.6-terra", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"].map((effort) => ({ effort })) },
-        { slug: "gpt-6-luna", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max"].map((effort) => ({ effort })) },
-      ],
-    }, null, 2));
-    const routingPath = path.join(fixture.repo, "skills", "model-routing", "references", "routing.yaml");
-    const valid = validateCodexRouting(routingPath, cachePath);
-    assert.equal(valid.warnings.length, 0);
-    assert.equal(valid.verified.length, 3);
-
-    const routing = fs.readFileSync(routingPath, "utf8").replace("id: gpt-6-luna", "id: gpt-6-missing");
-    fs.writeFileSync(routingPath, routing);
-    const stale = validateCodexRouting(routingPath, cachePath);
-    assert.ok(stale.warnings.some((message) => message.includes("gpt-6-missing")));
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true });
-  }
-});
-
 
 test("failure before backup never deletes the original runtime file", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-prebackup-"));

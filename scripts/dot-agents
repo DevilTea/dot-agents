@@ -17,7 +17,6 @@ const { spawnSync } = require("node:child_process");
 const { generatedAntigravity, generatedClaude, generatedCodex } = require("../lib/instructions");
 const { apply, inspectTransactions } = require("../lib/transaction");
 const { loadTomlObject, patchTomlText } = require("../lib/toml");
-const { validateCodexRouting } = require("../lib/routing");
 
 class RuntimeError extends Error {}
 
@@ -939,16 +938,6 @@ function runDoctor(repo, home, cfg) {
   } catch (error) {
     fail(error.message);
   }
-
-  section("Model routing");
-  const codexHome = absolutePath(process.env.CODEX_HOME || path.join(home, ".codex"));
-  const routing = validateCodexRouting(
-    path.join(repo, "skills", "model-routing", "references", "routing.yaml"),
-    path.join(codexHome, "models_cache.json"),
-  );
-  for (const message of routing.info) info(message);
-  for (const message of routing.verified) ok(`routing ${message}`);
-  for (const message of routing.warnings) warn(message);
 
   section("Skill lockfile");
   const lockPath = path.join(repo, "skills-lock.json");

@@ -9,4 +9,5 @@
 
 - Execute clear, low-risk tasks directly. Use the plan tool for multi-step, cross-file, or high-uncertainty work, and update it as steps complete.
 - Honor the active `sandbox_mode`, `approval_policy`, and network policy. Use the supported approval flow when an in-scope action requires it; never treat instruction files as authorization to bypass these controls. If approval is denied or unavailable, report the blocker.
-- Route delegated subagent work through the `model-routing` skill's table; `config.toml` `[agents]` only sets session defaults.
+- Delegated subagents use the `config.toml` `[agents]` defaults. Override `model` or `model_reasoning_effort` for a unit only when its task clearly needs a different tier.
+- Treat `gpt-6-astra` as reserved: use it only when the user explicitly asks. Judging a task hard does not authorize it; report the failure evidence and let the user decide.

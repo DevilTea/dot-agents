@@ -1,6 +1,6 @@
 ---
 name: model-routing
-description: Cross-harness model and reasoning-effort routing table. Use when delegating work to subagents, planning multi-agent runs, choosing a model or reasoning effort for a task, or configuring model defaults in Claude Code, Codex CLI, or Antigravity. Matches task nature to the cheapest adequate model/effort tier to avoid waste.
+description: Claude Code model and reasoning-effort routing table. Use when delegating work to subagents or workflow agents, planning multi-agent runs, choosing a model or effort for a task, or changing Claude Code model defaults. Matches task nature to the cheapest adequate model/effort tier to avoid waste.
 ---
 
 # Model Routing
@@ -15,13 +15,10 @@ Assign each unit of work the cheapest model/effort that is adequate for its task
 ## Procedure
 
 1. **Classify** each task unit into exactly one task class defined in `routing.yaml` (`task_classes` section). If a unit spans classes, split it into smaller units; if it cannot be split, use the most demanding class involved.
-2. **Look up** the assignment for the current harness under `harnesses.<harness>.assignments`. For a harness not in the table, apply the `principles` section and pick the nearest capability tier by analogy.
-3. **Apply** through the harness's own mechanism. Where a harness defaults a delegated agent to the caller's model, an omitted option is still a routing decision — set it explicitly whenever the caller sits above the task class.
-   - Claude Code: `model` / `effort` options on subagent or workflow-agent calls; `/model` for the main session. Omitting `model` inherits the main-loop model, so a fan-out launched from a high tier runs entirely at that tier.
-   - Codex CLI: `model` and `model_reasoning_effort` in `~/.codex/config.toml`, per-profile via `[profiles.<name>]` (`codex --profile <name>`), or subagent defaults under `[agents]`.
-   - Antigravity: model picker per conversation/agent.
+2. **Look up** the assignment under `assignments`.
+3. **Apply** through `model` / `effort` options on subagent or workflow-agent calls; use `/model` for the main session. Omitting `model` inherits the main-loop model, so a fan-out launched from a high tier runs entirely at that tier — set it explicitly whenever the caller sits above the task class.
 4. **Escalate on failure, don't loop.** If the assigned tier fails repeatedly on the same unit, escalate one step — effort first, then model — with the new evidence in the brief. If failure traces to an unclear spec, fix the spec instead: no effort level compensates for an unstated acceptance criterion.
-5. **Respect reserved tiers.** A tier the table marks reserved (see a harness's `policy` section) is outside the escalation path. Judging a task hard does not authorize it — run the unit at its assigned tier, then hand the user the failure evidence and let them decide.
+5. **Respect reserved tiers.** A tier the `policy` section marks reserved is outside the escalation path. Judging a task hard does not authorize it — run the unit at its assigned tier, then hand the user the failure evidence and let them decide.
 
 ## Output
 
@@ -29,4 +26,4 @@ For each delegated or configured unit, state the chosen (model, effort) and the 
 
 ## Maintaining the table
 
-Model lineups and effort ranges change. Before editing `routing.yaml`, verify slugs and supported effort levels against the harness's current model list (e.g. Codex `~/.codex/models_cache.json`, Claude Code `/model`, Antigravity picker). Keep model names and prices in the YAML only — `SKILL.md` stays lineup-agnostic.
+Model lineups and effort ranges change. Before editing `routing.yaml`, verify model IDs and supported effort levels against Claude Code's current model list (`/model`). Keep model names in the YAML only — `SKILL.md` stays lineup-agnostic.

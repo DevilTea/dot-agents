@@ -1,10 +1,10 @@
-# Cross-harness model / reasoning-effort routing table.
+# Claude Code model / reasoning-effort routing table.
 # Edit assignments here; SKILL.md stays lineup-agnostic.
-# Verify slugs and effort ranges against each harness's current model list
-# before editing (Codex: ~/.codex/models_cache.json; Claude Code: /model).
+# Verify model IDs and effort ranges against Claude Code's current model list
+# (/model) before editing.
 
-version: 2
-updated: "2026-09-23"
+version: 3
+updated: "2026-10-21"
 
 principles:
   - "Explicit user instruction and project policy override this table."
@@ -13,7 +13,7 @@ principles:
   - "On repeated failure, escalate one tier (effort first, then model) with new evidence; never retry unchanged at the same tier."
   - "Prefer the cheapest adequate tier; savings come from routing volume work down, not from starving hard work."
   - "A top-tier model reserved by policy is not escalation headroom: reaching for it requires the user's explicit request, not the router's own judgement that a task is hard."
-  - "Delegation inherits: where a harness defaults a subagent to the caller's model, an omitted model option is a routing decision — and the wrong one whenever the caller sits above the task class."
+  - "Delegation inherits: an omitted model option on a subagent or workflow agent runs it at the caller's model — a routing decision, and the wrong one whenever the caller sits above the task class."
 
 task_classes:
   orchestration:
@@ -38,135 +38,59 @@ task_classes:
     what: "Documentation, commit messages, summaries, routine prose."
     signals: "Language quality matters more than reasoning depth."
 
-harnesses:
-  claude-code:
-    models:
-      fable:
-        id: claude-fable-5
-        note: "top tier (Mythos-class); reserved — see policy.fable"
-      opus:
-        id: claude-opus-5
-      sonnet:
-        id: claude-sonnet-5
-      haiku:
-        id: claude-haiku-4-5
-    efforts: [low, medium, high, xhigh, max]
-    policy:
-      session_default:
-        model: opus
-        variant: "opus[1m]"
-        note: "settings.json default; switch to fable per-session via /model only when conducting an orchestration run"
-      fable:
-        reserved_for:
-          - "orchestration as the main session — planning, decomposition, cross-agent integration, final synthesis"
-          - "hard research the user explicitly asked fable to handle"
-        never_for: [implementation, review-verification, search-retrieval, mechanical, writing-docs]
-        escalation: "user-request only. Never self-authorize. When a unit exceeds its assigned tier, run it at that tier, then report the failure evidence and let the user decide."
-        inheritance_guard: >-
-          Agent and Workflow calls inherit the main-loop model when `model` is omitted.
-          While the main session is fable, every delegated unit must set `model` explicitly —
-          a workflow fanning out 15 agents with the option omitted runs all 15 on fable.
-    assignments:
-      orchestration:
-        model: fable
-        effort: high
-        note: "main session only, never a delegated unit; opus high when the session is not already fable"
-      deep-reasoning:
-        model: opus
-        effort: xhigh
-        note: "stays at opus even when hard or ambiguous; fable only on explicit user request"
-      implementation:
-        model: sonnet
-        effort: medium
-        note: "high for less familiar patterns"
-      review-verification:
-        model: sonnet
-        effort: high
-        note: "opus high for security-critical or final verify"
-      search-retrieval:
-        model: haiku
-        effort: low
-        note: "Explore agent; sonnet low if synthesis needed"
-      mechanical:
-        model: haiku
-        effort: low
-      writing-docs:
-        model: sonnet
-        effort: low
+models:
+  fable:
+    id: claude-fable-5-1
+    note: "top tier (Mythos-class); reserved — see policy.fable"
+  opus:
+    id: claude-opus-5-5
+  sonnet:
+    id: claude-sonnet-5-5
+  haiku:
+    id: claude-haiku-5-5
 
-  codex-cli:
-    models:
-      sol:
-        id: gpt-5.6-sol
-        efforts: [low, medium, high, xhigh, max, ultra]
-        pricing_per_mtok: { in: 5, out: 30 }
-      terra:
-        id: gpt-5.6-terra
-        efforts: [low, medium, high, xhigh, max, ultra]
-        pricing_per_mtok: { in: 2.5, out: 15 }
-      luna:
-        id: gpt-6-luna
-        efforts: [low, medium, high, xhigh, max]
-        pricing_per_mtok: { in: 0.1, out: 0.5 }
-    assignments:
-      orchestration:
-        model: sol
-        effort: high
-        note: "xhigh/ultra only for multi-hour agentic runs"
-      deep-reasoning:
-        model: luna
-        effort: max
-        note: "For well-scoped difficult tasks; use sol when judgment or ambiguity exceeds the task's bounds"
-      implementation:
-        model: luna
-        effort: xhigh
-        note: "terra medium when judgment calls are likely"
-      review-verification:
-        model: terra
-        effort: high
-        note: "sol high for security-critical"
-      search-retrieval:
-        model: luna
-        effort: low
-      mechanical:
-        model: luna
-        effort: low
-      writing-docs:
-        model: luna
-        effort: medium
-    apply:
-      default: "Set model / model_reasoning_effort in ~/.codex/config.toml."
-      per_task: "codex --profile <name> with a [profiles.<name>] block."
-      subagents: "[agents] default_subagent_model / default_subagent_reasoning_effort."
+efforts: [low, medium, high, xhigh, max]
 
-  antigravity:
-    # Model slugs verified with `agy models` on 2026-09-03.
-    # Policy: Gemini 3.8 Flash High executes local work. Large or complex tasks
-    # are NOT routed to this harness — hand them to Claude Code or Codex CLI.
-    models:
-      flash:
-        id: gemini-3.8-flash-high
-        efforts: [high]
-    assignments:
-      orchestration:
-        route_elsewhere: true
-        note: "use Claude Code or Codex CLI"
-      deep-reasoning:
-        route_elsewhere: true
-        note: "use Claude Code or Codex CLI"
-      implementation:
-        model: flash
-        effort: high
-        note: "small, well-specified changes only; otherwise route elsewhere"
-      review-verification:
-        route_elsewhere: true
-        note: "use Claude Code or Codex CLI"
-      search-retrieval:
-        model: flash
-        effort: high
-      mechanical:
-        model: flash
-        effort: high
-      writing-docs:
-        model: flash
-        effort: high
+policy:
+  session_default:
+    model: opus
+    variant: "opus[1m]"
+    note: "settings.json default; switch to fable per-session via /model only when conducting an orchestration run"
+  fable:
+    reserved_for:
+      - "orchestration as the main session — planning, decomposition, cross-agent integration, final synthesis"
+      - "hard research the user explicitly asked fable to handle"
+    never_for: [implementation, review-verification, search-retrieval, mechanical, writing-docs]
+    escalation: "user-request only. Never self-authorize. When a unit exceeds its assigned tier, run it at that tier, then report the failure evidence and let the user decide."
+    inheritance_guard: >-
+      Agent and Workflow calls inherit the main-loop model when `model` is omitted.
+      While the main session is fable, every delegated unit must set `model` explicitly —
+      a workflow fanning out 15 agents with the option omitted runs all 15 on fable.
+
+assignments:
+  orchestration:
+    model: fable
+    effort: high
+    note: "main session only, never a delegated unit; opus high when the session is not already fable"
+  deep-reasoning:
+    model: opus
+    effort: xhigh
+    note: "stays at opus even when hard or ambiguous; fable only on explicit user request"
+  implementation:
+    model: sonnet
+    effort: medium
+    note: "high for less familiar patterns"
+  review-verification:
+    model: sonnet
+    effort: high
+    note: "opus high for security-critical or final verify"
+  search-retrieval:
+    model: haiku
+    effort: low
+    note: "Explore agent; sonnet low if synthesis needed"
+  mechanical:
+    model: haiku
+    effort: low
+  writing-docs:
+    model: sonnet
+    effort: low

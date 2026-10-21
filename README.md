@@ -55,7 +55,6 @@
 │   └── antigravity/
 ├── lib/
 │   ├── instructions.js
-│   ├── routing.js
 │   ├── toml.js
 │   └── transaction.js
 ├── scripts/
@@ -71,7 +70,7 @@
 - `skills/` 是 global discovery set，見 [skills/README.md](./skills/README.md)。
 - `optional-skills/` 是 project opt-in catalog，只記錄來源與安裝方式、不 vendor skill 內容，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
-- `lib/` 保存 instruction generation、TOML handling、model-routing diagnostics 與 transactional apply 等 CLI 內部模組；`scripts/dot-agents` 保留 orchestration、planning 與 command surface。
+- `lib/` 保存 instruction generation、TOML handling 與 transactional apply 等 CLI 內部模組；`scripts/dot-agents` 保留 orchestration、planning 與 command surface。
 - `tests/` 使用 Node.js 內建 test runner，在 isolated temporary repo／HOME 下驗證 sync contract，不需要第三方 test dependency。
 - `skills-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它由 `npx skills` 維護，不是 prompt，也不是 portability contract。
 
@@ -209,7 +208,7 @@ dot-agents setup          # 重新逐一選擇三個 harness
 dot-agents setup --all --yes
 dot-agents update         # git pull --ff-only 後同步最新 canonical source
 dot-agents update --yes   # 同上，非互動套用 sync
-dot-agents doctor         # canonical / sync / routing / transaction diagnostics
+dot-agents doctor         # canonical / sync / transaction diagnostics
 ```
 
 `dot-agents update` 要求 canonical repository worktree 沒有未提交變更；remote pull 失敗或不是 fast-forward 時不會執行 sync，也不會自動解衝突。
@@ -260,7 +259,6 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 - `skills/` 是否缺少 `SKILL.md`；canonical skill tree 含 symlink 直接視為 `FAIL`
 - 是否有 pending sync
 - `skills-lock.json` 的每個 entry 是否都有對應的 `skills/<name>/SKILL.md`
-- Codex `model-routing` 宣告的 model／effort 是否仍存在於本機 `models_cache.json`，以及 cache 是否過舊
 - transaction journal 是否有 `prepared`／`applying`／`failed` 等未完成狀態
 - setup/sync backups 現況
 
@@ -268,7 +266,7 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 dot-agents doctor
 ```
 
-Pending sync 與未完成 transaction 視為 `FAIL`；model-routing capability mismatch 等可由本機 cache 新鮮度影響的項目視為 `WARN`。
+Pending sync 與未完成 transaction 視為 `FAIL`。
 
 ## Tests
 
@@ -278,7 +276,7 @@ Pending sync 與未完成 transaction 視為 `FAIL`；model-routing capability m
 node --test tests/dot-agents.test.js
 ```
 
-測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge、override precedence、skill ownership cleanup、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback、protected cleanup 與 model-routing validation，不會修改真實 runtime。
+測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge、override precedence、skill ownership cleanup、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup，不會修改真實 runtime。
 
 ## 日常操作
 
