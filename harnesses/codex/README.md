@@ -14,16 +14,16 @@ Canonical sources：[`AGENTS.md`](./AGENTS.md) 與 [`config.toml`](./config.toml
 
 `dot-agents sync` 依固定順序生成 `$CODEX_HOME/AGENTS.md`（`CODEX_HOME` 未設定、或設定了 `DOT_AGENTS_SETUP_HOME` 沙箱時，為該 home 下的 `.codex`）：
 
-1. `preferences/communication.md`
-2. `preferences/reasoning.md`
-3. `preferences/engineering.md`
-4. `harnesses/codex/AGENTS.md`
+1. `communication.md`、`reasoning.md`、`decisions.md`、`shopping.md`、`engineering.md` 的 Core 標記區段（固定順序）。
+2. `harnesses/codex/AGENTS.md`。
+
+`research.md` 不加入全域指示。詳細研究與購物規範由衍生的 `evidence-research`／`product-research` Skills 按需載入。
 
 若 `$CODEX_HOME/AGENTS.override.md` 存在，Codex 會忽略生成的 `AGENTS.md`；`check`／`sync`／`doctor` 會對此發出 WARN，不會代為刪除該檔。
 
 Canonical source 修改後先用 `dot-agents check` 查看 drift，再以 `dot-agents sync` materialize；新 instruction 只會在新的 Codex run／TUI session 建立 instruction chain 時載入。
 
-Personal skills 的官方位置是 `~/.agents/skills/`。`dot-agents sync` 將 `skills/<name>/` 完整 copy 到該位置，不使用 symlink，因此 repository 修改不會在未 sync 時偷偷改變執行中環境。
+Personal skills 的官方位置是 `~/.agents/skills/`。`dot-agents sync` 將一般 `skills/<name>/` 完整 copy 到該位置，並由 Canonical Preferences 產生兩個研究 Skill 的 `SKILL.md`，不使用 symlink。
 
 `harnesses/codex/config.toml` 保存跨裝置 shared defaults；目前管理 `model`、`model_reasoning_effort`、`approvals_reviewer`、`sandbox_mode`、`[agents]` 的 default subagent model/effort，以及 `[tui]` 的 status line 偏好。`dot-agents sync` 對 `~/.codex/config.toml` 做 key-level patch，不整份重寫，因此 canonical 未管理的 MCP、project-specific entries、comments 與其他本機設定會保留。`sandbox_mode = "danger-full-access"` 是明確的全域預設，會取消 Codex command sandbox；若不同裝置需要不同安全邊界，請移到 `~/.config/dot-agents/overrides/codex.toml`。裝置差異可放在該 override，且其 key precedence 高於 canonical。
 

@@ -2,7 +2,7 @@
 
 `dot-agents` 是個人 agent environment 的 source of truth。它集中保存：
 
-- portable communication preferences
+- portable communication, reasoning, decision, research, and shopping preferences
 - durable engineering principles
 - shared skills
 - harness-specific policies
@@ -31,6 +31,8 @@
 
 單向依賴：harness policy 可以引用 `preferences/`；`preferences/` 不知道任何 harness 的存在。
 
+全域指示採 **Thin Core + On-demand Skills**：五份 Preferences 的明確 Core 區段每次載入，`research.md` 及 `shopping.md` 的深入內容生成 `evidence-research`、`product-research` Skills。詳見 [preferences/README.md](./preferences/README.md)。Skill 能否自動觸發由 Harness 決定；必要授權與商品資格限制仍在 Core。
+
 ## Repository layout
 
 ```text
@@ -42,6 +44,9 @@
 │   ├── README.md
 │   ├── communication.md
 │   ├── reasoning.md
+│   ├── decisions.md
+│   ├── research.md
+│   ├── shopping.md
 │   └── engineering.md
 ├── skills/
 │   ├── README.md
@@ -67,7 +72,7 @@
 ```
 
 - `preferences/` 是跨 harness 的可攜 intent，見 [preferences/README.md](./preferences/README.md)。
-- `skills/` 是 global discovery set，見 [skills/README.md](./skills/README.md)。
+- `skills/` 提供一般 global skill source，另外有兩個由 Preferences 衍生的 Skills，見 [skills/README.md](./skills/README.md)。
 - `optional-skills/` 是 project opt-in catalog，只記錄來源與安裝方式、不 vendor skill 內容，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
 - `lib/` 保存 instruction generation、TOML handling 與 transactional apply 等 CLI 內部模組；`scripts/dot-agents` 保留 orchestration、planning 與 command surface。
@@ -92,18 +97,18 @@ materialized harness files / directories
 
 | 安裝位置 | 同步方式 | 來源 |
 | --- | --- | --- |
-| `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | `preferences/` ×3 + `harnesses/codex/AGENTS.md` |
+| `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | 五份 `preferences/` Core + `harnesses/codex/AGENTS.md` |
 | `$CODEX_HOME/config.toml` | managed TOML key merge | `harnesses/codex/config.toml` + local override + existing runtime config |
-| `~/.agents/skills/<name>` | copy | `skills/<name>` |
-| `$XDG_DATA_HOME/dot-agents/skill-projection/v1/skills/<name>` | copy | runtime-eligible `skills/<name>` |
+| `~/.agents/skills/<name>` | copy / generate | `skills/<name>` 或由 Preferences 衍生的研究 Skills |
+| `$XDG_DATA_HOME/dot-agents/skill-projection/v1/skills/<name>` | copy / generate | runtime-eligible `skills/<name>` 與兩個衍生 Skills |
 | `$XDG_DATA_HOME/dot-agents/skill-projection/v1/catalog.json` | generate | canonical skill frontmatter + tree digest |
-| `~/.claude/CLAUDE.md` | generate | `preferences/` ×3 + `harnesses/claude/CLAUDE.md` |
+| `~/.claude/CLAUDE.md` | generate | 五份 `preferences/` Core + `harnesses/claude/CLAUDE.md` |
 | `~/.claude/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
-| `~/.claude/skills/<name>` | copy | `skills/<name>` |
-| `~/.gemini/GEMINI.md` | generate | `preferences/` ×3 + `harnesses/antigravity/instructions.md` |
+| `~/.claude/skills/<name>` | copy / generate | 一般 `skills/<name>` 與兩個衍生 Skills |
+| `~/.gemini/GEMINI.md` | generate | 五份 `preferences/` Core + `harnesses/antigravity/instructions.md` |
 | `~/.gemini/antigravity-cli/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
-| `~/.gemini/antigravity-cli/skills/<name>` | copy | `skills/<name>` |
-| `~/.gemini/config/skills/<name>`（IDE） | copy | `skills/<name>` |
+| `~/.gemini/antigravity-cli/skills/<name>` | copy / generate | 一般 `skills/<name>` 與兩個衍生 Skills |
+| `~/.gemini/config/skills/<name>`（IDE） | copy / generate | 一般 `skills/<name>` 與兩個衍生 Skills |
 
 ### Host-facing skill projection
 
@@ -115,7 +120,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/dot-agents/skill-projection/v1/
 └── skills/<name>/...
 ```
 
-這是 agent-vm-mcp 與其他 host 可讀取的 consumer-neutral 發布介面；它不會建立 ChatGPT-specific skill copy，也不會分叉 `SKILL.md`。projection 只包含目前 runtime 可用的 canonical skills（`cmux`／`gh`／`herdr` 等既有 runtime gate 仍適用），但不套用 `dot-agents.json` 的 harness `targets` 限制，因此 `model-routing` 等 target-restricted skill 仍可出現在 projection。
+這是 agent-vm-mcp 與其他 host 可讀取的 consumer-neutral 發布介面；它不會建立 ChatGPT-specific skill copy，也不會分叉 Canonical Source。projection 包含符合 runtime gate 的一般 Skills，以及從 Preferences 生成的兩個研究 Skills。此處不套用 `dot-agents.json` 的 harness `targets` 限制，因此 `model-routing` 等 target-restricted Skill 仍可出現在 projection。
 
 `catalog.json` 是 deterministic v1 JSON，欄位如下：
 
@@ -134,7 +139,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/dot-agents/skill-projection/v1/
 }
 ```
 
-`skills` 依名稱排序；`hash` 是整個 canonical skill directory 的既有 deterministic tree digest，以 `sha256:<digest>` 表示。同步會驗證每個 `SKILL.md` 的標準 frontmatter `name`／`description`，缺少、格式錯誤或與目錄名稱不一致時會在任何 runtime mutation 前失敗。projection 的 skill ownership 會記錄在 local sync state；因此 canonical skill 移除或 runtime gate 關閉後，sync 只會清理先前由 dot-agents 管理的 projection skill，不會刪除其他檔案。
+`skills` 依名稱排序；`hash` 是 deterministic skill tree digest，對一般 Skill 使用 Canonical Source 目錄，對衍生 Skill 則依生成的單一 `SKILL.md` 計算（格式相容）。一般 Skill 的 frontmatter `name`／`description` 在寫入前驗證，兩個衍生 Skill 的 metadata 由固定的程式定義生成。projection ownership 保存在 local sync state，移除 stale copies 時只處理 dot-agents 管理的 Skill。
 
 Managed settings merge 的 precedence：
 
@@ -215,7 +220,7 @@ dot-agents doctor         # canonical / sync / transaction diagnostics
 
 `./scripts/setup.sh` 是 `dot-agents setup` 的 bootstrap wrapper，適合剛 clone 下來、尚未有 global `dot-agents` launcher 的情境。互動 setup 沒有選擇旗標時會逐一詢問三個 harness；agent 應使用明確的 `--harness`／`--all` 搭配 `--yes`，避免依賴 TTY。
 
-Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。Skill deployment 採完整 directory copy；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。harness 未被選取或暫時不在 PATH（`SKIP`／`WAIT`）時，該 surface 的 ownership 紀錄會原樣保留，待 harness 再次可用時仍能清理期間被移除的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
+Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。一般 Skill deployment 採完整 directory copy；Preferences 衍生的 Skills 使用原子寫入；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。harness 未被選取或暫時不在 PATH（`SKIP`／`WAIT`）時，該 surface 的 ownership 紀錄會原樣保留，待 harness 再次可用時仍能清理期間被移除的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
 
 `cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable；`agent-browser` skill 要求 `agent-browser` executable（只靠 `npx agent-browser` 執行時不會部署）。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
 
@@ -278,12 +283,12 @@ Pending sync 與未完成 transaction 視為 `FAIL`。
 node --test tests/dot-agents.test.js
 ```
 
-測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 materialization drift、JSON/TOML merge（含多行 value、dotted key、無法安全 patch 與不合法 runtime JSON 的拒絕）、plan 後 runtime 變動的中止、`CODEX_HOME` 隔離、override precedence、skill ownership cleanup（含 harness 暫時缺席與不安全的 ownership entry）、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup（含無可清除批次），不會修改真實 runtime。
+測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 Thin Core／衍生 Skill 分離、生成 Skill 驗證與安全拒絕、materialization drift、JSON/TOML merge（含多行 value、dotted key、無法安全 patch 與不合法 runtime JSON 的拒絕）、plan 後 runtime 變動的中止、`CODEX_HOME` 隔離、override precedence、skill ownership cleanup（含 harness 暫時缺席與不安全的 ownership entry）、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup（含無可清除批次），不會修改真實 runtime。
 
 ## 日常操作
 
-**改 communication／engineering preference**
-編輯 `preferences/*.md`，再執行 `dot-agents check`／`dot-agents sync`。三個 instruction 檔都由它們組合而成。
+**修改 Canonical Preferences 與衍生 Skills**
+編輯 `preferences/*.md`，再執行 `dot-agents check`／`dot-agents sync`。只有標記的 Core 進入三套全域指示；研究與購物的詳細內容更新相應 Skill。其他四份規則的 Core 外詳述已明確標記為 `Detailed reference (not deployed)`：單獨修改該段不會影響 Runtime 或觸發 drift。欲讓規則生效，請修改 Core 或經核准後建立適當的 Skill。
 
 **改某個 harness 的 policy**
 編輯 `harnesses/<harness>/AGENTS.md`／`CLAUDE.md`／`instructions.md`，再執行 `dot-agents check`／`dot-agents sync`。只影響該 harness。
@@ -309,7 +314,7 @@ npx skills add <source> --skill <name> --agent openclaw --copy -y
 
 不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋。lockfile 的 `skillPath` 記錄的是 **來源 repository 內** 的路徑，不是本地路徑；本地位置一律是 `skills/<name>/`。兩個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
 
-哪些 skill 屬於外部來源以 `skills-lock.json` 為準，其餘為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈，不需在文件中複述清單。
+一般 Skills 以 `skills-lock.json` 辨識外部來源，其餘 Repository `skills/` 內容為本地撰寫；兩個由 Preferences 產生的研究 Skill 則不屬於上述任何實體來源目錄。
 
 **移除 skill**
 刪除 `skills/<name>/`（外部來源者一併處理 lockfile entry）。曾由 dot-agents sync 管理的 deployment copy 會由 local ownership state 辨識，下一次 `sync` 自動移除。
@@ -321,7 +326,9 @@ npx skills add <source> --skill <name> --agent openclaw --copy -y
 
 | 類型 | 可攜性 |
 | --- | --- |
-| communication preferences | 高 |
+| communication and reasoning preferences | 高 |
+| decisions and research principles | 中高 |
+| shopping preferences (relevant physical-product tasks) | 中高 |
 | engineering principles | 中高 |
 | skill semantics | 中高 |
 | skill invocation | 不保證 |
@@ -334,9 +341,9 @@ Project-local instructions 可以補充或覆蓋個人偏好。實際 precedence
 
 本 repository 由早期的單一 `AGENTS.md` 加 Claude 專屬 setup 演進而來。主要決定：
 
-- 通用語氣與工程原則拆到 `preferences/`；execution、validation、reporting 等依 harness 能力拆到 `harnesses/<harness>/`。
+- 共通溝通、推理、決策、研究、購物偏好與工程原則拆到 `preferences/`；execution、tool-specific interaction、model routing 等依 harness 能力拆到 `harnesses/<harness>/`。
 - `scripts/setup-claude.sh` 曾由多 harness `scripts/setup.sh` 取代；目前以 `dot-agents setup` 作為 bootstrap，日常則使用 explicit `dot-agents check`／`dot-agents sync`。
-- 所有 harness deployment 都不再 symlink 回 repository；instructions generate、skills materialize copy、mutable JSON settings 採 managed merge。
+- 所有 harness deployment 都不再 symlink 回 repository；Always-on instructions 從精簡 Core 生成，一般 Skills 採 directory copy，衍生 Skills 採 file generation，mutable JSON settings 採 managed merge。
 - Pi CLI 與 Node.js extension 不恢復；目前 `dot-agents` 只是 repository-local sync CLI，不是 agent framework 或發布套件。
 
 細節可由 git history 復原。

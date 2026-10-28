@@ -14,7 +14,7 @@ const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
-const { generatedAntigravity, generatedClaude, generatedCodex } = require("../lib/instructions");
+const { CORE_FILES, GENERATED_SKILLS, PREFERENCE_FILES, generatedAntigravity, generatedClaude, generatedCodex, generatedCore, generatedSkill } = require("../lib/instructions");
 const { apply, inspectTransactions, snapshotBytes } = require("../lib/transaction");
 const { loadTomlObject, parseToml, patchTomlText } = require("../lib/toml");
 
@@ -105,6 +105,8 @@ function isSymlink(file) {
   }
 }
 
+// Identify the repository by its stable legacy signature; plan() and doctor()
+// separately validate the complete PREFERENCE_FILES list for actionable missing-file diagnostics.
 function looksLikeRepo(repo) {
   return (
     isFile(path.join(repo, "preferences", "communication.md")) &&
@@ -277,11 +279,22 @@ function treeDigest(root) {
   return digest.digest("hex");
 }
 
-function skillNames(repo) {
+function isGeneratedSkill(name) {
+  return Object.hasOwn(GENERATED_SKILLS, name);
+}
+
+function physicalSkillNames(repo) {
   return fs.readdirSync(path.join(repo, "skills"), { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && isFile(path.join(repo, "skills", entry.name, "SKILL.md")))
-    .map((entry) => entry.name)
-    .sort();
+    .map((entry) => entry.name);
+}
+
+function skillNames(repo) {
+  const physical = physicalSkillNames(repo);
+  const derived = Object.keys(GENERATED_SKILLS);
+  const collisions = physical.filter((name) => derived.includes(name));
+  if (collisions.length) throw new RuntimeError(`generated skill name collides with skills/: ${collisions.join(", ")}`);
+  return [...physical, ...derived].sort();
 }
 
 function surfaceHarness(surface) {
@@ -294,6 +307,10 @@ function skillTargetMap(repo, names) {
   const targets = new Map();
   for (const name of names) {
     const metadataPath = path.join(repo, "skills", name, "dot-agents.json");
+    if (Object.prototype.hasOwnProperty.call(GENERATED_SKILLS, name)) {
+      targets.set(name, new Set(HARNESS_NAMES));
+      continue;
+    }
     if (!pathExists(metadataPath)) {
       targets.set(name, new Set(HARNESS_NAMES));
       continue;
@@ -483,15 +500,49 @@ function skillFrontmatter(file, expectedName) {
   return { name, description };
 }
 
+function generatedSkillDigest(content) {
+  // Matches treeDigest() for a directory containing only SKILL.md.
+  const digest = crypto.createHash("sha256");
+  digest.update("F\0SKILL.md\0");
+  digest.update(content);
+  digest.update("\0");
+  return digest.digest("hex");
+}
+
+function planGeneratedSkill(actions, repo, destination, name, label) {
+  if (pathExists(destination)) {
+    if (isSymlink(destination) || !isDirectory(destination)) {
+      throw new RuntimeError(`generated skill target must be a real directory: ${destination}`);
+    }
+    const extras = fs.readdirSync(destination).filter((entry) => entry !== "SKILL.md");
+    if (extras.length) throw new RuntimeError(`generated skill target contains unmanaged files: ${destination}: ${extras.join(", ")}`);
+  }
+  const skillFile = path.join(destination, "SKILL.md");
+  if (pathExists(skillFile) && (!isFile(skillFile) || isSymlink(skillFile))) {
+    throw new RuntimeError(`generated skill target SKILL.md must be a regular file: ${skillFile}`);
+  }
+  const content = contentBuffer(generatedSkill(repo, name));
+  const current = logicalFileBytes(skillFile);
+  if (!current || !current.equals(content)) actions.push(new Action("write", skillFile, label, { content }));
+}
+
 function skillProjectionCatalog(repo, names) {
   return {
     version: 1,
     source: "dot-agents",
     skills: names.map((name) => {
-      const source = path.join(repo, "skills", name);
-      const metadata = skillFrontmatter(path.join(source, "SKILL.md"), name);
-      const digest = treeDigest(source);
-      if (!digest) throw new RuntimeError(`canonical skill source is not a directory: ${source}`);
+      let metadata;
+      let digest;
+      if (isGeneratedSkill(name)) {
+        const content = generatedSkill(repo, name);
+        metadata = { name, description: GENERATED_SKILLS[name].description };
+        digest = generatedSkillDigest(content);
+      } else {
+        const source = path.join(repo, "skills", name);
+        metadata = skillFrontmatter(path.join(source, "SKILL.md"), name);
+        digest = treeDigest(source);
+        if (!digest) throw new RuntimeError(`canonical skill source is not a directory: ${source}`);
+      }
       return {
         name: metadata.name,
         description: metadata.description,
@@ -512,8 +563,12 @@ function planSkillProjection(actions, repo, root, names, previouslyManaged) {
   if (pathExists(skillsRoot) && (isSymlink(skillsRoot) || !isDirectory(skillsRoot))) throw new RuntimeError(`skill projection skills path must be a real directory: ${skillsRoot}`);
   const catalog = skillProjectionCatalog(repo, names);
   for (const name of names) {
-    const source = path.join(repo, "skills", name);
     const destination = path.join(skillsRoot, name);
+    if (isGeneratedSkill(name)) {
+      planGeneratedSkill(actions, repo, destination, name, `skill projection ${name}`);
+      continue;
+    }
+    const source = path.join(repo, "skills", name);
     if (treeDigest(source) !== treeDigest(destination)) actions.push(new Action("copy-tree", destination, `skill projection ${name}`, { source }));
   }
   if (Array.isArray(previouslyManaged)) {
@@ -546,9 +601,7 @@ function plan(repo, home, cfg, options = {}) {
   }
   const wantsHarness = (name) => selectedHarnesses === null || selectedHarnesses.includes(name);
   const required = [
-    path.join(repo, "preferences", "communication.md"),
-    path.join(repo, "preferences", "reasoning.md"),
-    path.join(repo, "preferences", "engineering.md"),
+    ...PREFERENCE_FILES.map((file) => path.join(repo, "preferences", file)),
     path.join(repo, "harnesses", "codex", "AGENTS.md"),
     path.join(repo, "harnesses", "codex", "config.toml"),
     path.join(repo, "harnesses", "claude", "CLAUDE.md"),
@@ -558,6 +611,7 @@ function plan(repo, home, cfg, options = {}) {
   ];
   const missing = required.filter((file) => !isFile(file));
   if (missing.length) throw new RuntimeError(`canonical source missing:\n  ${missing.join("\n  ")}`);
+  generatedCore(repo); // Validate all five core marker sections even with no selected harness.
 
   const repoPointer = path.join(cfg, "repo");
   const pointerContent = Buffer.from(`${repo}\n`);
@@ -570,7 +624,7 @@ function plan(repo, home, cfg, options = {}) {
 
   const installedSurfaces = {};
   const names = syncSkillNames(repo, notes);
-  const sourceSymlinks = names.flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
+  const sourceSymlinks = names.filter((name) => !isGeneratedSkill(name)).flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
   if (sourceSymlinks.length) {
     throw new RuntimeError(`canonical skill source must not contain symlinks: ${sourceSymlinks.slice(0, 10).join(", ")}`);
   }
@@ -633,8 +687,12 @@ function plan(repo, home, cfg, options = {}) {
   for (const [surface, root] of Object.entries(installedSurfaces)) {
     const surfaceNames = names.filter((name) => targets.get(name).has(surfaceHarness(surface)));
     for (const name of surfaceNames) {
-      const source = path.join(repo, "skills", name);
       const destination = path.join(root, name);
+      if (isGeneratedSkill(name)) {
+        planGeneratedSkill(actions, repo, destination, name, `${surface} generated skill ${name}`);
+        continue;
+      }
+      const source = path.join(repo, "skills", name);
       if (treeDigest(source) !== treeDigest(destination)) actions.push(new Action("copy-tree", destination, `${surface} skill ${name}`, { source }));
     }
     const previouslyManaged = previousSkills[surface];
@@ -886,9 +944,7 @@ function runDoctor(repo, home, cfg) {
 
   section("Canonical sources");
   const required = [
-    "preferences/communication.md",
-    "preferences/reasoning.md",
-    "preferences/engineering.md",
+    ...PREFERENCE_FILES.map((file) => `preferences/${file}`),
     "harnesses/codex/AGENTS.md",
     "harnesses/codex/config.toml",
     "harnesses/claude/CLAUDE.md",
@@ -949,10 +1005,18 @@ function runDoctor(repo, home, cfg) {
   }
 
   section("Skills canonical set");
-  const names = skillNames(repo);
+  let names;
+  try {
+    names = skillNames(repo);
+  } catch (error) {
+    fail(error.message);
+    // Keep doctor diagnostics available even when generated names collide.
+    names = physicalSkillNames(repo);
+  }
   const brokenDirs = fs.readdirSync(path.join(repo, "skills"), { withFileTypes: true }).filter((entry) => entry.isDirectory() && !isFile(path.join(repo, "skills", entry.name, "SKILL.md"))).map((entry) => entry.name).sort();
   for (const name of brokenDirs) fail(`skills/${name} is missing SKILL.md`);
-  ok(`skills/ has ${names.length} installable skill(s)`);
+  const derived = names.filter(isGeneratedSkill);
+  ok(`skills/ has ${names.length - derived.length} source skill(s); ${derived.length} preference-derived skill(s): ${derived.join(", ")}`);
   try {
     const targets = skillTargetMap(repo, names);
     const restricted = names.filter((name) => targets.get(name).size < HARNESS_NAMES.length).map((name) => `${name} (${[...targets.get(name)].join(", ")})`);
@@ -961,7 +1025,7 @@ function runDoctor(repo, home, cfg) {
   } catch (error) {
     fail(error.message);
   }
-  const sourceSymlinks = names.flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
+  const sourceSymlinks = names.filter((name) => !isGeneratedSkill(name)).flatMap((name) => collectSymlinks(path.join(repo, "skills", name), path.join("skills", name)));
   if (sourceSymlinks.length) fail(`skill source contains forbidden symlink(s): ${sourceSymlinks.slice(0, 5).join(", ")}`);
   else ok("skill source contains no symlinks");
 
@@ -995,7 +1059,7 @@ function runDoctor(repo, home, cfg) {
         if (missing.length) fail(`lockfile entries without skills/<name>/SKILL.md: ${missing.join(", ")}`);
         else ok(`lockfile manages ${Object.keys(entries).length} external skill(s) under skills/`);
         const managed = new Set(Object.keys(entries));
-        const local = names.filter((name) => !managed.has(name));
+        const local = names.filter((name) => !isGeneratedSkill(name) && !managed.has(name));
         if (local.length) info(`local/non-lockfile skills: ${local.join(", ")}`);
       }
     } catch (error) {

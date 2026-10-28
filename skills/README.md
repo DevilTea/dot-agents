@@ -4,9 +4,11 @@
 
 不同 harness 可能有不同的 discovery、invocation、frontmatter、arguments、tools、subagents 與 output schema。使用 skill 的原則是「能實質協助目前任務時使用」；基本正確性不能依賴 skill 是否成功被自動發現。
 
+購物推薦資格與必要授權邊界已保留在 Always-on Core。Skill 是否被自動選用由各 Harness 決定，不因安裝成功就能宣稱已套用詳細流程。
+
 ## Portability notes
 
-- 每個 skill 以 `<name>/SKILL.md` 為入口；references、scripts、assets 與 agents 是該 skill 的附屬資源。
+- 一般 Skill 以 `skills/<name>/SKILL.md` 為來源；兩個 Preferences 衍生 Skill 在 sync 時產生 Runtime 的 `<name>/SKILL.md`，不在 Repository 另存可編輯副本。
 - `name`、`description` 是目前各 harness 最穩定的共同 metadata。
 - 額外 frontmatter 或明確工具名稱可能是 harness adapter。其他 harness 應忽略不支援的欄位，或依能力採等價流程。
 - Skill 內出現 Claude Code、Codex 或特定 tool syntax 時，應視為標示清楚的 integration section 或範例，而非全域 policy。
@@ -16,7 +18,7 @@
 
 ## Composition
 
-實際清單以此目錄的內容為準，不在文件中複述。Global skills 分兩類：本 repository 自行撰寫的，以及由外部來源安裝、provenance 記於 [`../skills-lock.json`](../skills-lock.json) 的。lockfile 未涵蓋者即為本地撰寫；`dot-agents doctor` 會列出兩者的實際分佈。
+發布清單包含此目錄中的本地／外部 Skills，以及由 [`../preferences/`](../preferences/) 衍生的 `evidence-research`、`product-research`。兩個衍生 Skill 不在本目錄保存另一份來源，而是在同步時直接生成 `SKILL.md`，納入既有的 drift、ownership 與 projection 管理。外部來源 provenance 由 [`../skills-lock.json`](../skills-lock.json) 保存。
 
 cmux 系列只安裝 end-user 導向的 skill（topology、workspace、browser、settings、diagnostics、customization 等）。針對 cmux 原始碼開發的 skill（architecture、backend、testing、release 等）不安裝：本機沒有 cmux 原始碼，它們永遠不會正確觸發，只會佔用每個 session 的 context 並稀釋 skill 選擇。同一標準適用於其他外部來源 —— 只安裝與實際使用情境相符的 skill，不整包引入。
 

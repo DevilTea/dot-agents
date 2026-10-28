@@ -7,7 +7,7 @@ Canonical sources：
 
 Claude Code 官方支援 user instructions `~/.claude/CLAUDE.md` 與 personal skills `~/.claude/skills/<name>/SKILL.md`。
 
-`dot-agents sync` 生成完整的 `~/.claude/CLAUDE.md`，依序 materialize `communication`、`reasoning`、`engineering` preferences 與 Claude-specific policy。Runtime instructions 不引用 canonical repository，因此 preference 變更會由 `dot-agents check` 偵測為 drift，並只在下一次 explicit `sync` 套用。Skills 同樣 materialize copy 到 `~/.claude/skills/<name>/`。
+`dot-agents sync` 生成精簡的 `~/.claude/CLAUDE.md`：五份 Canonical Preferences 的 Core 標記區段，再接上 Claude-specific policy；不把六份全文複製進 Always-on。研究與購物細則由同一來源產生 `evidence-research`、`product-research` Skills。`dot-agents check` 偵測 Core 或 Skills drift，僅在 explicit `sync` 後更新相應 Runtime 輸出。一般 Skills 以目錄複製，衍生 Skills 以生成 `SKILL.md` 的方式 materialize。
 
 `settings.json` 採 managed JSON merge，不整份覆寫 runtime：canonical settings 先與 `~/.config/dot-agents/overrides/claude-settings.json` recursive merge，再覆蓋對應 runtime key；Claude 自己新增、但 dot-agents 沒有管理的未知 key 會保留。這使 device-specific override 與 harness-owned runtime state 可以共存。
 

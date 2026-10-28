@@ -8,6 +8,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 const { parseToml } = require("../lib/toml");
+const { CORE_FILES, GENERATED_SKILLS, coreSection, generatedSkill } = require("../lib/instructions");
 const { apply, inspectTransactions } = require("../lib/transaction");
 
 const SOURCE_REPO = path.resolve(__dirname, "..");
@@ -94,22 +95,258 @@ test("Claude instructions are materialized and preference drift is detectable", 
 
     const target = path.join(fixture.home, ".claude", "CLAUDE.md");
     const generated = fs.readFileSync(target, "utf8");
-    const communication = fs.readFileSync(path.join(fixture.repo, "preferences", "communication.md"), "utf8").trim();
-    const reasoning = fs.readFileSync(path.join(fixture.repo, "preferences", "reasoning.md"), "utf8").trim();
-    const engineering = fs.readFileSync(path.join(fixture.repo, "preferences", "engineering.md"), "utf8").trim();
-
     assert.match(generated, /Generated from dot-agents/);
-    assert.ok(generated.includes(communication));
-    assert.ok(generated.includes(reasoning));
-    assert.ok(generated.includes(engineering));
+    for (const name of CORE_FILES) {
+      const source = fs.readFileSync(path.join(fixture.repo, "preferences", name), "utf8");
+      assert.ok(generated.includes(coreSection(source, name)), `${name} core must be present`);
+      assert.ok(!generated.includes(source.trim()), `${name} full preference must not be always-on`);
+    }
     assert.ok(!generated.includes(`@${fixture.repo}/preferences/`));
 
-    fs.appendFileSync(path.join(fixture.repo, "preferences", "communication.md"), "\n- regression drift token\n");
+    const communication = path.join(fixture.repo, "preferences", "communication.md");
+    const original = fs.readFileSync(communication, "utf8");
+    fs.writeFileSync(communication, original.replace("<!-- dot-agents:core:end -->", "- regression core change token\n<!-- dot-agents:core:end -->"));
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
     assert.match(check.stdout, /Claude Code global instructions/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("every harness receives only marked core preferences, detects skill drift, and rejects missing sources", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude", "agy"]) addExecutable(fixture, executable);
+    const setup = runCli(fixture, ["setup", "--all", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+
+    const names = CORE_FILES;
+    const outputs = [
+      path.join(fixture.home, ".codex", "AGENTS.md"),
+      path.join(fixture.home, ".claude", "CLAUDE.md"),
+      path.join(fixture.home, ".gemini", "GEMINI.md"),
+    ];
+    const originalOutputs = [];
+    for (const output of outputs) {
+      const generated = fs.readFileSync(output, "utf8");
+      originalOutputs.push(generated);
+      let previous = -1;
+      for (const name of names) {
+        const source = fs.readFileSync(path.join(fixture.repo, "preferences", name), "utf8");
+        const offset = generated.indexOf(coreSection(source, name));
+        assert.ok(offset > previous, `${name} core must appear in order in ${output}`);
+        previous = offset;
+      }
+    }
+
+    const shopping = path.join(fixture.repo, "preferences", "shopping.md");
+    fs.appendFileSync(shopping, "\n- regression new preference token\n");
+    const drift = runCli(fixture, ["check"]);
+    assert.equal(drift.status, 1, drift.stderr || drift.stdout);
+    assert.match(drift.stdout, /Pending sync/);
+    for (const [index, output] of outputs.entries()) {
+      assert.equal(fs.readFileSync(output, "utf8"), originalOutputs[index], "check must not modify runtime");
+    }
+
+    const research = path.join(fixture.repo, "preferences", "research.md");
+    fs.rmSync(research);
+    const invalid = runCli(fixture, ["sync", "--yes"]);
+    assert.notEqual(invalid.status, 0, "missing preference must fail before mutation");
+    for (const [index, output] of outputs.entries()) {
+      assert.equal(fs.readFileSync(output, "utf8"), originalOutputs[index], "failed sync must not modify runtime");
+    }
+    const doctor = runCli(fixture, ["doctor"]);
+    assert.notEqual(doctor.status, 0);
+    assert.match(doctor.stdout, /research.md missing/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("essential preference contracts survive Thin Core compression", () => {
+  const core = require("../lib/instructions").generatedCore(SOURCE_REPO);
+  const expectations = [
+    [/Taiwan Traditional Chinese/, "Taiwan language"],
+    [/Status: done \| partial \| blocked \| unverified/, "four status states"],
+    [/context compaction/, "long-running work state"],
+    [/True Decision/, "classification"],
+    [/out-of-scope edits, commit, push, deployment, or merge/, "authorization"],
+    [/material strategic decision-making influence/, "PRC control"],
+    [/non-controlling minority investment/, "non-controlling investment"],
+    [/cannot be reasonably verified/, "unverified brand exclusion"],
+    [/without the user's request/, "Node and shell default without mandatory Python"],
+    [/destructive operations visible before execution/, "destructive visibility"],
+    [/revise repeated failures/, "failure hypothesis revision"],
+    [/add\/update regression tests/, "regression tests for behavior changes"],
+    [/Visual inspection cannot replace executable checks/, "executable verification"],
+    [/code review as read-only/, "read-only review"],
+  ];
+  for (const [pattern, label] of expectations) {
+    assert.match(core, pattern, label);
+  }
+  assert.ok(!core.includes("P01 — Local availability and support"));
+  assert.ok(!core.includes("For laws, regulations, standards"));
+});
+
+test("inactive reference material is explicitly labeled and cannot accidentally affect runtime", () => {
+  const names = ["communication.md", "reasoning.md", "decisions.md", "engineering.md"];
+  for (const name of names) {
+    const source = fs.readFileSync(path.join(SOURCE_REPO, "preferences", name), "utf8");
+    assert.match(source, /## Detailed reference \(not deployed\)/);
+    assert.ok(source.indexOf("## Detailed reference (not deployed)") > source.indexOf("<!-- dot-agents:core:end -->"));
+    assert.ok(source.includes("editing this reference alone does not cause runtime drift"));
+  }
+
+  const fixture = makeFixture();
+  try {
+    setupHarness(fixture, "claude");
+    const globalPath = path.join(fixture.home, ".claude", "CLAUDE.md");
+    const generatedBefore = fs.readFileSync(globalPath, "utf8");
+    const source = path.join(fixture.repo, "preferences", "engineering.md");
+    fs.appendFileSync(source, "\n- future reference idea, not yet active\n");
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 0, check.stderr || check.stdout);
+    assert.equal(fs.readFileSync(globalPath, "utf8"), generatedBefore);
+    assert.ok(!generatedBefore.includes("future reference idea"));
+  } finally {
+    fs.rmSync(fixture.root, {recursive: true, force: true});
+  }
+});
+
+test("research and product skills preserve unknown vs absent and evidence-limited comparisons", () => {
+  const research = generatedSkill(SOURCE_REPO, "evidence-research");
+  const shopping = generatedSkill(SOURCE_REPO, "product-research");
+  assert.match(research, /unknown or undocumented/);
+  assert.match(research, /verified absence/);
+  assert.match(shopping, /unverified warranty remains \*\*unknown\*\*/);
+  assert.match(shopping, /does not prove that a product is best overall/);
+  const core = require("../lib/instructions").generatedCore(SOURCE_REPO);
+  assert.ok(!core.includes("unverified warranty remains"));
+  assert.ok(!core.includes("unknown or undocumented"));
+});
+
+test("doctor labels generated and repository skills separately", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const doctor = runCli(fixture, ["doctor"]);
+    assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
+    assert.match(doctor.stdout, /2 preference-derived skill\(s\): evidence-research, product-research/);
+    assert.doesNotMatch(doctor.stdout, /local\/non-lockfile skills:.*evidence-research/);
+  } finally {
+    fs.rmSync(fixture.root, {recursive: true, force: true});
+  }
+});
+
+test("generated skills deploy to all selected harnesses and respond to non-core edits without changing core", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude", "agy"]) addExecutable(fixture, executable);
+    const setup = runCli(fixture, ["setup", "--all", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+
+    const targets = [
+      path.join(projectionRoot(fixture), "skills", "product-research", "SKILL.md"),
+      path.join(fixture.home, ".agents", "skills", "product-research", "SKILL.md"),
+      path.join(fixture.home, ".claude", "skills", "product-research", "SKILL.md"),
+      path.join(fixture.home, ".gemini", "antigravity-cli", "skills", "product-research", "SKILL.md"),
+    ];
+    const baselines = targets.map((target) => fs.readFileSync(target, "utf8"));
+    const originalGlobal = fs.readFileSync(path.join(fixture.home, ".codex", "AGENTS.md"), "utf8");
+    assert.ok(originalGlobal.includes("material strategic decision-making influence"));
+    assert.ok(originalGlobal.includes("Do not treat a draft"));
+    assert.ok(!originalGlobal.includes("P01 — Local availability and support"));
+    assert.ok(!originalGlobal.includes("For laws, regulations, standards"));
+
+    const source = path.join(fixture.repo, "preferences", "shopping.md");
+    fs.appendFileSync(source, "\n- Verify the product review after each significant new source.\n");
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 1, check.stderr || check.stdout);
+    assert.match(check.stdout, /product-research/);
+    assert.doesNotMatch(check.stdout, /Codex global instructions|Claude Code global instructions|Google Antigravity global instructions/);
+    assert.deepEqual(targets.map((target) => fs.readFileSync(target, "utf8")), baselines);
+
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 0, sync.stderr || sync.stdout);
+    for (const target of targets) {
+      assert.equal(fs.readFileSync(target, "utf8"), generatedSkill(fixture.repo, "product-research"));
+    }
+    assert.equal(fs.readFileSync(path.join(fixture.home, ".codex", "AGENTS.md"), "utf8"), originalGlobal);
+    const settled = runCli(fixture, ["check"]);
+    assert.equal(settled.status, 0, settled.stderr || settled.stdout);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("missing or duplicated core markers fail before mutation even without a selected harness", () => {
+  for (const defect of ["missing", "duplicated"]) {
+    const fixture = makeFixture();
+    try {
+      const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+      assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+      const catalog = path.join(projectionRoot(fixture), "catalog.json");
+      const before = fs.readFileSync(catalog);
+      const source = path.join(fixture.repo, "preferences", "decisions.md");
+      const body = fs.readFileSync(source, "utf8");
+      const mutated = defect === "missing"
+        ? body.replace("<!-- dot-agents:core:end -->", "")
+        : body.replace("<!-- dot-agents:core:end -->", "<!-- dot-agents:core:end -->\n<!-- dot-agents:core:end -->");
+      fs.writeFileSync(source, mutated);
+      const sync = runCli(fixture, ["sync", "--yes"]);
+      assert.notEqual(sync.status, 0);
+      assert.match(`${sync.stderr}\n${sync.stdout}`, /core markers/);
+      assert.deepEqual(fs.readFileSync(catalog), before);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("generated skill collision and unexpected destination files refuse unsafe sync", () => {
+  const fixture = makeFixture();
+  try {
+    setupHarness(fixture, "codex");
+    const target = path.join(fixture.home, ".agents", "skills", "product-research");
+    const extra = path.join(target, "user-notes.md");
+    fs.writeFileSync(extra, "DO NOT DELETE\n");
+    const source = path.join(fixture.repo, "preferences", "shopping.md");
+    fs.appendFileSync(source, "\n- new guidance\n");
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.notEqual(sync.status, 0);
+    assert.match(`${sync.stderr}\n${sync.stdout}`, /unmanaged files/);
+    assert.equal(fs.readFileSync(extra, "utf8"), "DO NOT DELETE\n");
+
+    fs.rmSync(extra);
+    const collision = path.join(fixture.repo, "skills", "product-research");
+    fs.mkdirSync(collision);
+    fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
+    const check = runCli(fixture, ["check"]);
+    assert.notEqual(check.status, 0);
+    assert.match(`${check.stderr}\n${check.stdout}`, /collides/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("doctor reports generated skill collision but continues other diagnostics", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    const collision = path.join(fixture.repo, "skills", "product-research");
+    fs.mkdirSync(collision);
+    fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
+    const doctor = runCli(fixture, ["doctor"]);
+    assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
+    assert.match(doctor.stdout, /generated skill name collides/);
+    assert.match(doctor.stdout, /Sync status/);
+    assert.match(doctor.stdout, /Transactions/);
+    assert.match(doctor.stdout, /Backups/);
+  } finally {
+    fs.rmSync(fixture.root, {recursive: true, force: true});
   }
 });
 
@@ -175,6 +412,34 @@ test("sync transaction rolls back previously applied actions on failure", () => 
   }
 });
 
+
+test("rollback of new generated skill removes its empty new folder without deleting user files", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-empty-parent-"));
+  const home = path.join(root, "home");
+  fs.mkdirSync(home);
+  try {
+    const newSkillFile = path.join(root, "skills", "product-research", "SKILL.md");
+    assert.throws(
+      () => apply([{ kind: "write", destination: newSkillFile, content: "generated" }], home, {failAfterAction: 1}),
+      /runtime changes were rolled back/,
+    );
+    assert.equal(fs.existsSync(newSkillFile), false);
+    assert.equal(fs.existsSync(path.dirname(newSkillFile)), false);
+
+    const occupiedParent = path.join(root, "skills", "evidence-research");
+    fs.mkdirSync(occupiedParent);
+    const unrelated = path.join(occupiedParent, "user-notes.txt");
+    fs.writeFileSync(unrelated, "preserve me\n");
+    assert.throws(
+      () => apply([{kind: "write", destination: path.join(occupiedParent, "SKILL.md"), content: "generated"}], home, {failAfterAction: 1}),
+      /runtime changes were rolled back/,
+    );
+    assert.equal(fs.existsSync(path.join(occupiedParent, "SKILL.md")), false);
+    assert.equal(fs.readFileSync(unrelated, "utf8"), "preserve me\n");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("second sync converges to zero pending actions", () => {
   const fixture = makeFixture();
@@ -316,7 +581,13 @@ test("projection catalog metadata and tree hashes are deterministic", () => {
     for (const skill of catalog.skills) {
       assert.equal(skill.entrypoint, "SKILL.md");
       assert.match(skill.description, /\S/);
-      assert.equal(skill.hash, `sha256:${fixtureTreeDigest(path.join(fixture.repo, "skills", skill.name))}`);
+      const source = GENERATED_SKILLS[skill.name]
+        ? path.join(projectionRoot(fixture), "skills", skill.name)
+        : path.join(fixture.repo, "skills", skill.name);
+      assert.equal(skill.hash, `sha256:${fixtureTreeDigest(source)}`);
+      if (GENERATED_SKILLS[skill.name]) {
+        assert.equal(fs.readFileSync(path.join(source, "SKILL.md"), "utf8"), generatedSkill(fixture.repo, skill.name));
+      }
     }
 
     const second = runCli(fixture, ["sync", "--yes"]);
