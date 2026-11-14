@@ -180,6 +180,8 @@ test("essential preference contracts survive Thin Core compression", () => {
     [/revise repeated failures/, "failure hypothesis revision"],
     [/add\/update regression tests/, "regression tests for behavior changes"],
     [/Visual inspection cannot replace executable checks/, "executable verification"],
+    [/do not derive all validation expectations solely from the implementation/, "independent validation oracle"],
+    [/shared assumptions and remaining gaps/, "correlated validation failures"],
     [/code review as read-only/, "read-only review"],
   ];
   for (const [pattern, label] of expectations) {
@@ -464,6 +466,12 @@ test("publishes a projection when no harness is selected", () => {
     assert.equal(catalog.version, 1);
     assert.equal(catalog.source, "dot-agents");
     assert.ok(catalog.skills.some((skill) => skill.name === "commit"));
+    assert.ok(catalog.skills.some((skill) => skill.name === "change-verification"));
+    assert.equal(
+      fs.readFileSync(path.join(root, "skills", "change-verification", "SKILL.md"), "utf8"),
+      fs.readFileSync(path.join(fixture.repo, "skills", "change-verification", "SKILL.md"), "utf8"),
+      "on-demand verification skill must be published verbatim",
+    );
     assert.ok(fs.existsSync(path.join(root, "skills", "commit", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(fixture.home, ".agents", "skills")));
   } finally {
