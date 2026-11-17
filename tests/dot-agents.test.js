@@ -126,9 +126,9 @@ test("Claude instructions are materialized and preference drift is detectable", 
     const communication = path.join(fixture.repo, "preferences", "communication.md");
     const original = fs.readFileSync(communication, "utf8");
     fs.writeFileSync(communication, original.replace("<!-- dot-agents:core:end -->", "- regression core change token\n<!-- dot-agents:core:end -->"));
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /Claude Code global instructions/);
+    assert.match(check.stdout, /Claude Code 全域指示/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -164,7 +164,7 @@ test("every harness receives only marked core preferences, detects skill drift, 
     fs.appendFileSync(shopping, "\n- regression new preference token\n");
     const drift = runCli(fixture, ["check"]);
     assert.equal(drift.status, 1, drift.stderr || drift.stdout);
-    assert.match(drift.stdout, /Pending sync/);
+    assert.match(drift.stdout, /待同步/);
     for (const [index, output] of outputs.entries()) {
       assert.equal(fs.readFileSync(output, "utf8"), originalOutputs[index], "check must not modify runtime");
     }
@@ -178,7 +178,7 @@ test("every harness receives only marked core preferences, detects skill drift, 
     }
     const doctor = runCli(fixture, ["doctor"]);
     assert.notEqual(doctor.status, 0);
-    assert.match(doctor.stdout, /research.md missing/);
+    assert.match(doctor.stdout, /缺少 preferences\/research\.md/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -308,8 +308,8 @@ test("doctor labels generated and repository skills separately", () => {
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /2 preference-derived skill\(s\): evidence-research, product-research/);
-    assert.doesNotMatch(doctor.stdout, /local\/non-lockfile skills:.*evidence-research/);
+    assert.match(doctor.stdout, /2 個由 preferences 衍生：evidence-research、product-research/);
+    assert.doesNotMatch(doctor.stdout, /本地撰寫（不在 lockfile）的 skill：.*evidence-research/);
   } finally {
     fs.rmSync(fixture.root, {recursive: true, force: true});
   }
@@ -340,7 +340,7 @@ test("generated skills deploy to all selected harnesses and respond to non-core 
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
     assert.match(check.stdout, /product-research/);
-    assert.doesNotMatch(check.stdout, /Codex global instructions|Claude Code global instructions|Google Antigravity global instructions/);
+    assert.doesNotMatch(check.stdout, /AGENTS\.md|CLAUDE\.md|GEMINI\.md/);
     assert.deepEqual(targets.map((target) => fs.readFileSync(target, "utf8")), baselines);
 
     const sync = runCli(fixture, ["sync", "--yes"]);
@@ -372,7 +372,7 @@ test("missing or duplicated core markers fail before mutation even without a sel
       fs.writeFileSync(source, mutated);
       const sync = runCli(fixture, ["sync", "--yes"]);
       assert.notEqual(sync.status, 0);
-      assert.match(`${sync.stderr}\n${sync.stdout}`, /core markers/);
+      assert.match(`${sync.stderr}\n${sync.stdout}`, /core 標記/);
       assert.deepEqual(fs.readFileSync(catalog), before);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -391,7 +391,7 @@ test("generated skill collision and unexpected destination files refuse unsafe s
     fs.appendFileSync(source, "\n- new guidance\n");
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.notEqual(sync.status, 0);
-    assert.match(`${sync.stderr}\n${sync.stdout}`, /unmanaged files/);
+    assert.match(`${sync.stderr}\n${sync.stdout}`, /不受 dot-agents 管理的檔案/);
     assert.equal(fs.readFileSync(extra, "utf8"), "DO NOT DELETE\n");
 
     fs.rmSync(extra);
@@ -400,7 +400,7 @@ test("generated skill collision and unexpected destination files refuse unsafe s
     fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
     const check = runCli(fixture, ["check"]);
     assert.notEqual(check.status, 0);
-    assert.match(`${check.stderr}\n${check.stdout}`, /collides/);
+    assert.match(`${check.stderr}\n${check.stdout}`, /衝突/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -416,10 +416,10 @@ test("doctor reports generated skill collision but continues other diagnostics",
     fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /generated skill name collides/);
-    assert.match(doctor.stdout, /Sync status/);
-    assert.match(doctor.stdout, /Transactions/);
-    assert.match(doctor.stdout, /Backups/);
+    assert.match(doctor.stdout, /衍生 skill 名稱與 skills\/ 中的 skill 衝突/);
+    assert.match(doctor.stdout, /同步狀態/);
+    assert.match(doctor.stdout, /\nTransaction\n/);
+    assert.match(doctor.stdout, /\n備份\n/);
   } finally {
     fs.rmSync(fixture.root, {recursive: true, force: true});
   }
@@ -470,7 +470,7 @@ test("sync transaction rolls back previously applied actions on failure", () => 
         { kind: "write", destination: first, content: "first-after\n" },
         { kind: "write", destination: second, content: "second-after\n" },
       ], home, { failAfterAction: 1 }),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
 
     assert.equal(fs.readFileSync(first, "utf8"), "first-before\n");
@@ -496,7 +496,7 @@ test("rollback of new generated skill removes its empty new folder without delet
     const newSkillFile = path.join(root, "skills", "product-research", "SKILL.md");
     assert.throws(
       () => apply([{ kind: "write", destination: newSkillFile, content: "generated" }], home, {failAfterAction: 1}),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
     assert.equal(fs.existsSync(newSkillFile), false);
     assert.equal(fs.existsSync(path.dirname(newSkillFile)), false);
@@ -507,7 +507,7 @@ test("rollback of new generated skill removes its empty new folder without delet
     fs.writeFileSync(unrelated, "preserve me\n");
     assert.throws(
       () => apply([{kind: "write", destination: path.join(occupiedParent, "SKILL.md"), content: "generated"}], home, {failAfterAction: 1}),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
     assert.equal(fs.existsSync(path.join(occupiedParent, "SKILL.md")), false);
     assert.equal(fs.readFileSync(unrelated, "utf8"), "preserve me\n");
@@ -522,7 +522,7 @@ test("second sync converges to zero pending actions", () => {
     setupHarness(fixture, "codex");
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 0, check.stderr || check.stdout);
-    assert.match(check.stdout, /Everything is in sync/);
+    assert.match(check.stdout, /所有受管理的輸出都已同步/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -608,7 +608,7 @@ test("projection rejects non-portable canonical skill names before mutation", ()
 
     const sync = runCli(fixture, ["setup", "--none", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(`${sync.stdout}\n${sync.stderr}`, /not a portable skill name/);
+    assert.match(`${sync.stdout}\n${sync.stderr}`, /不是可攜的 skill 名稱/);
     assert.ok(!fs.existsSync(projectionRoot(fixture)));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -687,9 +687,9 @@ test("projection source drift is detected by check", () => {
     const before = fs.readFileSync(catalogPath);
     fs.appendFileSync(path.join(fixture.repo, "skills", "commit", "SKILL.md"), "\nprojection drift\n");
 
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /skill projection commit/);
+    assert.match(check.stdout, /skill projection：commit/);
     assert.deepEqual(fs.readFileSync(catalogPath), before);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -707,9 +707,9 @@ test("stale projected skills are cleaned without touching unrelated files", () =
     fs.writeFileSync(path.join(unrelated, "SKILL.md"), "manual\n");
     fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
 
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /removed skill projection eli5/);
+    assert.match(check.stdout, /移除 skill projection：eli5/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(path.join(skillsRoot, "eli5")));
@@ -733,7 +733,7 @@ test("malformed skill frontmatter fails before projection mutation", () => {
 
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(`${sync.stdout}\n${sync.stderr}`, /does not match directory/);
+    assert.match(`${sync.stdout}\n${sync.stderr}`, /與目錄名稱 'commit' 不一致/);
     assert.deepEqual(fs.readFileSync(catalogPath), beforeCatalog);
     assert.deepEqual(fs.readFileSync(statePath), beforeState);
     const backupRoot = path.join(fixture.home, ".dot-agents-backups");
@@ -841,7 +841,7 @@ test("TOML merge refuses to patch a managed table defined as an inline table", (
 
     const sync = runCli(fixture, ["setup", "--harness", "codex", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(sync.stderr, /cannot patch agents\.default_subagent_model/);
+    assert.match(sync.stderr, /無法 patch agents\.default_subagent_model/);
     assert.equal(fs.readFileSync(runtime, "utf8"), before);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -863,9 +863,9 @@ test("skill ownership survives a sync while the harness is missing from PATH", (
 
     fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
     addExecutable(fixture, "codex");
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /REMOVE.*codex skill eli5/);
+    assert.match(check.stdout, /移除 .*（移除 codex skill：eli5）/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(stale));
@@ -889,7 +889,7 @@ test("unsafe ownership entries never remove the runtime skills root", () => {
 
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
-    assert.doesNotMatch(sync.stdout, /REMOVE/);
+    assert.doesNotMatch(sync.stdout, /移除/);
     assert.ok(fs.existsSync(manual));
     assert.ok(fs.existsSync(path.join(runtimeSkills, "commit", "SKILL.md")));
     const cleaned = JSON.parse(fs.readFileSync(statePath, "utf8"));
@@ -913,7 +913,7 @@ test("removed managed skills are cleaned up without touching unmanaged runtime s
 
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /REMOVE.*eli5/);
+    assert.match(check.stdout, /移除.*eli5/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(managed));
@@ -928,7 +928,7 @@ test("selected but unavailable harness stays WAIT without materializing runtime"
   try {
     const result = runCli(fixture, ["setup", "--harness", "codex", "--yes"]);
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /WAIT Codex/);
+    assert.match(result.stdout, /WAIT\s+Codex：已選取/);
     assert.ok(!fs.existsSync(path.join(fixture.home, ".codex", "AGENTS.md")));
     const selection = JSON.parse(fs.readFileSync(path.join(fixture.home, ".config", "dot-agents", "harnesses.json"), "utf8"));
     assert.deepEqual(selection.harnesses, ["codex"]);
@@ -947,7 +947,7 @@ test("failure before backup never deletes the original runtime file", () => {
     fs.writeFileSync(target, "original\n");
     assert.throws(
       () => apply([{ kind: "write", destination: target, content: "replacement\n" }], home, { failBeforeBackupAction: 1 }),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
     assert.equal(fs.readFileSync(target, "utf8"), "original\n");
     const transactions = inspectTransactions(home);
@@ -970,7 +970,7 @@ test("doctor fails on an incomplete transaction journal", () => {
 
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /transaction 20260907-000000-123 is applying/);
+    assert.match(doctor.stdout, /transaction 20260907-000000-123 的狀態是 applying/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -1105,6 +1105,34 @@ test("every command rejects unknown options and prints its own help", () => {
   }
 });
 
+test("plan output groups actions by harness, collapses skills, and expands with --verbose", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude"]) addExecutable(fixture, executable);
+    const plain = runCli(fixture, ["setup", "--harness", "claude,codex", "--dry-run"]);
+    assert.equal(plain.status, 0, plain.stderr || plain.stdout);
+    assert.match(plain.stdout, /^Harness：Claude Code、Codex、Google Antigravity（未選取）$/m);
+    assert.ok(plain.stdout.indexOf("\n  Claude Code\n") < plain.stdout.indexOf("\n  Codex\n"));
+    assert.match(plain.stdout, /\n  dot-agents\n/);
+    assert.match(plain.stdout, /建立  ~\/\.claude\/skills\/ 下 \d+ 個 skill：.*commit/);
+    assert.match(plain.stdout, /^摘要：建立 \d+、合併 2$/m);
+    assert.doesNotMatch(plain.stdout, /\x1b\[/);
+    assert.ok(!plain.stdout.includes(fixture.home), "default output shows paths relative to home");
+
+    const verbose = runCli(fixture, ["setup", "--harness", "claude,codex", "--dry-run", "--verbose"]);
+    assert.equal(verbose.status, 0, verbose.stderr);
+    assert.ok(verbose.stdout.includes(`建立  ${path.join(fixture.home, ".claude", "CLAUDE.md")}  （Claude Code 全域指示）`), verbose.stdout);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude,codex", "--yes"]).status, 0);
+    fs.appendFileSync(path.join(fixture.repo, "skills", "commit", "SKILL.md"), "\nverbose drift\n");
+    const detailed = runCli(fixture, ["check", "--verbose"]);
+    assert.equal(detailed.status, 1);
+    const expectedLine = `更新  ${path.join(fixture.home, ".claude", "skills", "commit")}  （claude skill：commit）`;
+    assert.ok(detailed.stdout.includes(expectedLine), detailed.stdout);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("sync --dry-run shows the plan without writing anything", () => {
   const fixture = makeFixture();
   try {
@@ -1144,7 +1172,7 @@ test("apply aborts and rolls back when a merge target changed after planning", (
         { kind: "write", destination: first, content: "first-after\n" },
         { kind: "json-merge", destination: settings, content: "{\"planned\":true,\"managed\":1}\n", baseline },
       ], home),
-      /changed after the sync plan was made.*runtime changes were rolled back/,
+      /在產生 sync 計畫後被修改.*runtime 變更已 rollback/,
     );
     assert.equal(fs.readFileSync(first, "utf8"), "first-before\n");
     assert.equal(fs.readFileSync(settings, "utf8"), "{\"planned\":true,\"addedByHarness\":true}\n");
@@ -1164,12 +1192,12 @@ test("invalid runtime JSON settings are refused instead of overwritten", () => {
 
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(sync.stderr, /is not valid JSON/);
+    assert.match(sync.stderr, /不是合法的 JSON/);
     assert.equal(fs.readFileSync(runtime, "utf8"), broken);
 
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /FAIL.*is not valid JSON/);
+    assert.match(doctor.stdout, /FAIL.*不是合法的 JSON/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
