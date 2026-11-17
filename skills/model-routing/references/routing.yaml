@@ -1,10 +1,10 @@
 # Claude Code model / reasoning-effort routing table.
 # Edit assignments here; SKILL.md stays lineup-agnostic.
-# Verify model IDs and effort ranges against Claude Code's current model list
+# Verify aliases and effort ranges against Claude Code's current model list
 # (/model) before editing.
 
 version: 3
-updated: "2026-10-21"
+updated: "2026-11-17"
 
 principles:
   - "Explicit user instruction and project policy override this table."
@@ -38,23 +38,22 @@ task_classes:
     what: "Documentation, commit messages, summaries, routine prose."
     signals: "Language quality matters more than reasoning depth."
 
+# Tiers are Claude Code model aliases; Claude Code resolves each alias to its
+# current model ID, so this table does not pin versions.
 models:
   fable:
-    id: claude-fable-5-1
-    note: "top tier (Mythos-class); reserved — see policy.fable"
-  opus:
-    id: claude-opus-5-5
-  sonnet:
-    id: claude-sonnet-5-5
-  haiku:
-    id: claude-haiku-5-5
+    note: "top tier; reserved — see policy.fable"
+  opus: {}
+  sonnet: {}
+  haiku: {}
 
 efforts: [low, medium, high, xhigh, max]
 
 policy:
   session_default:
-    model: null
-    note: "settings.json does not pin a model; Claude Code's own default applies. Switch to fable per-session via /model only when conducting an orchestration run"
+    model: opus
+    effort: high
+    note: "Pinned in dot-agents' Claude settings (`model` plus `modelSettings.<model>.effortLevel`). For an orchestration run, start the session with `claude --model fable`; a `/model` pick can persist into settings.json and silently make fable the default."
   fable:
     reserved_for:
       - "orchestration as the main session — planning, decomposition, cross-agent integration, final synthesis"

@@ -26,4 +26,4 @@ For each delegated or configured unit, state the chosen (model, effort) and the 
 
 ## Maintaining the table
 
-Model lineups and effort ranges change. Before editing `routing.yaml`, verify model IDs and supported effort levels against Claude Code's current model list (`/model`). Keep model names in the YAML only — `SKILL.md` stays lineup-agnostic.
+Model lineups and effort ranges change. Before editing `routing.yaml`, verify the aliases and supported effort levels against Claude Code's current model list (`/model`). Keep model names in the YAML only — `SKILL.md` stays lineup-agnostic. The session default itself lives in dot-agents' Claude settings (`model` plus `modelSettings.<model>.effortLevel`, keyed by the full model ID); when the Opus generation changes, update both keys together.

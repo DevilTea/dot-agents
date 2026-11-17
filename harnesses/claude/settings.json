@@ -1,24 +1,11 @@
 {
-  "enabledPlugins": {
-    "i-have-adhd@i-have-adhd": true,
-    "codex@openai-codex": true
-  },
-  "extraKnownMarketplaces": {
-    "i-have-adhd": {
-      "source": {
-        "source": "github",
-        "repo": "ayghri/i-have-adhd"
-      }
-    },
-    "openai-codex": {
-      "source": {
-        "source": "github",
-        "repo": "openai/codex-plugin-cc"
-      }
+  "language": "Zh-tw",
+  "model": "claude-opus-5-5",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "high"
     }
   },
-  "language": "Zh-tw",
-  "effortLevel": "high",
   "autoUpdatesChannel": "stable",
   "skipWorkflowUsageWarning": true,
   "theme": "dark-daltonized"
