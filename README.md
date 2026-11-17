@@ -283,7 +283,7 @@ Pending sync 與未完成 transaction 視為 `FAIL`。
 node --test tests/dot-agents.test.js
 ```
 
-測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 Thin Core／衍生 Skill 分離、生成 Skill 驗證與安全拒絕、materialization drift、JSON/TOML merge（含多行 value、dotted key、無法安全 patch 與不合法 runtime JSON 的拒絕）、plan 後 runtime 變動的中止、`CODEX_HOME` 隔離、override precedence、skill ownership cleanup（含 harness 暫時缺席與不安全的 ownership entry）、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup（含無可清除批次），不會修改真實 runtime。
+測試在 temporary repo／HOME 中使用 fake harness executable，不會修改真實 runtime。Fixture 只複製 Git 會提交的檔案（已追蹤，以及未追蹤但未被忽略的檔案），工作目錄裡的本機雜物不會影響結果。涵蓋範圍以 `tests/dot-agents.test.js` 的測試名稱為準。
 
 ## 日常操作
 

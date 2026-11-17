@@ -20,11 +20,31 @@ function makeFixture() {
   const bin = path.join(root, "bin");
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  fs.cpSync(SOURCE_REPO, repo, {
-    recursive: true,
-    filter: (source) => path.basename(source) !== ".git",
-  });
+  copySourceRepo(repo);
   return { root, repo, home, bin };
+}
+
+// Copy only files Git would commit (tracked plus untracked, non-ignored), so
+// stray local leftovers such as empty skill directories cannot leak into fixtures.
+function copySourceRepo(destination) {
+  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+    cwd: SOURCE_REPO,
+    encoding: "utf8",
+  });
+  if (listed.status !== 0) {
+    fs.cpSync(SOURCE_REPO, destination, {
+      recursive: true,
+      filter: (source) => path.basename(source) !== ".git",
+    });
+    return;
+  }
+  for (const relative of listed.stdout.split("\0").filter(Boolean)) {
+    const source = path.join(SOURCE_REPO, relative);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(destination, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(source, target, { verbatimSymlinks: true });
+  }
 }
 
 function addExecutable(fixture, name) {
