@@ -1401,6 +1401,128 @@ test("status summarizes harnesses, pending sync, skills, and backups", () => {
   }
 });
 
+function scriptedIo(keys) {
+  const { EventEmitter } = require("node:events");
+  const input = new EventEmitter();
+  input.isTTY = true;
+  const rawModes = [];
+  input.setRawMode = (value) => rawModes.push(value);
+  input.resume = () => {};
+  input.pause = () => {};
+  const output = { isTTY: true, text: "", write(chunk) { this.text += chunk; } };
+  const queue = [...keys];
+  // Feed one key at a time, only while a prompt is listening.
+  const pump = () => setImmediate(() => {
+    if (!queue.length || input.listenerCount("keypress") === 0) return;
+    const next = queue.shift();
+    input.emit("keypress", next.text, next.key);
+    pump();
+  });
+  input.on("newListener", (event) => {
+    if (event === "keypress") pump();
+  });
+  return { input, output, rawModes, queue };
+}
+
+const KEY = {
+  down: { text: undefined, key: { name: "down" } },
+  up: { text: undefined, key: { name: "up" } },
+  enter: { text: "\r", key: { name: "return" } },
+  space: { text: " ", key: { name: "space" } },
+  esc: { text: undefined, key: { name: "escape" } },
+  ctrlC: { text: "\u0003", key: { name: "c", ctrl: true } },
+  char: (text) => ({ text, key: { name: text } }),
+};
+
+test("interactive prompts select, toggle, confirm, and always restore the terminal", async () => {
+  const { checklist, confirm, select, Interrupted } = require("../lib/interactive");
+  const items = [{ label: "a", value: "a" }, { label: "b", value: "b" }, { label: "c", value: "c" }];
+
+  let io = scriptedIo([KEY.down, KEY.down, KEY.up, KEY.enter]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), "b");
+  assert.deepEqual(io.rawModes, [true, false]);
+  assert.ok(io.output.text.endsWith("\x1b[?25h"), "cursor is shown again");
+
+  io = scriptedIo([KEY.char("3")]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), "c");
+  io = scriptedIo([KEY.down, KEY.down, KEY.down, KEY.enter]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), "a", "wraps around");
+  io = scriptedIo([KEY.char("q")]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), null);
+
+  io = scriptedIo([KEY.space, KEY.down, KEY.down, KEY.space, KEY.enter]);
+  const picked = await checklist({ title: "t", items: items.map((item, index) => ({ ...item, checked: index === 1 })), input: io.input, output: io.output });
+  assert.deepEqual(picked, ["a", "b", "c"]);
+  io = scriptedIo([KEY.esc]);
+  assert.equal(await checklist({ title: "t", items, input: io.input, output: io.output }), null);
+
+  io = scriptedIo([KEY.enter]);
+  assert.equal(await confirm({ message: "m", yesLabel: "yes", input: io.input, output: io.output }), false, "Enter alone cancels");
+  io = scriptedIo([KEY.down, KEY.enter]);
+  assert.equal(await confirm({ message: "m", yesLabel: "yes", input: io.input, output: io.output }), true);
+
+  io = scriptedIo([KEY.ctrlC]);
+  await assert.rejects(select({ title: "t", items, input: io.input, output: io.output }), Interrupted);
+  assert.deepEqual(io.rawModes, [true, false]);
+  assert.equal(io.input.listenerCount("keypress"), 0);
+});
+
+test("interactive menu shows status and manages harnesses with a cancel-first confirmation", async () => {
+  const fixture = makeFixture();
+  const saved = { ...process.env };
+  const log = console.log;
+  let printed = "";
+  try {
+    for (const executable of ["codex", "claude"]) addExecutable(fixture, executable);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    Object.assign(process.env, {
+      DOT_AGENTS_SETUP_HOME: fixture.home,
+      CODEX_HOME: path.join(fixture.home, ".codex"),
+      XDG_DATA_HOME: path.join(fixture.home, ".local", "share"),
+      PATH: fixture.bin,
+    });
+    console.log = (...parts) => { printed += `${parts.join(" ")}\n`; };
+    const { runMenu } = require("../lib/menu");
+    const cfg = path.join(fixture.home, ".config", "dot-agents");
+    const io = scriptedIo([
+      KEY.char("1"), KEY.char("x"),
+      KEY.char("5"), KEY.down, KEY.space, KEY.enter, KEY.enter, KEY.char("x"),
+      KEY.char("5"), KEY.down, KEY.space, KEY.enter, KEY.down, KEY.enter, KEY.char("x"),
+      KEY.char("q"),
+    ]);
+    const code = await runMenu(fixture.repo, fixture.home, cfg, { input: io.input, output: io.output });
+    assert.equal(code, 0);
+    assert.equal(io.queue.length, 0, "every scripted key was consumed");
+    assert.match(printed, /Repository：/);
+    assert.match(printed, /管理清單：Claude Code → Claude Code、Codex/);
+    assert.match(printed, /已取消，沒有修改任何檔案/);
+    assert.match(printed, /已套用 \d+ 項變更/);
+    assert.deepEqual(selectionOf(fixture), ["codex", "claude"]);
+    assert.ok(fs.existsSync(path.join(fixture.home, ".codex", "AGENTS.md")));
+    assert.match(io.output.text, /待同步|已同步/);
+  } finally {
+    console.log = log;
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("running without arguments outside a terminal prints help instead of the menu", () => {
+  const fixture = makeFixture();
+  try {
+    const result = runCli(fixture, []);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /用法：dot-agents <指令>/);
+    assert.match(result.stdout, /互動選單/);
+    const setup = runCli(fixture, ["setup"]);
+    assert.equal(setup.status, 2);
+    assert.match(setup.stderr, /互動式操作需要在終端機中執行/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("sync --dry-run shows the plan without writing anything", () => {
   const fixture = makeFixture();
   try {

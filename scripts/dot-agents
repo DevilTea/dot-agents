@@ -11,4 +11,8 @@
 
 const { main } = require("../lib/cli");
 
-if (require.main === module) process.exitCode = main();
+if (require.main === module) {
+  main().then((code) => {
+    process.exitCode = code;
+  });
+}
