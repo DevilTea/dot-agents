@@ -28,6 +28,10 @@ cmux 系列只安裝 end-user 導向的 skill（topology、workspace、browser�
 
 Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)。canonical skill 移除後，sync 只會清理 local ownership state 記錄為 dot-agents 管理的 copy，不碰 harness 自己或使用者手動放置的 skill。
 
+## 查看部署狀態
+
+`dot-agents skills` 以矩陣列出每個 skill 在各 harness 的狀態與不部署的原因（target 限制、runtime gate、harness 未管理或未安裝），並列出 harness 目錄中不受 dot-agents 管理的 skill；`dot-agents skills show NAME` 顯示單一 skill 的來源與各 surface 的部署路徑。
+
 ## Host-facing projection
 
 `dot-agents sync` 會把目前 runtime-eligible 的 canonical skills 發布到下列 projection；`dot-agents check` 只會唯讀驗證該 projection 是否與 canonical source 一致：
