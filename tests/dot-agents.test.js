@@ -1083,7 +1083,7 @@ test("every command rejects unknown options and prints its own help", () => {
   try {
     const top = runCli(fixture, ["--help"]);
     assert.equal(top.status, 0);
-    for (const command of ["check", "sync", "setup", "harness", "update", "doctor", "backups"]) {
+    for (const command of ["status", "check", "sync", "setup", "harness", "skills", "update", "doctor", "backups"]) {
       assert.match(top.stdout, new RegExp(`\\n  ${command} `));
       const help = runCli(fixture, [command, "--help"]);
       assert.equal(help.status, 0, help.stderr);
@@ -1328,6 +1328,74 @@ test("keys deleted from canonical settings are removed from runtime JSON and TOM
     assert.equal(config.tui?.status_line_use_colors, undefined);
     assert.equal(config.agents.default_subagent_model, "gpt-6-luna");
     assert.equal(runCli(fixture, ["check"]).status, 0);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("skills views show per-harness status, reasons, and unmanaged skills", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude", "gh"]) addExecutable(fixture, executable);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude,codex", "--yes"]).status, 0);
+    const manual = path.join(fixture.home, ".claude", "skills", "my-own");
+    fs.mkdirSync(manual, { recursive: true });
+    fs.writeFileSync(path.join(manual, "SKILL.md"), "---\nname: my-own\ndescription: mine\n---\n");
+    fs.appendFileSync(path.join(fixture.home, ".agents", "skills", "commit", "SKILL.md"), "\nlocal edit\n");
+
+    const matrix = runCli(fixture, ["skills"]);
+    assert.equal(matrix.status, 0, matrix.stderr || matrix.stdout);
+    assert.match(matrix.stdout, /^Skill\s+來源\s+Claude Code\s+Codex\s+Google Antigravity$/m);
+    assert.match(matrix.stdout, /^commit\s+本地\s+✓\s+△\s+—$/m);
+    assert.match(matrix.stdout, /^model-routing\s+本地\s+✓\s+—\s+—$/m);
+    assert.match(matrix.stdout, /^evidence-research\s+衍生\s+✓\s+✓\s+—$/m);
+    assert.match(matrix.stdout, /^cmux\s+外部\s+—\s+—\s+—$/m);
+    assert.match(matrix.stdout, /找不到 cmux 執行檔/);
+    assert.match(matrix.stdout, /Google Antigravity：全部 skill（harness 未管理）/);
+    assert.match(matrix.stdout, /Claude Code（~\/\.claude\/skills）：my-own/);
+
+    const codex = runCli(fixture, ["skills", "--harness", "codex"]);
+    assert.match(codex.stdout, /^Codex（管理中）$/m);
+    assert.match(codex.stdout, /△ commit\s+內容不同/);
+    assert.equal(runCli(fixture, ["skills", "--harness", "nope"]).status, 2);
+
+    const show = runCli(fixture, ["skills", "show", "gh"]);
+    assert.equal(show.status, 0, show.stderr || show.stdout);
+    assert.match(show.stdout, /來源：外部（cli\/cli/);
+    assert.match(show.stdout, /Runtime 需求：gh 執行檔（已安裝）/);
+    assert.match(show.stdout, /Codex\s+✓ ~\/\.agents\/skills\/gh/);
+    assert.equal(runCli(fixture, ["skills", "show", "nope"]).status, 2);
+    assert.equal(runCli(fixture, ["skills", "show"]).status, 2);
+
+    const doctor = runCli(fixture, ["doctor"]);
+    assert.match(doctor.stdout, /Claude Code 有不受 dot-agents 管理的 skill（~\/\.claude\/skills）：my-own/);
+    assert.ok(fs.existsSync(manual), "views never remove unmanaged skills");
+
+    // With only the Antigravity CLI installed, the missing IDE must not hide the real reason.
+    addExecutable(fixture, "agy");
+    assert.equal(runCli(fixture, ["harness", "add", "antigravity", "--yes"]).status, 0);
+    const partial = runCli(fixture, ["skills"]);
+    assert.match(partial.stdout, /Codex、Google Antigravity：model-routing（dot-agents\.json 限制部署對象）/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("status summarizes harnesses, pending sync, skills, and backups", () => {
+  const fixture = makeFixture();
+  try {
+    addExecutable(fixture, "claude");
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    const clean = runCli(fixture, ["status"]);
+    assert.equal(clean.status, 0, clean.stderr || clean.stdout);
+    assert.match(clean.stdout, /^Harness：Claude Code、Codex（未選取）、Google Antigravity（未選取）$/m);
+    assert.match(clean.stdout, /同步：所有受管理的輸出都已同步/);
+    assert.match(clean.stdout, /Skills：\d+ 個（本地 \d+、外部 \d+、衍生 2）/);
+
+    fs.writeFileSync(path.join(fixture.home, ".claude", "CLAUDE.md"), "drift\n");
+    const pending = runCli(fixture, ["status"]);
+    assert.equal(pending.status, 0, "status is informational");
+    assert.match(pending.stdout, /同步：待同步 1 項（Claude Code 1）/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
