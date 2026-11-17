@@ -977,30 +977,31 @@ test("doctor fails on an incomplete transaction journal", () => {
 });
 
 
+function runBackups(home, args) {
+  return spawnSync(process.execPath, [path.join(SOURCE_REPO, "scripts", "dot-agents"), "backups", ...args], {
+    encoding: "utf8",
+    env: { ...process.env, DOT_AGENTS_SETUP_HOME: home, PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter) },
+  });
+}
+
+function writeBatch(backupRoot, name, status) {
+  const batch = path.join(backupRoot, name);
+  fs.mkdirSync(batch, { recursive: true });
+  if (status !== null) fs.writeFileSync(path.join(batch, "manifest.json"), JSON.stringify({ status }, null, 2) + "\n");
+  fs.writeFileSync(path.join(batch, "manifest.tsv"), "");
+  return batch;
+}
+
 test("backup cleanup never removes incomplete transaction journals", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-"));
   const home = path.join(root, "home");
   const backupRoot = path.join(home, ".dot-agents-backups");
-  const committed = path.join(backupRoot, "20260907-000000-111");
-  const applying = path.join(backupRoot, "20260907-000001-222");
   try {
-    fs.mkdirSync(committed, { recursive: true });
-    fs.mkdirSync(applying, { recursive: true });
-    fs.writeFileSync(path.join(committed, "manifest.json"), JSON.stringify({ status: "committed" }, null, 2) + "\n");
-    fs.writeFileSync(path.join(committed, "manifest.tsv"), "");
-    fs.writeFileSync(path.join(applying, "manifest.json"), JSON.stringify({ status: "applying" }, null, 2) + "\n");
-    fs.writeFileSync(path.join(applying, "manifest.tsv"), "");
-
-    const cleanup = spawnSync(path.join(SOURCE_REPO, "scripts", "clean-backups.sh"), ["--yes"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DOT_AGENTS_SETUP_HOME: home,
-        PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
-      },
-    });
+    const committed = writeBatch(backupRoot, "20260907-000000-111", "committed");
+    const applying = writeBatch(backupRoot, "20260907-000001-222", "applying");
+    const cleanup = runBackups(home, ["clean", "--yes"]);
     assert.equal(cleanup.status, 0, cleanup.stderr || cleanup.stdout);
-    assert.match(cleanup.stdout, /Protected transaction batch/);
+    assert.match(cleanup.stdout, /受保護的 transaction 批次/);
     assert.ok(!fs.existsSync(committed));
     assert.ok(fs.existsSync(applying));
   } finally {
@@ -1012,27 +1013,116 @@ test("backup cleanup succeeds when no batch is cleanable", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-empty-"));
   const home = path.join(root, "home");
   const backupRoot = path.join(home, ".dot-agents-backups");
-  const applying = path.join(backupRoot, "20260907-000001-222");
-  const env = {
-    ...process.env,
-    DOT_AGENTS_SETUP_HOME: home,
-    PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
-  };
-  const script = path.join(SOURCE_REPO, "scripts", "clean-backups.sh");
   try {
     fs.mkdirSync(backupRoot, { recursive: true });
-    const empty = spawnSync(script, ["--dry-run"], { encoding: "utf8", env });
+    const empty = runBackups(home, ["clean", "--dry-run"]);
     assert.equal(empty.status, 0, empty.stderr || empty.stdout);
     assert.match(empty.stdout, /沒有可安全清除的備份批次/);
 
-    fs.mkdirSync(applying, { recursive: true });
-    fs.writeFileSync(path.join(applying, "manifest.json"), JSON.stringify({ status: "applying" }, null, 2) + "\n");
-    const protectedOnly = spawnSync(script, ["--yes"], { encoding: "utf8", env });
+    const applying = writeBatch(backupRoot, "20260907-000001-222", "applying");
+    const protectedOnly = runBackups(home, ["clean", "--yes"]);
     assert.equal(protectedOnly.status, 0, protectedOnly.stderr || protectedOnly.stdout);
-    assert.match(protectedOnly.stdout, /Protected transaction batch/);
+    assert.match(protectedOnly.stdout, /受保護的 transaction 批次/);
     assert.ok(fs.existsSync(applying));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("backup cleanup keeps the newest batches, treats legacy batches as cleanable, and ignores manual entries", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-keep-"));
+  const home = path.join(root, "home");
+  const backupRoot = path.join(home, ".dot-agents-backups");
+  try {
+    const legacy = writeBatch(backupRoot, "20260101-000000-1", null);
+    const older = writeBatch(backupRoot, "20260102-000000-2", "rolled-back");
+    const newest = writeBatch(backupRoot, "20260103-000000-3", "committed");
+    const manual = path.join(backupRoot, "keep-me");
+    fs.mkdirSync(manual);
+
+    const list = runBackups(home, []);
+    assert.equal(list.status, 0, list.stderr || list.stdout);
+    assert.match(list.stdout, /共 3 批，可清除 3 批/);
+    assert.match(list.stdout, /status=legacy/);
+
+    const dryRun = runBackups(home, ["clean", "--keep", "1", "--dry-run"]);
+    assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
+    assert.ok(fs.existsSync(legacy) && fs.existsSync(older));
+
+    const invalid = runBackups(home, ["clean", "--keep=-1", "--yes"]);
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /--keep 需要非負整數/);
+
+    const cleanup = runBackups(home, ["clean", "--keep=1", "--yes"]);
+    assert.equal(cleanup.status, 0, cleanup.stderr || cleanup.stdout);
+    assert.ok(!fs.existsSync(legacy));
+    assert.ok(!fs.existsSync(older));
+    assert.ok(fs.existsSync(newest));
+    assert.ok(fs.existsSync(manual));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("backup cleanup removes the backup root once every batch is gone", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-all-"));
+  const home = path.join(root, "home");
+  const backupRoot = path.join(home, ".dot-agents-backups");
+  try {
+    writeBatch(backupRoot, "20260101-000000-1", "committed");
+    const cleanup = runBackups(home, ["clean", "--yes"]);
+    assert.equal(cleanup.status, 0, cleanup.stderr || cleanup.stdout);
+    assert.ok(!fs.existsSync(backupRoot));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every command rejects unknown options and prints its own help", () => {
+  const fixture = makeFixture();
+  try {
+    const top = runCli(fixture, ["--help"]);
+    assert.equal(top.status, 0);
+    for (const command of ["check", "sync", "setup", "update", "doctor", "backups"]) {
+      assert.match(top.stdout, new RegExp(`\\n  ${command} `));
+      const help = runCli(fixture, [command, "--help"]);
+      assert.equal(help.status, 0, help.stderr);
+      assert.match(help.stdout, new RegExp(`用法：dot-agents ${command}`));
+      const unknown = runCli(fixture, [command, "--bogus"]);
+      assert.equal(unknown.status, 2);
+      assert.match(unknown.stderr, /未知的選項：--bogus/);
+    }
+    assert.match(runCli(fixture, ["backups", "clean", "--help"]).stdout, /--keep N/);
+    assert.equal(runCli(fixture, ["nope"]).status, 2);
+    assert.equal(runCli(fixture, ["backups", "nope"]).status, 2);
+    assert.equal(runCli(fixture, ["check", "--yes"]).status, 2);
+    assert.equal(runCli(fixture, ["sync", "extra"]).status, 2);
+    const conflict = runCli(fixture, ["setup", "--all", "--harness", "codex", "--yes"]);
+    assert.equal(conflict.status, 2);
+    assert.match(conflict.stderr, /不能同時使用/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("sync --dry-run shows the plan without writing anything", () => {
+  const fixture = makeFixture();
+  try {
+    addExecutable(fixture, "claude");
+    const setup = runCli(fixture, ["setup", "--harness", "claude", "--dry-run"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".claude")));
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".config", "dot-agents", "harnesses.json")));
+
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    const instructions = path.join(fixture.home, ".claude", "CLAUDE.md");
+    fs.writeFileSync(instructions, "drifted\n");
+    const dryRun = runCli(fixture, ["sync", "--dry-run"]);
+    assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
+    assert.match(dryRun.stdout, /Dry-run 完成/);
+    assert.equal(fs.readFileSync(instructions, "utf8"), "drifted\n");
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
