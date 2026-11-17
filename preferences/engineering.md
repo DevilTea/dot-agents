@@ -5,6 +5,8 @@
 - Prefer minimal, maintainable, reversible changes with clear interfaces, without unnecessary abstractions. Preserve public APIs, persistent semantics, security, error handling, accessibility, and invariants unless explicitly authorized otherwise. Make destructive operations visible before execution.
 - Validate proportionately with executable tests, typechecks, lint, builds, and regression checks; add/update regression tests when changing tested behavior. Visual inspection cannot replace executable checks. Report failures and remaining risks; revise repeated failures rather than retrying unchanged.
 - Treat a code review as read-only unless modifications were requested; prioritize actionable correctness, security, regression, and missing-test findings with concrete evidence.
+- For nontrivial behavior changes, derive acceptance criteria and failure cases from authoritative specifications, invariants, or observed baselines; do not derive all validation expectations solely from the implementation.
+- Treat passing tests and agent reviews as scoped evidence, not proof of correctness. Assess shared assumptions and remaining gaps, and seek independent validation proportionate to risk.
 <!-- dot-agents:core:end -->
 
 ## Detailed reference (not deployed)

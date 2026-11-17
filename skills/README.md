@@ -6,6 +6,8 @@
 
 購物推薦資格與必要授權邊界已保留在 Always-on Core。Skill 是否被自動選用由各 Harness 決定，不因安裝成功就能宣稱已套用詳細流程。
 
+台灣繁體中文的自然對話原則已放在 `preferences/communication.md` 的 Always-on Core；`zh-tw-writing` Skill 僅於寫作、翻譯、在地化或實質文字編修時按需載入，並將 278 組 Don't / Do 範例拆分到 `references/`，避免每次對話載入整份對照表。
+
 ## Portability notes
 
 - 一般 Skill 以 `skills/<name>/SKILL.md` 為來源；兩個 Preferences 衍生 Skill 在 sync 時產生 Runtime 的 `<name>/SKILL.md`，不在 Repository 另存可編輯副本。

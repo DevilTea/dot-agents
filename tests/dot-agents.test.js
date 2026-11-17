@@ -168,6 +168,8 @@ test("essential preference contracts survive Thin Core compression", () => {
   const core = require("../lib/instructions").generatedCore(SOURCE_REPO);
   const expectations = [
     [/Taiwan Traditional Chinese/, "Taiwan language"],
+    [/commonly retained English technical terms/, "Taiwan English terminology"],
+    [/formulaic AI rhetoric/, "no repetitive AI style in all conversations"],
     [/Status: done \| partial \| blocked \| unverified/, "four status states"],
     [/context compaction/, "long-running work state"],
     [/True Decision/, "classification"],
@@ -180,6 +182,8 @@ test("essential preference contracts survive Thin Core compression", () => {
     [/revise repeated failures/, "failure hypothesis revision"],
     [/add\/update regression tests/, "regression tests for behavior changes"],
     [/Visual inspection cannot replace executable checks/, "executable verification"],
+    [/do not derive all validation expectations solely from the implementation/, "independent validation oracle"],
+    [/shared assumptions and remaining gaps/, "correlated validation failures"],
     [/code review as read-only/, "read-only review"],
   ];
   for (const [pattern, label] of expectations) {
@@ -187,6 +191,57 @@ test("essential preference contracts survive Thin Core compression", () => {
   }
   assert.ok(!core.includes("P01 — Local availability and support"));
   assert.ok(!core.includes("For laws, regulations, standards"));
+});
+
+test("Taiwan Chinese rules are always-on while 278 editorial examples stay on-demand", () => {
+  const core = require("../lib/instructions").generatedCore(SOURCE_REPO);
+  assert.match(core, /all.*user-facing responses.*everyday conversation/);
+  assert.match(core, /commonly retained English technical terms/);
+  assert.match(core, /formulaic AI rhetoric/);
+  assert.ok(!core.includes("A01 |"));
+  const skill = path.join(SOURCE_REPO, "skills", "zh-tw-writing");
+  const guide = fs.readFileSync(path.join(skill, "SKILL.md"), "utf8");
+  const references = [
+    "ai-patterns.md",
+    "taiwan-terminology.md",
+    "english-terms.md",
+    "quality-and-sources.md",
+  ];
+  assert.match(guide, /Ordinary conversation already follows the always-on communication preferences/);
+  const seen = new Set();
+  for (const name of references) {
+    assert.ok(guide.includes("references/" + name), name + " must be discoverable");
+    const content = fs.readFileSync(path.join(skill, "references", name), "utf8");
+    const ids = [...content.matchAll(/^\|\s*((?:A|B|C|D|E|F|EN|G|H)\d\d)\s*\|/gm)].map(m => m[1]);
+    for (const id of ids) {
+      assert.ok(!seen.has(id), "duplicate Don't / Do id " + id);
+      seen.add(id);
+    }
+  }
+  assert.equal(seen.size, 278);
+
+  const fixture = makeFixture();
+  try {
+    setupHarness(fixture, "codex");
+    const instructions = fs.readFileSync(path.join(fixture.home, ".codex", "AGENTS.md"), "utf8");
+    assert.match(instructions, /formulaic AI rhetoric/);
+    assert.ok(!instructions.includes("A01 |"), "full guide must not be always-on");
+    const projected = path.join(projectionRoot(fixture), "skills", "zh-tw-writing");
+    assert.ok(fs.existsSync(path.join(projected, "SKILL.md")));
+    for (const name of references) {
+      const rel = path.join("references", name);
+      assert.equal(fs.readFileSync(path.join(projected, rel), "utf8"),
+        fs.readFileSync(path.join(skill, rel), "utf8"));
+    }
+    const catalog = JSON.parse(fs.readFileSync(path.join(projectionRoot(fixture), "catalog.json"), "utf8"));
+    assert.ok(catalog.skills.some(s => s.name === "zh-tw-writing"));
+    fs.appendFileSync(path.join(fixture.repo, "skills", "zh-tw-writing", "references", "english-terms.md"), "\nexample drift\n");
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 1, check.stderr || check.stdout);
+    assert.match(check.stdout, /zh-tw-writing/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
 });
 
 test("inactive reference material is explicitly labeled and cannot accidentally affect runtime", () => {
@@ -464,6 +519,12 @@ test("publishes a projection when no harness is selected", () => {
     assert.equal(catalog.version, 1);
     assert.equal(catalog.source, "dot-agents");
     assert.ok(catalog.skills.some((skill) => skill.name === "commit"));
+    assert.ok(catalog.skills.some((skill) => skill.name === "change-verification"));
+    assert.equal(
+      fs.readFileSync(path.join(root, "skills", "change-verification", "SKILL.md"), "utf8"),
+      fs.readFileSync(path.join(fixture.repo, "skills", "change-verification", "SKILL.md"), "utf8"),
+      "on-demand verification skill must be published verbatim",
+    );
     assert.ok(fs.existsSync(path.join(root, "skills", "commit", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(fixture.home, ".agents", "skills")));
   } finally {
