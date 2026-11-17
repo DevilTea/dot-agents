@@ -222,7 +222,7 @@ dot-agents doctor         # canonical / sync / transaction diagnostics
 
 Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。一般 Skill deployment 採完整 directory copy；Preferences 衍生的 Skills 使用原子寫入；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。harness 未被選取或暫時不在 PATH（`SKIP`／`WAIT`）時，該 surface 的 ownership 紀錄會原樣保留，待 harness 再次可用時仍能清理期間被移除的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
 
-`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable；`agent-browser` skill 要求 `agent-browser` executable（只靠 `npx agent-browser` 執行時不會部署）。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
+`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`agent-browser` skill 要求 `agent-browser` executable（只靠 `npx agent-browser` 執行時不會部署）。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
 
 有異動時，既有 managed entry 會先移至：
 

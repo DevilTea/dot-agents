@@ -30,7 +30,6 @@ const SKILL_RUNTIME_REQUIREMENTS = [
   { runtime: "agent-browser", executable: "agent-browser", matches: (name) => name === "agent-browser" },
   { runtime: "cmux", executable: "cmux", matches: (name) => name === "cmux" || name.startsWith("cmux-") },
   { runtime: "gh", executable: "gh", matches: (name) => name === "gh" },
-  { runtime: "herdr", executable: "herdr", matches: (name) => name === "herdr" || name.startsWith("herdr-") },
 ];
 
 class Action {

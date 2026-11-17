@@ -623,7 +623,6 @@ test("projection respects runtime gates independently of harness selection", () 
     const root = projectionRoot(fixture);
     assert.ok(!fs.existsSync(path.join(root, "skills", "gh")));
     assert.ok(!fs.existsSync(path.join(root, "skills", "cmux")));
-    assert.ok(!fs.existsSync(path.join(root, "skills", "herdr")));
     assert.ok(!fs.existsSync(path.join(root, "skills", "agent-browser")));
 
     addExecutable(fixture, "gh");
