@@ -6,7 +6,7 @@
 
 購物推薦資格與必要授權邊界已保留在 Always-on Core。Skill 是否被自動選用由各 Harness 決定，不因安裝成功就能宣稱已套用詳細流程。
 
-台灣繁體中文的自然對話原則已放在 `preferences/communication.md` 的 Always-on Core；`zh-tw-writing` Skill 僅於寫作、翻譯、在地化或實質文字編修時按需載入，並將 278 組 Don't / Do 範例拆分到 `references/`，避免每次對話載入整份對照表。
+台灣繁體中文的自然對話原則已放在 `preferences/communication.md` 的 Always-on Core；`zh-tw-writing` Skill 僅於寫作、翻譯、在地化或實質文字編修時按需載入，並將 Don't / Do 範例拆分到 `references/`，避免每次對話載入整份對照表。
 
 ## Portability notes
 
@@ -16,7 +16,7 @@
 - Skill 內出現 Claude Code、Codex 或特定 tool syntax 時，應視為標示清楚的 integration section 或範例，而非全域 policy。
 - 保守遷移優先：除非已驗證替代方式，不為格式純粹而移除仍在使用的 adapter。
 
-目前已知 adapters：`agent-browser` frontmatter 的 `allowed-tools`、`hidden` 為 harness-specific 欄位；cmux 系列的 `agents/openai.yaml` 是 OpenAI／Codex 介面的 display metadata。未支援這些 adapter 的 harness 仍可使用其共通 playbook。
+外部 Skill 可能帶有 upstream 自訂的 frontmatter 欄位或 `agents/openai.yaml` 這類 display metadata。各 harness 會忽略不支援的欄位，共通 playbook 仍可使用；這些內容由 upstream 維護，不在本 repository 修改。
 
 ## Composition
 

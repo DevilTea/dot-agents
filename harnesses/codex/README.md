@@ -10,7 +10,7 @@ Canonical sources：[`AGENTS.md`](./AGENTS.md) 與 [`config.toml`](./config.toml
 - project instructions：從 repository root 走到 cwd，每層最多載入一份 `AGENTS.override.md`／`AGENTS.md`／configured fallback。
 - 越接近 cwd 的內容越晚加入，因此可覆蓋較廣泛的 guidance。
 - instruction chain 每次 run／TUI session 啟動時建立。
-- 預設 project instruction 總上限為 32 KiB，可由 `project_doc_max_bytes` 調整。
+- project instruction 總量有上限，可由 `project_doc_max_bytes` 調整；預設值以官方文件為準。
 
 `dot-agents sync` 依固定順序生成 `$CODEX_HOME/AGENTS.md`（`CODEX_HOME` 未設定、或設定了 `DOT_AGENTS_SETUP_HOME` 沙箱時，為該 home 下的 `.codex`）：
 
@@ -25,6 +25,6 @@ Canonical source 修改後先用 `dot-agents check` 查看 drift，再以 `dot-a
 
 Personal skills 的官方位置是 `~/.agents/skills/`。`dot-agents sync` 將一般 `skills/<name>/` 完整 copy 到該位置，並由 Canonical Preferences 產生兩個研究 Skill 的 `SKILL.md`，不使用 symlink。
 
-`harnesses/codex/config.toml` 保存跨裝置 shared defaults；目前管理 `model`、`model_reasoning_effort`、`approvals_reviewer`、`sandbox_mode`、`[agents]` 的 default subagent model/effort，以及 `[tui]` 的 status line 偏好。`dot-agents sync` 對 `~/.codex/config.toml` 做 key-level patch，不整份重寫，因此 canonical 未管理的 MCP、project-specific entries、comments 與其他本機設定會保留。`sandbox_mode = "danger-full-access"` 是明確的全域預設，會取消 Codex command sandbox；若不同裝置需要不同安全邊界，請移到 `~/.config/dot-agents/overrides/codex.toml`。裝置差異可放在該 override，且其 key precedence 高於 canonical。
+`harnesses/codex/config.toml` 保存跨裝置 shared defaults，管理哪些 key 以該檔內容為準。可用的 model slug 與 effort 範圍會隨 Codex 版本變動，修改前以 `codex debug models` 確認；套用後可用 `codex doctor` 檢查是否有被忽略的設定。`dot-agents sync` 對 `~/.codex/config.toml` 做 key-level patch，不整份重寫，因此 canonical 未管理的 MCP、project-specific entries、comments 與其他本機設定會保留。`sandbox_mode = "danger-full-access"` 是明確的全域預設，會取消 Codex command sandbox；若不同裝置需要不同安全邊界，請移到 `~/.config/dot-agents/overrides/codex.toml`。裝置差異可放在該 override，且其 key precedence 高於 canonical。
 
 來源：[OpenAI Codex `AGENTS.md` 文件](https://learn.chatgpt.com/docs/agent-configuration/agents-md.md)。

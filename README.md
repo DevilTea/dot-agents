@@ -181,7 +181,7 @@ setup 會分別詢問 Codex、Claude Code、Google Antigravity 是否要納入�
 ./scripts/setup.sh --all --yes
 ```
 
-`--harness` 可重複使用；可用名稱是 `codex`、`claude`、`antigravity`。指定選擇代表完整的管理清單；`--none` 可明確選擇不管理任何 harness。從管理清單移除 harness 不會刪除既有 runtime 檔案，只會停止後續同步；需要移除時應先人工確認，再依備份／runtime 狀態處理。互動模式不需要記住這些參數。`scripts/dot-agents` 是同一個 Node.js CLI 入口，不依賴 Python；請確保 `node` 在 `PATH` 中。
+`--harness` 可重複使用；可用名稱是 `codex`、`claude`、`antigravity`。指定選擇代表完整的管理清單；`--none` 可明確選擇不管理任何 harness。從管理清單移除 harness 不會刪除既有 runtime 檔案，只會停止後續同步；留下的檔案從此不再更新，該 harness 若仍在使用就會讀到過時指示。仍在使用的 harness 應保留在管理清單；不再使用時，先人工確認，再依備份／runtime 狀態移除。互動模式不需要記住這些參數。`scripts/dot-agents` 是同一個 Node.js CLI 入口，不依賴 Python；請確保 `node` 在 `PATH` 中。
 
 選擇會記錄在：
 
@@ -294,7 +294,7 @@ node --test tests/dot-agents.test.js
 編輯 `harnesses/<harness>/AGENTS.md`／`CLAUDE.md`／`instructions.md`，再執行 `dot-agents check`／`dot-agents sync`。只影響該 harness。
 
 **改某個 harness 的 settings**
-編輯 `harnesses/<harness>/settings.json` 後執行 `dot-agents sync`；canonical source 不會直接連到 runtime。單機差異放 `~/.config/dot-agents/overrides/`。
+編輯 `harnesses/<harness>/settings.json` 後執行 `dot-agents sync`；canonical source 不會直接連到 runtime。單機差異放 `~/.config/dot-agents/overrides/`。Managed merge 只新增或覆蓋 key：從 canonical 刪除某個 key 不會把它從 runtime 移除，需要另外人工刪除 runtime 中的該 key。
 
 **新增自己撰寫的 skill**
 建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），再執行 `dot-agents sync` materialize 到各 harness。撰寫與稽核流程見 `maintain-skill` skill。
