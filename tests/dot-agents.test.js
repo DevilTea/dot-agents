@@ -20,11 +20,31 @@ function makeFixture() {
   const bin = path.join(root, "bin");
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  fs.cpSync(SOURCE_REPO, repo, {
-    recursive: true,
-    filter: (source) => path.basename(source) !== ".git",
-  });
+  copySourceRepo(repo);
   return { root, repo, home, bin };
+}
+
+// Copy only files Git would commit (tracked plus untracked, non-ignored), so
+// stray local leftovers such as empty skill directories cannot leak into fixtures.
+function copySourceRepo(destination) {
+  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+    cwd: SOURCE_REPO,
+    encoding: "utf8",
+  });
+  if (listed.status !== 0) {
+    fs.cpSync(SOURCE_REPO, destination, {
+      recursive: true,
+      filter: (source) => path.basename(source) !== ".git",
+    });
+    return;
+  }
+  for (const relative of listed.stdout.split("\0").filter(Boolean)) {
+    const source = path.join(SOURCE_REPO, relative);
+    if (!fs.existsSync(source)) continue;
+    const target = path.join(destination, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(source, target, { verbatimSymlinks: true });
+  }
 }
 
 function addExecutable(fixture, name) {
@@ -106,9 +126,9 @@ test("Claude instructions are materialized and preference drift is detectable", 
     const communication = path.join(fixture.repo, "preferences", "communication.md");
     const original = fs.readFileSync(communication, "utf8");
     fs.writeFileSync(communication, original.replace("<!-- dot-agents:core:end -->", "- regression core change token\n<!-- dot-agents:core:end -->"));
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /Claude Code global instructions/);
+    assert.match(check.stdout, /Claude Code 全域指示/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -144,7 +164,7 @@ test("every harness receives only marked core preferences, detects skill drift, 
     fs.appendFileSync(shopping, "\n- regression new preference token\n");
     const drift = runCli(fixture, ["check"]);
     assert.equal(drift.status, 1, drift.stderr || drift.stdout);
-    assert.match(drift.stdout, /Pending sync/);
+    assert.match(drift.stdout, /待同步/);
     for (const [index, output] of outputs.entries()) {
       assert.equal(fs.readFileSync(output, "utf8"), originalOutputs[index], "check must not modify runtime");
     }
@@ -158,7 +178,7 @@ test("every harness receives only marked core preferences, detects skill drift, 
     }
     const doctor = runCli(fixture, ["doctor"]);
     assert.notEqual(doctor.status, 0);
-    assert.match(doctor.stdout, /research.md missing/);
+    assert.match(doctor.stdout, /缺少 preferences\/research\.md/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -288,8 +308,8 @@ test("doctor labels generated and repository skills separately", () => {
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /2 preference-derived skill\(s\): evidence-research, product-research/);
-    assert.doesNotMatch(doctor.stdout, /local\/non-lockfile skills:.*evidence-research/);
+    assert.match(doctor.stdout, /2 個由 preferences 衍生：evidence-research、product-research/);
+    assert.doesNotMatch(doctor.stdout, /本地撰寫（不在 lockfile）的 skill：.*evidence-research/);
   } finally {
     fs.rmSync(fixture.root, {recursive: true, force: true});
   }
@@ -320,7 +340,7 @@ test("generated skills deploy to all selected harnesses and respond to non-core 
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
     assert.match(check.stdout, /product-research/);
-    assert.doesNotMatch(check.stdout, /Codex global instructions|Claude Code global instructions|Google Antigravity global instructions/);
+    assert.doesNotMatch(check.stdout, /AGENTS\.md|CLAUDE\.md|GEMINI\.md/);
     assert.deepEqual(targets.map((target) => fs.readFileSync(target, "utf8")), baselines);
 
     const sync = runCli(fixture, ["sync", "--yes"]);
@@ -352,7 +372,7 @@ test("missing or duplicated core markers fail before mutation even without a sel
       fs.writeFileSync(source, mutated);
       const sync = runCli(fixture, ["sync", "--yes"]);
       assert.notEqual(sync.status, 0);
-      assert.match(`${sync.stderr}\n${sync.stdout}`, /core markers/);
+      assert.match(`${sync.stderr}\n${sync.stdout}`, /core 標記/);
       assert.deepEqual(fs.readFileSync(catalog), before);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -371,7 +391,7 @@ test("generated skill collision and unexpected destination files refuse unsafe s
     fs.appendFileSync(source, "\n- new guidance\n");
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.notEqual(sync.status, 0);
-    assert.match(`${sync.stderr}\n${sync.stdout}`, /unmanaged files/);
+    assert.match(`${sync.stderr}\n${sync.stdout}`, /不受 dot-agents 管理的檔案/);
     assert.equal(fs.readFileSync(extra, "utf8"), "DO NOT DELETE\n");
 
     fs.rmSync(extra);
@@ -380,7 +400,7 @@ test("generated skill collision and unexpected destination files refuse unsafe s
     fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
     const check = runCli(fixture, ["check"]);
     assert.notEqual(check.status, 0);
-    assert.match(`${check.stderr}\n${check.stdout}`, /collides/);
+    assert.match(`${check.stderr}\n${check.stdout}`, /衝突/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -396,10 +416,10 @@ test("doctor reports generated skill collision but continues other diagnostics",
     fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /generated skill name collides/);
-    assert.match(doctor.stdout, /Sync status/);
-    assert.match(doctor.stdout, /Transactions/);
-    assert.match(doctor.stdout, /Backups/);
+    assert.match(doctor.stdout, /衍生 skill 名稱與 skills\/ 中的 skill 衝突/);
+    assert.match(doctor.stdout, /同步狀態/);
+    assert.match(doctor.stdout, /\nTransaction\n/);
+    assert.match(doctor.stdout, /\n備份\n/);
   } finally {
     fs.rmSync(fixture.root, {recursive: true, force: true});
   }
@@ -450,7 +470,7 @@ test("sync transaction rolls back previously applied actions on failure", () => 
         { kind: "write", destination: first, content: "first-after\n" },
         { kind: "write", destination: second, content: "second-after\n" },
       ], home, { failAfterAction: 1 }),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
 
     assert.equal(fs.readFileSync(first, "utf8"), "first-before\n");
@@ -476,7 +496,7 @@ test("rollback of new generated skill removes its empty new folder without delet
     const newSkillFile = path.join(root, "skills", "product-research", "SKILL.md");
     assert.throws(
       () => apply([{ kind: "write", destination: newSkillFile, content: "generated" }], home, {failAfterAction: 1}),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
     assert.equal(fs.existsSync(newSkillFile), false);
     assert.equal(fs.existsSync(path.dirname(newSkillFile)), false);
@@ -487,7 +507,7 @@ test("rollback of new generated skill removes its empty new folder without delet
     fs.writeFileSync(unrelated, "preserve me\n");
     assert.throws(
       () => apply([{kind: "write", destination: path.join(occupiedParent, "SKILL.md"), content: "generated"}], home, {failAfterAction: 1}),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
     assert.equal(fs.existsSync(path.join(occupiedParent, "SKILL.md")), false);
     assert.equal(fs.readFileSync(unrelated, "utf8"), "preserve me\n");
@@ -502,7 +522,7 @@ test("second sync converges to zero pending actions", () => {
     setupHarness(fixture, "codex");
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 0, check.stderr || check.stdout);
-    assert.match(check.stdout, /Everything is in sync/);
+    assert.match(check.stdout, /所有受管理的輸出都已同步/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -588,7 +608,7 @@ test("projection rejects non-portable canonical skill names before mutation", ()
 
     const sync = runCli(fixture, ["setup", "--none", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(`${sync.stdout}\n${sync.stderr}`, /not a portable skill name/);
+    assert.match(`${sync.stdout}\n${sync.stderr}`, /不是可攜的 skill 名稱/);
     assert.ok(!fs.existsSync(projectionRoot(fixture)));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -603,7 +623,6 @@ test("projection respects runtime gates independently of harness selection", () 
     const root = projectionRoot(fixture);
     assert.ok(!fs.existsSync(path.join(root, "skills", "gh")));
     assert.ok(!fs.existsSync(path.join(root, "skills", "cmux")));
-    assert.ok(!fs.existsSync(path.join(root, "skills", "herdr")));
     assert.ok(!fs.existsSync(path.join(root, "skills", "agent-browser")));
 
     addExecutable(fixture, "gh");
@@ -668,9 +687,9 @@ test("projection source drift is detected by check", () => {
     const before = fs.readFileSync(catalogPath);
     fs.appendFileSync(path.join(fixture.repo, "skills", "commit", "SKILL.md"), "\nprojection drift\n");
 
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /skill projection commit/);
+    assert.match(check.stdout, /skill projection：commit/);
     assert.deepEqual(fs.readFileSync(catalogPath), before);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -688,9 +707,9 @@ test("stale projected skills are cleaned without touching unrelated files", () =
     fs.writeFileSync(path.join(unrelated, "SKILL.md"), "manual\n");
     fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
 
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /removed skill projection eli5/);
+    assert.match(check.stdout, /移除 skill projection：eli5/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(path.join(skillsRoot, "eli5")));
@@ -714,7 +733,7 @@ test("malformed skill frontmatter fails before projection mutation", () => {
 
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(`${sync.stdout}\n${sync.stderr}`, /does not match directory/);
+    assert.match(`${sync.stdout}\n${sync.stderr}`, /與目錄名稱 'commit' 不一致/);
     assert.deepEqual(fs.readFileSync(catalogPath), beforeCatalog);
     assert.deepEqual(fs.readFileSync(statePath), beforeState);
     const backupRoot = path.join(fixture.home, ".dot-agents-backups");
@@ -822,7 +841,7 @@ test("TOML merge refuses to patch a managed table defined as an inline table", (
 
     const sync = runCli(fixture, ["setup", "--harness", "codex", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(sync.stderr, /cannot patch agents\.default_subagent_model/);
+    assert.match(sync.stderr, /無法 patch agents\.default_subagent_model/);
     assert.equal(fs.readFileSync(runtime, "utf8"), before);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -844,9 +863,9 @@ test("skill ownership survives a sync while the harness is missing from PATH", (
 
     fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
     addExecutable(fixture, "codex");
-    const check = runCli(fixture, ["check"]);
+    const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /REMOVE.*codex skill eli5/);
+    assert.match(check.stdout, /移除 .*（移除 codex skill：eli5）/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(stale));
@@ -870,7 +889,7 @@ test("unsafe ownership entries never remove the runtime skills root", () => {
 
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
-    assert.doesNotMatch(sync.stdout, /REMOVE/);
+    assert.doesNotMatch(sync.stdout, /移除/);
     assert.ok(fs.existsSync(manual));
     assert.ok(fs.existsSync(path.join(runtimeSkills, "commit", "SKILL.md")));
     const cleaned = JSON.parse(fs.readFileSync(statePath, "utf8"));
@@ -894,7 +913,7 @@ test("removed managed skills are cleaned up without touching unmanaged runtime s
 
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /REMOVE.*eli5/);
+    assert.match(check.stdout, /移除.*eli5/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(managed));
@@ -909,7 +928,7 @@ test("selected but unavailable harness stays WAIT without materializing runtime"
   try {
     const result = runCli(fixture, ["setup", "--harness", "codex", "--yes"]);
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /WAIT Codex/);
+    assert.match(result.stdout, /WAIT\s+Codex：已選取/);
     assert.ok(!fs.existsSync(path.join(fixture.home, ".codex", "AGENTS.md")));
     const selection = JSON.parse(fs.readFileSync(path.join(fixture.home, ".config", "dot-agents", "harnesses.json"), "utf8"));
     assert.deepEqual(selection.harnesses, ["codex"]);
@@ -928,7 +947,7 @@ test("failure before backup never deletes the original runtime file", () => {
     fs.writeFileSync(target, "original\n");
     assert.throws(
       () => apply([{ kind: "write", destination: target, content: "replacement\n" }], home, { failBeforeBackupAction: 1 }),
-      /runtime changes were rolled back/,
+      /runtime 變更已 rollback/,
     );
     assert.equal(fs.readFileSync(target, "utf8"), "original\n");
     const transactions = inspectTransactions(home);
@@ -951,37 +970,38 @@ test("doctor fails on an incomplete transaction journal", () => {
 
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /transaction 20260907-000000-123 is applying/);
+    assert.match(doctor.stdout, /transaction 20260907-000000-123 的狀態是 applying/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
 
+function runBackups(home, args) {
+  return spawnSync(process.execPath, [path.join(SOURCE_REPO, "scripts", "dot-agents"), "backups", ...args], {
+    encoding: "utf8",
+    env: { ...process.env, DOT_AGENTS_SETUP_HOME: home, PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter) },
+  });
+}
+
+function writeBatch(backupRoot, name, status) {
+  const batch = path.join(backupRoot, name);
+  fs.mkdirSync(batch, { recursive: true });
+  if (status !== null) fs.writeFileSync(path.join(batch, "manifest.json"), JSON.stringify({ status }, null, 2) + "\n");
+  fs.writeFileSync(path.join(batch, "manifest.tsv"), "");
+  return batch;
+}
+
 test("backup cleanup never removes incomplete transaction journals", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-"));
   const home = path.join(root, "home");
   const backupRoot = path.join(home, ".dot-agents-backups");
-  const committed = path.join(backupRoot, "20260907-000000-111");
-  const applying = path.join(backupRoot, "20260907-000001-222");
   try {
-    fs.mkdirSync(committed, { recursive: true });
-    fs.mkdirSync(applying, { recursive: true });
-    fs.writeFileSync(path.join(committed, "manifest.json"), JSON.stringify({ status: "committed" }, null, 2) + "\n");
-    fs.writeFileSync(path.join(committed, "manifest.tsv"), "");
-    fs.writeFileSync(path.join(applying, "manifest.json"), JSON.stringify({ status: "applying" }, null, 2) + "\n");
-    fs.writeFileSync(path.join(applying, "manifest.tsv"), "");
-
-    const cleanup = spawnSync(path.join(SOURCE_REPO, "scripts", "clean-backups.sh"), ["--yes"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DOT_AGENTS_SETUP_HOME: home,
-        PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
-      },
-    });
+    const committed = writeBatch(backupRoot, "20260907-000000-111", "committed");
+    const applying = writeBatch(backupRoot, "20260907-000001-222", "applying");
+    const cleanup = runBackups(home, ["clean", "--yes"]);
     assert.equal(cleanup.status, 0, cleanup.stderr || cleanup.stdout);
-    assert.match(cleanup.stdout, /Protected transaction batch/);
+    assert.match(cleanup.stdout, /受保護的 transaction 批次/);
     assert.ok(!fs.existsSync(committed));
     assert.ok(fs.existsSync(applying));
   } finally {
@@ -993,27 +1013,534 @@ test("backup cleanup succeeds when no batch is cleanable", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-empty-"));
   const home = path.join(root, "home");
   const backupRoot = path.join(home, ".dot-agents-backups");
-  const applying = path.join(backupRoot, "20260907-000001-222");
-  const env = {
-    ...process.env,
-    DOT_AGENTS_SETUP_HOME: home,
-    PATH: [path.dirname(process.execPath), "/usr/bin", "/bin"].join(path.delimiter),
-  };
-  const script = path.join(SOURCE_REPO, "scripts", "clean-backups.sh");
   try {
     fs.mkdirSync(backupRoot, { recursive: true });
-    const empty = spawnSync(script, ["--dry-run"], { encoding: "utf8", env });
+    const empty = runBackups(home, ["clean", "--dry-run"]);
     assert.equal(empty.status, 0, empty.stderr || empty.stdout);
     assert.match(empty.stdout, /沒有可安全清除的備份批次/);
 
-    fs.mkdirSync(applying, { recursive: true });
-    fs.writeFileSync(path.join(applying, "manifest.json"), JSON.stringify({ status: "applying" }, null, 2) + "\n");
-    const protectedOnly = spawnSync(script, ["--yes"], { encoding: "utf8", env });
+    const applying = writeBatch(backupRoot, "20260907-000001-222", "applying");
+    const protectedOnly = runBackups(home, ["clean", "--yes"]);
     assert.equal(protectedOnly.status, 0, protectedOnly.stderr || protectedOnly.stdout);
-    assert.match(protectedOnly.stdout, /Protected transaction batch/);
+    assert.match(protectedOnly.stdout, /受保護的 transaction 批次/);
     assert.ok(fs.existsSync(applying));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("backup cleanup keeps the newest batches, treats legacy batches as cleanable, and ignores manual entries", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-keep-"));
+  const home = path.join(root, "home");
+  const backupRoot = path.join(home, ".dot-agents-backups");
+  try {
+    const legacy = writeBatch(backupRoot, "20260101-000000-1", null);
+    const older = writeBatch(backupRoot, "20260102-000000-2", "rolled-back");
+    const newest = writeBatch(backupRoot, "20260103-000000-3", "committed");
+    const manual = path.join(backupRoot, "keep-me");
+    fs.mkdirSync(manual);
+
+    const list = runBackups(home, []);
+    assert.equal(list.status, 0, list.stderr || list.stdout);
+    assert.match(list.stdout, /共 3 批，可清除 3 批/);
+    assert.match(list.stdout, /status=legacy/);
+
+    const dryRun = runBackups(home, ["clean", "--keep", "1", "--dry-run"]);
+    assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
+    assert.ok(fs.existsSync(legacy) && fs.existsSync(older));
+
+    const invalid = runBackups(home, ["clean", "--keep=-1", "--yes"]);
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /--keep 需要非負整數/);
+
+    const cleanup = runBackups(home, ["clean", "--keep=1", "--yes"]);
+    assert.equal(cleanup.status, 0, cleanup.stderr || cleanup.stdout);
+    assert.ok(!fs.existsSync(legacy));
+    assert.ok(!fs.existsSync(older));
+    assert.ok(fs.existsSync(newest));
+    assert.ok(fs.existsSync(manual));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("backup cleanup removes the backup root once every batch is gone", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-cleanup-all-"));
+  const home = path.join(root, "home");
+  const backupRoot = path.join(home, ".dot-agents-backups");
+  try {
+    writeBatch(backupRoot, "20260101-000000-1", "committed");
+    const cleanup = runBackups(home, ["clean", "--yes"]);
+    assert.equal(cleanup.status, 0, cleanup.stderr || cleanup.stdout);
+    assert.ok(!fs.existsSync(backupRoot));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every command rejects unknown options and prints its own help", () => {
+  const fixture = makeFixture();
+  try {
+    const top = runCli(fixture, ["--help"]);
+    assert.equal(top.status, 0);
+    for (const command of ["status", "check", "sync", "setup", "harness", "skills", "update", "doctor", "backups"]) {
+      assert.match(top.stdout, new RegExp(`\\n  ${command} `));
+      const help = runCli(fixture, [command, "--help"]);
+      assert.equal(help.status, 0, help.stderr);
+      assert.match(help.stdout, new RegExp(`用法：dot-agents ${command}`));
+      const unknown = runCli(fixture, [command, "--bogus"]);
+      assert.equal(unknown.status, 2);
+      assert.match(unknown.stderr, /未知的選項：--bogus/);
+    }
+    assert.match(runCli(fixture, ["backups", "clean", "--help"]).stdout, /--keep N/);
+    assert.equal(runCli(fixture, ["nope"]).status, 2);
+    assert.equal(runCli(fixture, ["backups", "nope"]).status, 2);
+    assert.equal(runCli(fixture, ["check", "--yes"]).status, 2);
+    assert.equal(runCli(fixture, ["sync", "extra"]).status, 2);
+    const conflict = runCli(fixture, ["setup", "--all", "--harness", "codex", "--yes"]);
+    assert.equal(conflict.status, 2);
+    assert.match(conflict.stderr, /不能同時使用/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("plan output groups actions by harness, collapses skills, and expands with --verbose", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude"]) addExecutable(fixture, executable);
+    const plain = runCli(fixture, ["setup", "--harness", "claude,codex", "--dry-run"]);
+    assert.equal(plain.status, 0, plain.stderr || plain.stdout);
+    assert.match(plain.stdout, /^Harness：Claude Code、Codex、Google Antigravity（未選取）$/m);
+    assert.ok(plain.stdout.indexOf("\n  Claude Code\n") < plain.stdout.indexOf("\n  Codex\n"));
+    assert.match(plain.stdout, /\n  dot-agents\n/);
+    assert.match(plain.stdout, /建立  ~\/\.claude\/skills\/ 下 \d+ 個 skill：.*commit/);
+    assert.match(plain.stdout, /^摘要：建立 \d+、合併 2$/m);
+    assert.doesNotMatch(plain.stdout, /\x1b\[/);
+    assert.ok(!plain.stdout.includes(fixture.home), "default output shows paths relative to home");
+
+    const verbose = runCli(fixture, ["setup", "--harness", "claude,codex", "--dry-run", "--verbose"]);
+    assert.equal(verbose.status, 0, verbose.stderr);
+    assert.ok(verbose.stdout.includes(`建立  ${path.join(fixture.home, ".claude", "CLAUDE.md")}  （Claude Code 全域指示）`), verbose.stdout);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude,codex", "--yes"]).status, 0);
+    fs.appendFileSync(path.join(fixture.repo, "skills", "commit", "SKILL.md"), "\nverbose drift\n");
+    const detailed = runCli(fixture, ["check", "--verbose"]);
+    assert.equal(detailed.status, 1);
+    const expectedLine = `更新  ${path.join(fixture.home, ".claude", "skills", "commit")}  （claude skill：commit）`;
+    assert.ok(detailed.stdout.includes(expectedLine), detailed.stdout);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function selectionOf(fixture) {
+  return readJson(path.join(fixture.home, ".config", "dot-agents", "harnesses.json")).harnesses;
+}
+
+function stateOf(fixture) {
+  return readJson(path.join(fixture.home, ".config", "dot-agents", "state.json"));
+}
+
+test("harness add and remove change only the named harness", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude", "agy"]) addExecutable(fixture, executable);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    const add = runCli(fixture, ["harness", "add", "codex", "antigravity", "--yes"]);
+    assert.equal(add.status, 0, add.stderr || add.stdout);
+    assert.match(add.stdout, /管理清單：Claude Code → Claude Code、Codex、Google Antigravity/);
+    assert.deepEqual(selectionOf(fixture), ["codex", "claude", "antigravity"]);
+
+    const again = runCli(fixture, ["harness", "add", "codex", "--yes"]);
+    assert.match(again.stdout, /Codex 已在管理清單中/);
+    const remove = runCli(fixture, ["harness", "remove", "codex", "--dry-run"]);
+    assert.equal(remove.status, 0, remove.stderr || remove.stdout);
+    assert.deepEqual(selectionOf(fixture), ["codex", "claude", "antigravity"], "dry-run keeps the list");
+    assert.equal(runCli(fixture, ["harness", "remove", "codex", "--yes"]).status, 0);
+    assert.deepEqual(selectionOf(fixture), ["claude", "antigravity"]);
+
+    const list = runCli(fixture, ["harness"]);
+    assert.match(list.stdout, /Codex\s+未管理\s+已安裝/);
+    assert.equal(runCli(fixture, ["harness", "add", "nope", "--yes"]).status, 2);
+    assert.equal(runCli(fixture, ["harness", "add", "--yes"]).status, 2);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("removing a harness deletes only what dot-agents wrote and still owns", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude"]) addExecutable(fixture, executable);
+    const codexConfig = path.join(fixture.home, ".codex", "config.toml");
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    fs.writeFileSync(codexConfig, '# mine\nmy_key = "keep"\n\n[projects."/tmp/x"]\ntrust_level = "trusted"\n');
+    const manualSkill = path.join(fixture.home, ".agents", "skills", "manual");
+    fs.mkdirSync(manualSkill, { recursive: true });
+    fs.writeFileSync(path.join(manualSkill, "SKILL.md"), "manual\n");
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude,codex", "--yes"]).status, 0);
+    assert.ok(stateOf(fixture).outputs.codex.sha256);
+    assert.ok(stateOf(fixture).settings.codex.length);
+
+    const plan = runCli(fixture, ["harness", "remove", "codex", "--dry-run"]);
+    assert.match(plan.stdout, /移除  ~\/\.codex\/AGENTS\.md/);
+    assert.match(plan.stdout, /移除  ~\/\.agents\/skills\/ 下 \d+ 個 skill/);
+    assert.match(plan.stdout, /合併  ~\/\.codex\/config\.toml/);
+    const remove = runCli(fixture, ["harness", "remove", "codex", "--yes"]);
+    assert.equal(remove.status, 0, remove.stderr || remove.stdout);
+
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".codex", "AGENTS.md")));
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".agents", "skills", "commit")));
+    assert.ok(fs.existsSync(path.join(manualSkill, "SKILL.md")), "unowned skills stay");
+    const config = parseToml(fs.readFileSync(codexConfig, "utf8"), codexConfig);
+    assert.equal(config.my_key, "keep");
+    assert.equal(config.projects["/tmp/x"].trust_level, "trusted");
+    assert.equal(config.model, undefined);
+    assert.equal(config.agents?.default_subagent_model, undefined);
+    assert.equal(config.tui?.status_line, undefined);
+    const state = stateOf(fixture);
+    assert.equal(state.outputs.codex, undefined);
+    assert.equal(state.settings.codex, undefined);
+    assert.equal(state.skills.codex, undefined);
+    assert.ok(fs.existsSync(path.join(fixture.home, ".claude", "CLAUDE.md")), "other harnesses are untouched");
+    assert.equal(runCli(fixture, ["check"]).status, 0);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("removing a harness keeps files and values changed after dot-agents wrote them", () => {
+  const fixture = makeFixture();
+  try {
+    addExecutable(fixture, "claude");
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    const instructions = path.join(fixture.home, ".claude", "CLAUDE.md");
+    fs.appendFileSync(instructions, "\nmy own note\n");
+    const settingsPath = path.join(fixture.home, ".claude", "settings.json");
+    const settings = readJson(settingsPath);
+    settings.theme = "light";
+    settings.mine = true;
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+    const remove = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(remove.status, 0, remove.stderr || remove.stdout);
+    assert.match(remove.stdout, /WARN\s+Claude Code：.*CLAUDE\.md 在 dot-agents 寫入後被修改過/);
+    assert.match(remove.stdout, /WARN\s+Claude Code 設定：theme 已不再由 dot-agents 管理/);
+    assert.ok(fs.readFileSync(instructions, "utf8").includes("my own note"));
+    const after = readJson(settingsPath);
+    assert.equal(after.theme, "light");
+    assert.equal(after.mine, true);
+    assert.equal(after.model, undefined);
+    assert.equal(after.modelSettings, undefined, "emptied managed parents are pruned");
+    assert.equal(runCli(fixture, ["check"]).status, 0, "the warning is reported once, then ownership is dropped");
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a selected harness missing from PATH keeps its files and records", () => {
+  const fixture = makeFixture();
+  try {
+    addExecutable(fixture, "codex");
+    assert.equal(runCli(fixture, ["setup", "--harness", "codex", "--yes"]).status, 0);
+    const before = stateOf(fixture);
+    fs.rmSync(path.join(fixture.bin, "codex"));
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.equal(sync.status, 0, sync.stderr || sync.stdout);
+    assert.match(sync.stdout, /WAIT\s+Codex/);
+    assert.ok(fs.existsSync(path.join(fixture.home, ".codex", "AGENTS.md")));
+    assert.ok(fs.existsSync(path.join(fixture.home, ".agents", "skills", "commit")));
+    const after = stateOf(fixture);
+    assert.deepEqual(after.outputs, before.outputs);
+    assert.deepEqual(after.settings, before.settings);
+    assert.deepEqual(after.skills.codex, before.skills.codex);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a state written before ownership records never deletes unrecorded files or keys", () => {
+  const fixture = makeFixture();
+  try {
+    addExecutable(fixture, "claude");
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    const statePath = path.join(fixture.home, ".config", "dot-agents", "state.json");
+    const legacy = stateOf(fixture);
+    delete legacy.settings;
+    delete legacy.outputs;
+    fs.writeFileSync(statePath, JSON.stringify(legacy, null, 2) + "\n");
+
+    const canonical = path.join(fixture.repo, "harnesses", "claude", "settings.json");
+    const value = readJson(canonical);
+    delete value.theme;
+    fs.writeFileSync(canonical, JSON.stringify(value, null, 2) + "\n");
+    assert.equal(runCli(fixture, ["sync", "--yes"]).status, 0);
+    assert.equal(readJson(path.join(fixture.home, ".claude", "settings.json")).theme, "dark-daltonized", "first sync after upgrade only records");
+    assert.ok(stateOf(fixture).settings.claude.every((leaf) => leaf.path[0] !== "theme"));
+
+    const recorded = stateOf(fixture);
+    delete recorded.outputs;
+    fs.writeFileSync(statePath, JSON.stringify(recorded, null, 2) + "\n");
+    const remove = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(remove.status, 0, remove.stderr || remove.stdout);
+    assert.match(remove.stdout, /沒有 dot-agents 的寫入紀錄，停止管理但保留檔案/);
+    assert.ok(fs.existsSync(path.join(fixture.home, ".claude", "CLAUDE.md")));
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".claude", "skills", "commit")), "recorded skills are still cleaned");
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("keys deleted from canonical settings are removed from runtime JSON and TOML", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude"]) addExecutable(fixture, executable);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude,codex", "--yes"]).status, 0);
+    const claudeRuntime = path.join(fixture.home, ".claude", "settings.json");
+    const runtime = readJson(claudeRuntime);
+    runtime.harnessOwned = { keep: 1 };
+    fs.writeFileSync(claudeRuntime, JSON.stringify(runtime, null, 2));
+
+    const claudeCanonical = path.join(fixture.repo, "harnesses", "claude", "settings.json");
+    const claude = readJson(claudeCanonical);
+    delete claude.modelSettings;
+    fs.writeFileSync(claudeCanonical, JSON.stringify(claude, null, 2) + "\n");
+    const codexCanonical = path.join(fixture.repo, "harnesses", "codex", "config.toml");
+    fs.writeFileSync(codexCanonical, fs.readFileSync(codexCanonical, "utf8").replace(/\n\[tui\][\s\S]*$/, "\n"));
+
+    const check = runCli(fixture, ["check"]);
+    assert.equal(check.status, 1);
+    assert.match(check.stdout, /合併  ~\/\.claude\/settings\.json/);
+    assert.match(check.stdout, /合併  ~\/\.codex\/config\.toml/);
+    assert.equal(runCli(fixture, ["sync", "--yes"]).status, 0);
+
+    const after = readJson(claudeRuntime);
+    assert.equal(after.modelSettings, undefined);
+    assert.deepEqual(after.harnessOwned, { keep: 1 });
+    assert.equal(after.model, claude.model);
+    const configPath = path.join(fixture.home, ".codex", "config.toml");
+    const config = parseToml(fs.readFileSync(configPath, "utf8"), configPath);
+    assert.equal(config.tui?.status_line, undefined);
+    assert.equal(config.tui?.status_line_use_colors, undefined);
+    assert.equal(config.agents.default_subagent_model, "gpt-6-luna");
+    assert.equal(runCli(fixture, ["check"]).status, 0);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("skills views show per-harness status, reasons, and unmanaged skills", () => {
+  const fixture = makeFixture();
+  try {
+    for (const executable of ["codex", "claude", "gh"]) addExecutable(fixture, executable);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude,codex", "--yes"]).status, 0);
+    const manual = path.join(fixture.home, ".claude", "skills", "my-own");
+    fs.mkdirSync(manual, { recursive: true });
+    fs.writeFileSync(path.join(manual, "SKILL.md"), "---\nname: my-own\ndescription: mine\n---\n");
+    fs.appendFileSync(path.join(fixture.home, ".agents", "skills", "commit", "SKILL.md"), "\nlocal edit\n");
+
+    const matrix = runCli(fixture, ["skills"]);
+    assert.equal(matrix.status, 0, matrix.stderr || matrix.stdout);
+    assert.match(matrix.stdout, /^Skill\s+來源\s+Claude Code\s+Codex\s+Google Antigravity$/m);
+    assert.match(matrix.stdout, /^commit\s+本地\s+✓\s+△\s+—$/m);
+    assert.match(matrix.stdout, /^model-routing\s+本地\s+✓\s+—\s+—$/m);
+    assert.match(matrix.stdout, /^evidence-research\s+衍生\s+✓\s+✓\s+—$/m);
+    assert.match(matrix.stdout, /^cmux\s+外部\s+—\s+—\s+—$/m);
+    assert.match(matrix.stdout, /找不到 cmux 執行檔/);
+    assert.match(matrix.stdout, /Google Antigravity：全部 skill（harness 未管理）/);
+    assert.match(matrix.stdout, /Claude Code（~\/\.claude\/skills）：my-own/);
+
+    const codex = runCli(fixture, ["skills", "--harness", "codex"]);
+    assert.match(codex.stdout, /^Codex（管理中）$/m);
+    assert.match(codex.stdout, /△ commit\s+內容不同/);
+    assert.equal(runCli(fixture, ["skills", "--harness", "nope"]).status, 2);
+
+    const show = runCli(fixture, ["skills", "show", "gh"]);
+    assert.equal(show.status, 0, show.stderr || show.stdout);
+    assert.match(show.stdout, /來源：外部（cli\/cli/);
+    assert.match(show.stdout, /Runtime 需求：gh 執行檔（已安裝）/);
+    assert.match(show.stdout, /Codex\s+✓ ~\/\.agents\/skills\/gh/);
+    assert.equal(runCli(fixture, ["skills", "show", "nope"]).status, 2);
+    assert.equal(runCli(fixture, ["skills", "show"]).status, 2);
+
+    const doctor = runCli(fixture, ["doctor"]);
+    assert.match(doctor.stdout, /Claude Code 有不受 dot-agents 管理的 skill（~\/\.claude\/skills）：my-own/);
+    assert.ok(fs.existsSync(manual), "views never remove unmanaged skills");
+
+    // With only the Antigravity CLI installed, the missing IDE must not hide the real reason.
+    addExecutable(fixture, "agy");
+    assert.equal(runCli(fixture, ["harness", "add", "antigravity", "--yes"]).status, 0);
+    const partial = runCli(fixture, ["skills"]);
+    assert.match(partial.stdout, /Codex、Google Antigravity：model-routing（dot-agents\.json 限制部署對象）/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("status summarizes harnesses, pending sync, skills, and backups", () => {
+  const fixture = makeFixture();
+  try {
+    addExecutable(fixture, "claude");
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    const clean = runCli(fixture, ["status"]);
+    assert.equal(clean.status, 0, clean.stderr || clean.stdout);
+    assert.match(clean.stdout, /^Harness：Claude Code、Codex（未選取）、Google Antigravity（未選取）$/m);
+    assert.match(clean.stdout, /同步：所有受管理的輸出都已同步/);
+    assert.match(clean.stdout, /Skills：\d+ 個（本地 \d+、外部 \d+、衍生 2）/);
+
+    fs.writeFileSync(path.join(fixture.home, ".claude", "CLAUDE.md"), "drift\n");
+    const pending = runCli(fixture, ["status"]);
+    assert.equal(pending.status, 0, "status is informational");
+    assert.match(pending.stdout, /同步：待同步 1 項（Claude Code 1）/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+function scriptedIo(keys) {
+  const { EventEmitter } = require("node:events");
+  const input = new EventEmitter();
+  input.isTTY = true;
+  const rawModes = [];
+  input.setRawMode = (value) => rawModes.push(value);
+  input.resume = () => {};
+  input.pause = () => {};
+  const output = { isTTY: true, text: "", write(chunk) { this.text += chunk; } };
+  const queue = [...keys];
+  // Feed one key at a time, only while a prompt is listening.
+  const pump = () => setImmediate(() => {
+    if (!queue.length || input.listenerCount("keypress") === 0) return;
+    const next = queue.shift();
+    input.emit("keypress", next.text, next.key);
+    pump();
+  });
+  input.on("newListener", (event) => {
+    if (event === "keypress") pump();
+  });
+  return { input, output, rawModes, queue };
+}
+
+const KEY = {
+  down: { text: undefined, key: { name: "down" } },
+  up: { text: undefined, key: { name: "up" } },
+  enter: { text: "\r", key: { name: "return" } },
+  space: { text: " ", key: { name: "space" } },
+  esc: { text: undefined, key: { name: "escape" } },
+  ctrlC: { text: "\u0003", key: { name: "c", ctrl: true } },
+  char: (text) => ({ text, key: { name: text } }),
+};
+
+test("interactive prompts select, toggle, confirm, and always restore the terminal", async () => {
+  const { checklist, confirm, select, Interrupted } = require("../lib/interactive");
+  const items = [{ label: "a", value: "a" }, { label: "b", value: "b" }, { label: "c", value: "c" }];
+
+  let io = scriptedIo([KEY.down, KEY.down, KEY.up, KEY.enter]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), "b");
+  assert.deepEqual(io.rawModes, [true, false]);
+  assert.ok(io.output.text.endsWith("\x1b[?25h"), "cursor is shown again");
+
+  io = scriptedIo([KEY.char("3")]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), "c");
+  io = scriptedIo([KEY.down, KEY.down, KEY.down, KEY.enter]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), "a", "wraps around");
+  io = scriptedIo([KEY.char("q")]);
+  assert.equal(await select({ title: "t", items, input: io.input, output: io.output }), null);
+
+  io = scriptedIo([KEY.space, KEY.down, KEY.down, KEY.space, KEY.enter]);
+  const picked = await checklist({ title: "t", items: items.map((item, index) => ({ ...item, checked: index === 1 })), input: io.input, output: io.output });
+  assert.deepEqual(picked, ["a", "b", "c"]);
+  io = scriptedIo([KEY.esc]);
+  assert.equal(await checklist({ title: "t", items, input: io.input, output: io.output }), null);
+
+  io = scriptedIo([KEY.enter]);
+  assert.equal(await confirm({ message: "m", yesLabel: "yes", input: io.input, output: io.output }), false, "Enter alone cancels");
+  io = scriptedIo([KEY.down, KEY.enter]);
+  assert.equal(await confirm({ message: "m", yesLabel: "yes", input: io.input, output: io.output }), true);
+
+  io = scriptedIo([KEY.ctrlC]);
+  await assert.rejects(select({ title: "t", items, input: io.input, output: io.output }), Interrupted);
+  assert.deepEqual(io.rawModes, [true, false]);
+  assert.equal(io.input.listenerCount("keypress"), 0);
+});
+
+test("interactive menu shows status and manages harnesses with a cancel-first confirmation", async () => {
+  const fixture = makeFixture();
+  const saved = { ...process.env };
+  const log = console.log;
+  let printed = "";
+  try {
+    for (const executable of ["codex", "claude"]) addExecutable(fixture, executable);
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    Object.assign(process.env, {
+      DOT_AGENTS_SETUP_HOME: fixture.home,
+      CODEX_HOME: path.join(fixture.home, ".codex"),
+      XDG_DATA_HOME: path.join(fixture.home, ".local", "share"),
+      PATH: fixture.bin,
+    });
+    console.log = (...parts) => { printed += `${parts.join(" ")}\n`; };
+    const { runMenu } = require("../lib/menu");
+    const cfg = path.join(fixture.home, ".config", "dot-agents");
+    const io = scriptedIo([
+      KEY.char("1"), KEY.char("x"),
+      KEY.char("5"), KEY.down, KEY.space, KEY.enter, KEY.enter, KEY.char("x"),
+      KEY.char("5"), KEY.down, KEY.space, KEY.enter, KEY.down, KEY.enter, KEY.char("x"),
+      KEY.char("q"),
+    ]);
+    const code = await runMenu(fixture.repo, fixture.home, cfg, { input: io.input, output: io.output });
+    assert.equal(code, 0);
+    assert.equal(io.queue.length, 0, "every scripted key was consumed");
+    assert.match(printed, /Repository：/);
+    assert.match(printed, /管理清單：Claude Code → Claude Code、Codex/);
+    assert.match(printed, /已取消，沒有修改任何檔案/);
+    assert.match(printed, /已套用 \d+ 項變更/);
+    assert.deepEqual(selectionOf(fixture), ["codex", "claude"]);
+    assert.ok(fs.existsSync(path.join(fixture.home, ".codex", "AGENTS.md")));
+    assert.match(io.output.text, /待同步|已同步/);
+  } finally {
+    console.log = log;
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("running without arguments outside a terminal prints help instead of the menu", () => {
+  const fixture = makeFixture();
+  try {
+    const result = runCli(fixture, []);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /用法：dot-agents <指令>/);
+    assert.match(result.stdout, /互動選單/);
+    const setup = runCli(fixture, ["setup"]);
+    assert.equal(setup.status, 2);
+    assert.match(setup.stderr, /互動式操作需要在終端機中執行/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("sync --dry-run shows the plan without writing anything", () => {
+  const fixture = makeFixture();
+  try {
+    addExecutable(fixture, "claude");
+    const setup = runCli(fixture, ["setup", "--harness", "claude", "--dry-run"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".claude")));
+    assert.ok(!fs.existsSync(path.join(fixture.home, ".config", "dot-agents", "harnesses.json")));
+
+    assert.equal(runCli(fixture, ["setup", "--harness", "claude", "--yes"]).status, 0);
+    const instructions = path.join(fixture.home, ".claude", "CLAUDE.md");
+    fs.writeFileSync(instructions, "drifted\n");
+    const dryRun = runCli(fixture, ["sync", "--dry-run"]);
+    assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
+    assert.match(dryRun.stdout, /Dry-run 完成/);
+    assert.equal(fs.readFileSync(instructions, "utf8"), "drifted\n");
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
@@ -1035,7 +1562,7 @@ test("apply aborts and rolls back when a merge target changed after planning", (
         { kind: "write", destination: first, content: "first-after\n" },
         { kind: "json-merge", destination: settings, content: "{\"planned\":true,\"managed\":1}\n", baseline },
       ], home),
-      /changed after the sync plan was made.*runtime changes were rolled back/,
+      /在產生 sync 計畫後被修改.*runtime 變更已 rollback/,
     );
     assert.equal(fs.readFileSync(first, "utf8"), "first-before\n");
     assert.equal(fs.readFileSync(settings, "utf8"), "{\"planned\":true,\"addedByHarness\":true}\n");
@@ -1055,12 +1582,12 @@ test("invalid runtime JSON settings are refused instead of overwritten", () => {
 
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 2, sync.stderr || sync.stdout);
-    assert.match(sync.stderr, /is not valid JSON/);
+    assert.match(sync.stderr, /不是合法的 JSON/);
     assert.equal(fs.readFileSync(runtime, "utf8"), broken);
 
     const doctor = runCli(fixture, ["doctor"]);
     assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /FAIL.*is not valid JSON/);
+    assert.match(doctor.stdout, /FAIL.*不是合法的 JSON/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

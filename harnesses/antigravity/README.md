@@ -17,7 +17,7 @@ Skills 路徑依 surface 不同：
 
 一般 Skills 以 directory copy materialize，兩個 Preferences 衍生 Skills 以生成 `SKILL.md` 的方式 materialize，均不使用 symlink。
 
-CLI settings 也不使用 symlink。已實測 `agy 1.1.17` 會以 temp-file + rename 類型的寫入方式把 `settings.json` symlink 換成一般檔，因此 symlink 不是穩定的 ownership boundary。現在 `dot-agents sync` 會把 canonical settings 與本機 `~/.config/dot-agents/overrides/antigravity-settings.json` 合成 managed values，再 merge 到現有 runtime JSON；unknown runtime keys 保留。`check` 只比較 managed keys，因此單純 key reorder 或額外 runtime state 不算 drift。
+CLI settings 也不使用 symlink。已觀察到 `agy` 會以 temp-file + rename 類型的寫入方式把 `settings.json` symlink 換成一般檔，因此 symlink 不是穩定的 ownership boundary。現在 `dot-agents sync` 會把 canonical settings 與本機 `~/.config/dot-agents/overrides/antigravity-settings.json` 合成 managed values，再 merge 到現有 runtime JSON；unknown runtime keys 保留。`check` 只比較 managed keys，因此單純 key reorder 或額外 runtime state 不算 drift。
 
 `trustedWorkspaces` 是 machine-local security/runtime state，不放 canonical settings；需要本機明確指定時放 device-local override。`enableTelemetry: false` 則是 portable canonical preference。
 

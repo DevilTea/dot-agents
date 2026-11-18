@@ -1,83 +1,101 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "agent-browser": {
       "source": "vercel-labs/agent-browser",
+      "commit": "b06e2533ba9b3823b8a96c859d455cb55f4d7893",
       "sourceType": "github",
       "skillPath": "skills/agent-browser/SKILL.md",
-      "computedHash": "a674b7d81066e3cc471a7512ddb4ae724418cbfefa75cbb050b0dc430e4d57a0"
+      "computedHash": "a0dfac7503f69bcf529b2660fc79964064c4f179eb65695904ddc45fc0d99d20",
+      "installMode": "copy"
     },
     "cmux": {
       "source": "manaflow-ai/cmux",
+      "commit": "bfe3794ae598c76807069b4f45c7342585d0d8e5",
       "sourceType": "github",
       "skillPath": "skills/cmux/SKILL.md",
-      "computedHash": "75b2d4a46f84a04b23fac4fdcaafeb2b11310d44b9bcc0e9aa44a7ef5413a45e"
+      "computedHash": "71c8ef483068fc8e0355d2a02cc6982fe257d4f1262f59604acb17570b33d6e8",
+      "installMode": "copy"
     },
     "cmux-browser": {
       "source": "manaflow-ai/cmux",
+      "commit": "bfe3794ae598c76807069b4f45c7342585d0d8e5",
       "sourceType": "github",
       "skillPath": "skills/cmux-browser/SKILL.md",
-      "computedHash": "5be161a426e14a65ef16cba7a2276eb33c0d910cf10dd120094b13b5baf9f572"
+      "computedHash": "d723cbe9f83f52e0f4af1d3e20d25efc3f86b5f67e450bfa6dcef6535c3c8362",
+      "installMode": "copy"
     },
     "cmux-custom-sidebar": {
       "source": "manaflow-ai/cmux",
+      "commit": "58399d39da4cc33128b2a5581a50026bd06c4f4f",
       "sourceType": "github",
       "skillPath": "skills/cmux-custom-sidebar/SKILL.md",
-      "computedHash": "18edd8ba167b12addfa4f2f6063f293e376c76015da469b062551002cb7f8366"
+      "computedHash": "c9b44cae9f7d6980445957e6fa9a503c7b9e75b7f0c7f4d3ba29a6ea1f90d920",
+      "installMode": "copy"
     },
     "cmux-customization": {
       "source": "manaflow-ai/cmux",
+      "commit": "58399d39da4cc33128b2a5581a50026bd06c4f4f",
       "sourceType": "github",
       "skillPath": "skills/cmux-customization/SKILL.md",
-      "computedHash": "13c8870cff261c2b0cb54727c2549311740dbd3a1df047673c88d36727933003"
+      "computedHash": "3726543126c1907ab86627e31a1f2b2149e4eb647ea4e65184ce7fa0469842e1",
+      "installMode": "copy"
     },
     "cmux-diagnostics": {
       "source": "manaflow-ai/cmux",
+      "commit": "58399d39da4cc33128b2a5581a50026bd06c4f4f",
       "sourceType": "github",
       "skillPath": "skills/cmux-diagnostics/SKILL.md",
-      "computedHash": "321d2b89fb13523dc1945da92cf04f383c9fb665354b601fa6face49a4a1fa6a"
+      "computedHash": "2403afed84f0570925ec14faef66f3d1d41045fd096a49bb939fc11047777825",
+      "installMode": "copy"
     },
     "cmux-keyboard-shortcuts": {
       "source": "manaflow-ai/cmux",
+      "commit": "58399d39da4cc33128b2a5581a50026bd06c4f4f",
       "sourceType": "github",
       "skillPath": "skills/cmux-keyboard-shortcuts/SKILL.md",
-      "computedHash": "32c05cc3a88869f5f19013ded2341785b74e49769039efa1d67f325cb837b26a"
+      "computedHash": "1982182cb366475e55747baf1320a662993c58f1ee39d802714d26595533a9e7",
+      "installMode": "copy"
     },
     "cmux-markdown": {
       "source": "manaflow-ai/cmux",
+      "commit": "58399d39da4cc33128b2a5581a50026bd06c4f4f",
       "sourceType": "github",
       "skillPath": "skills/cmux-markdown/SKILL.md",
-      "computedHash": "0870025e9cc20f3a7bde8eeebfafc7a2c5e273168b5252df961acac942c26e28"
+      "computedHash": "ca628f69fffcd5c4e6938dddfcfac6b139328701e6ab923a1b64e5882542ef05",
+      "installMode": "copy"
     },
     "cmux-settings": {
       "source": "manaflow-ai/cmux",
+      "commit": "58399d39da4cc33128b2a5581a50026bd06c4f4f",
       "sourceType": "github",
       "skillPath": "skills/cmux-settings/SKILL.md",
-      "computedHash": "a8c76fe5989951b193e1316a8156c2916a523575a616c875d5d41c8c3866053f"
+      "computedHash": "2aa6b16c1d09b4439f979568d01bfac863373aaed74728935e5a3c9abedecff8",
+      "installMode": "copy"
     },
     "cmux-workspace": {
       "source": "manaflow-ai/cmux",
+      "commit": "58399d39da4cc33128b2a5581a50026bd06c4f4f",
       "sourceType": "github",
       "skillPath": "skills/cmux-workspace/SKILL.md",
-      "computedHash": "dd9c0a13ad338511e1e74266146657e32fbeeed29956f1fbe8947cb6494c5296"
+      "computedHash": "d570bfaa417463debf182dcdf75c0cff2e4f00f006ccc18f5445a8d3742c851a",
+      "installMode": "copy"
     },
     "eli5": {
-      "source": "dreambigou/eli5",
+      "source": "DreambigOu/ELI5",
+      "commit": "a766623b062331fdde53467001379b4ddf3acc2f",
       "sourceType": "github",
       "skillPath": "skills/eli5/SKILL.md",
-      "computedHash": "ebe7a298b60d28ac26da8aa505d28dc97d124882abc7f33eddeb0d01e9852058"
+      "computedHash": "f37823aefdde2103c242d83b7358346a3d8d57ae362158ee69b85ecb45d14aa2",
+      "installMode": "copy"
     },
     "gh": {
       "source": "cli/cli",
+      "commit": "0536d5e5288458c696ccbeac0e68d87128300069",
       "sourceType": "github",
       "skillPath": "skills/gh/SKILL.md",
-      "computedHash": "d60297badbe5f8c59397e533e41d2ed454e72fbdf08b9348aa0a166366d4c20b"
-    },
-    "herdr": {
-      "source": "herdrdev/herdr",
-      "sourceType": "github",
-      "skillPath": "skills/herdr/SKILL.md",
-      "computedHash": "77b9fb624aebcbfccfbc84d7ef3b938c70ecb9198c8bbfee95b11751ba20bfb7"
+      "computedHash": "30ce82e81a0cc75feaa5276b9fb11873543682da0182ed44c21eb4d2f39993f3",
+      "installMode": "copy"
     }
   }
 }

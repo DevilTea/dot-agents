@@ -59,13 +59,8 @@
 │   ├── claude/
 │   └── antigravity/
 ├── lib/
-│   ├── instructions.js
-│   ├── toml.js
-│   └── transaction.js
 ├── scripts/
-│   ├── clean-backups.sh
 │   ├── dot-agents
-│   ├── doctor.sh
 │   └── setup.sh
 └── tests/
     └── dot-agents.test.js
@@ -75,7 +70,7 @@
 - `skills/` 提供一般 global skill source，另外有兩個由 Preferences 衍生的 Skills，見 [skills/README.md](./skills/README.md)。
 - `optional-skills/` 是 project opt-in catalog，只記錄來源與安裝方式、不 vendor skill 內容，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
-- `lib/` 保存 instruction generation、TOML handling 與 transactional apply 等 CLI 內部模組；`scripts/dot-agents` 保留 orchestration、planning 與 command surface。
+- `lib/` 是 CLI 的實作：參數解析、plan、settings merge、transaction、doctor、各種檢視與互動選單。`scripts/dot-agents` 只是入口。
 - `tests/` 使用 Node.js 內建 test runner，在 isolated temporary repo／HOME 下驗證 sync contract，不需要第三方 test dependency。
 - `skills-lock.json` 保留外部來源安裝的 skill provenance 與更新 metadata；它由 `npx skills` 維護，不是 prompt，也不是 portability contract。
 
@@ -151,6 +146,8 @@ existing runtime state
 
 Canonical 與 local override 的 key 會覆蓋 runtime 對應 key；canonical 未管理的 runtime key 會保留。`check` 也只比較 managed key，因此 harness 新增自己的未知 runtime state 不會造成假 drift。JSON settings 使用 recursive object merge；Codex TOML 則只 patch canonical／override 中實際出現的 key，避免重寫其他 MCP、project-specific entries、comment 或本機設定。跨多行的 value（例如多行 array）會整段替換；runtime 以 dotted key 定義的 managed key 會沿用 dotted 形式。若 managed table 在 runtime 中被定義成 inline table 或 scalar，或 patch 後的結果無法通過 parse 驗證，sync／check 會在 mutation 前失敗，需人工修正 runtime 檔。runtime JSON settings 若不是合法的 JSON object，sync 同樣拒絕 merge（`doctor` 列為 `FAIL`），不會以只含 managed key 的內容覆寫。
 
+Sync 會把寫入的 managed key 與值記錄在 local sync state。某個 key 從 canonical 或 override 刪除後，下一次 sync 會把它從 runtime 移除，但只限 runtime 的值仍等於 dot-agents 上次寫入的值；值已被 harness 或使用者改過時會保留，並顯示 `WARN`。JSON 中因此變空、原本也由 dot-agents 管理的 object 會一併移除；TOML 變空的 table header 會保留。
+
 Device-local override 放在：
 
 ```text
@@ -165,74 +162,59 @@ Antigravity IDE settings 目前仍不由本 repository 管理，因為尚無可�
 
 ## Commands
 
-第一次 clone 後，直接執行互動式 setup：
+第一次 clone 後，執行互動式 setup：
 
 ```bash
 ./scripts/setup.sh
 ```
 
-setup 會分別詢問 Codex、Claude Code、Google Antigravity 是否要納入管理；預設值依目前是否偵測到該 harness 決定。它只安裝 dot-agents 的設定與 skill，不會下載或安裝 harness 本身。每個 harness 都可以單獨選擇，最後會列出完整 plan 並要求輸入 `YES`。
-
-給 agent 或其他非互動環境時，明確指定選擇並跳過最後確認：
+setup 會用勾選清單詢問要管理哪些 harness，預設勾選目前偵測到的 harness；它只安裝 dot-agents 的設定與 skill，不會下載或安裝 harness 本身。`./scripts/setup.sh` 是 `dot-agents setup` 的 bootstrap wrapper，給還沒有 global launcher 的新 clone 使用。給 agent 或其他非互動環境時，明確指定選擇並加上 `--yes`：
 
 ```bash
 ./scripts/setup.sh --harness codex --harness claude --yes
-./scripts/setup.sh --harnesses codex,claude --dry-run
-./scripts/setup.sh --all --yes
+./scripts/setup.sh --all --dry-run
 ```
 
-`--harness` 可重複使用；可用名稱是 `codex`、`claude`、`antigravity`。指定選擇代表完整的管理清單；`--none` 可明確選擇不管理任何 harness。從管理清單移除 harness 不會刪除既有 runtime 檔案，只會停止後續同步；需要移除時應先人工確認，再依備份／runtime 狀態處理。互動模式不需要記住這些參數。`scripts/dot-agents` 是同一個 Node.js CLI 入口，不依賴 Python；請確保 `node` 在 `PATH` 中。
+第一次 sync 會建立 launcher `~/.local/bin/dot-agents`，並把 repository 路徑記在 `~/.config/dot-agents/repo`。之後的日常指令：
 
-選擇會記錄在：
+| 指令 | 用途 |
+| --- | --- |
+| `dot-agents` | 在終端機中開啟互動選單；非終端機環境則顯示用法 |
+| `dot-agents status` | 總覽 repository、harness、同步、skill 與備份狀態 |
+| `dot-agents check` | 唯讀；完全同步時 exit 0，有 drift 時 exit 1 |
+| `dot-agents sync` | 顯示 plan，輸入 `YES` 後套用 |
+| `dot-agents setup` | 重新選擇完整的 harness 管理清單，然後同步 |
+| `dot-agents harness [list\|add\|remove]` | 查看管理清單，或只加入、移除指定的 harness |
+| `dot-agents skills [show NAME]` | 查看 skill 在各 harness 的部署狀態與不部署的原因 |
+| `dot-agents update` | `git pull --ff-only` 後同步 |
+| `dot-agents doctor` | 唯讀診斷 |
+| `dot-agents backups [list\|clean]` | 列出或清除 sync 備份 |
 
-```text
-~/.config/dot-agents/harnesses.json
-```
+會寫入檔案的指令都支援 `--dry-run`（只列出計畫）與 `--yes`（略過 `YES` 確認，非互動環境必須加上）；顯示 plan 的指令支援 `--verbose`（完整路徑與每項變更的說明）。各指令的完整選項以 `dot-agents <指令> --help` 為準。互動選單中的變更會先顯示 plan，再以預設停在「取消」的選擇確認。
 
-之後的 `check`、`sync`、`update` 都沿用這份選擇，不會把未選的 harness 自動加入。還沒有這份檔案的既有安裝會維持原本的 PATH／app 自動偵測行為。
+Plan 依 harness 分組：開頭一行是各 harness 的狀態，同一個 skills 目錄中動作相同的多個 skill 會合併成一行，最後列出各動作的數量。
 
-第一次 `sync` 會另外 materialize 一個很小的 launcher 到：
+### Harness 管理清單
 
-```text
-~/.local/bin/dot-agents
-```
+管理清單記錄在 `~/.config/dot-agents/harnesses.json`，`check`、`sync`、`update` 都沿用它，不會自動加入未選的 harness。還沒有這份檔案的舊安裝會維持 PATH／app 自動偵測。`setup --harness …` 指定的是完整清單；只想加入或移除單一 harness 時用 `dot-agents harness add|remove NAME`。
 
-並把 canonical repository 路徑記錄在：
+從清單移除 harness 時，同一次 sync 會移除 dot-agents 為它寫入的檔案：產生的全域指示檔、dot-agents 擁有的 skill、managed settings key。只有內容仍與 dot-agents 上次寫入相同的部分會被移除；之後被修改過的檔案或值會保留並顯示 `WARN`，所有移除都會先備份。舊版 local sync state 沒有這些寫入紀錄時，第一次 sync 只建立紀錄、不刪除任何東西。已選取但目前找不到的 harness 顯示 `WAIT`，檔案與紀錄都保留，等 harness 可用後的下一次 sync 再處理。
 
-```text
-~/.config/dot-agents/repo
-```
+### Skill 部署
 
-之後可直接使用：
+Sync 不下載 harness、不修改 project repository。一般 Skill 採完整 directory copy；Preferences 衍生的 Skill 使用原子寫入。Local sync state 記錄每個 surface 由 dot-agents 擁有的 skill，canonical skill 移除後，下一次 sync 只會移除這些 copy，不碰 harness 或使用者自己放的 skill；`dot-agents skills` 與 `doctor` 會列出這些不受管理的 skill，但不會刪除。即使沒有選取任何 harness，sync 仍會發布 host-facing skill projection。
 
-```bash
-dot-agents check          # 唯讀；完全同步 exit 0，有 drift exit 1
-dot-agents sync           # 列出 plan，互動要求輸入 YES
-dot-agents sync --yes     # 非互動套用
-dot-agents setup          # 重新逐一選擇三個 harness
-dot-agents setup --all --yes
-dot-agents update         # git pull --ff-only 後同步最新 canonical source
-dot-agents update --yes   # 同上，非互動套用 sync
-dot-agents doctor         # canonical / sync / transaction diagnostics
-```
+`cmux`／`cmux-*`、`gh`、`agent-browser` skill 只在對應 executable 存在於 `PATH` 時部署（只靠 `npx agent-browser` 執行時不算）。Runtime 不可用時，plan 會以 `SKIP` 列出被略過的 skill，先前部署過的 copy 也會依 ownership state 移除；runtime 恢復後重新 sync 即可。
 
-`dot-agents update` 要求 canonical repository worktree 沒有未提交變更；remote pull 失敗或不是 fast-forward 時不會執行 sync，也不會自動解衝突。
+### Transaction 與備份
 
-`./scripts/setup.sh` 是 `dot-agents setup` 的 bootstrap wrapper，適合剛 clone 下來、尚未有 global `dot-agents` launcher 的情境。互動 setup 沒有選擇旗標時會逐一詢問三個 harness；agent 應使用明確的 `--harness`／`--all` 搭配 `--yes`，避免依賴 TTY。
+有異動時，既有 managed entry 會先移到 `~/.dot-agents-backups/<timestamp>-<pid>/`。每次 sync 都會先建立 transaction journal：`manifest.json` 記錄 `prepared → applying → committed / rolled-back / failed` 狀態，`manifest.tsv` 保留原路徑與備份路徑。所有 managed writes（包含 selection 與 local sync state）都在同一個 transaction 內，apply 中途失敗會逆序 rollback。Settings merge 的內容在 plan 時就已算好；若 runtime 檔在 plan 之後（例如等待輸入 `YES` 期間）被 harness 改寫，apply 會在備份前中止整個 transaction，重新 sync 即可。若 process 在 rollback 前被強制終止，`doctor` 會把未完成的 journal 列為 `FAIL`。
 
-Sync 不下載 harness、不修改 project repository。已選但尚未安裝的 harness 會顯示 `WAIT`，待 harness 出現在 PATH 或 Antigravity app 可被偵測後，下一次 sync 才會 materialize 對應內容。一般 Skill deployment 採完整 directory copy；Preferences 衍生的 Skills 使用原子寫入；local sync state 會記錄曾由 dot-agents 管理的 skill entry，因此 canonical skill 移除後，下一次 `check`／`sync` 可以安全辨識與移除舊 copy，而不碰其他 harness 自己管理的 skill。harness 未被選取或暫時不在 PATH（`SKIP`／`WAIT`）時，該 surface 的 ownership 紀錄會原樣保留，待 harness 再次可用時仍能清理期間被移除的 skill。即使沒有選取任何 harness，sync 仍會發布上述 host-facing skill projection。
+`dot-agents backups clean` 只處理符合 `<YYYYmmdd-HHMMSS>-<pid>` 命名的 depth-1 目錄，手動放進備份目錄的其他內容一律不動。Status 為 `prepared`、`applying`、`failed`、`invalid` 或未知的批次受保護、永遠不會刪除；只會刪除 `committed`、`rolled-back` 與沒有 journal 的舊版批次。`--keep N` 保留最新 N 批可清除的批次；全部清除且目錄已空時才移除備份目錄。清除後就失去對應的 rollback 路徑，請在確認安裝正常後再執行；若有受保護的批次，先用 `doctor` 檢查，不要手動刪除。
 
-`cmux`／`cmux-*` skills 只有在 `cmux` executable 存在於 `PATH` 時才會部署；`gh` skill 要求 `gh` executable；`herdr`／`herdr-*` skills 同樣要求 `herdr` executable；`agent-browser` skill 要求 `agent-browser` executable（只靠 `npx agent-browser` 執行時不會部署）。Runtime 不可用時，`check`／`sync`／`doctor` 會列出 runtime 與被略過的 skill 名稱；若該 runtime 先前曾由 dot-agents 管理，下一次 sync 也會依 ownership state 移除其 stale copies。Runtime 恢復後重新執行 sync 即可部署。
+### 沙箱測試
 
-有異動時，既有 managed entry 會先移至：
-
-```text
-~/.dot-agents-backups/<timestamp>-<pid>/
-```
-
-每次有 sync action 時會先建立 transaction journal。`manifest.json` 記錄 `prepared → applying → committed / rolled-back / failed` 狀態與 action lifecycle，`manifest.tsv` 保留既有 entry 的原路徑與備份路徑。所有 managed writes（包含 selection 與 local ownership state）都在同一個 transaction 內；apply 中途失敗時會逆序 rollback。settings merge 的內容在 plan 時就已算好；若 runtime 檔在 plan 之後（例如等待輸入 `YES` 期間）被 harness 改寫，apply 會在備份前偵測到並中止整個 transaction，重新執行 sync 即可以最新內容重新規劃。若 process 在 rollback 前被強制終止，`dot-agents doctor` 會把未完成 journal 視為 `FAIL`。
-
-要在不動真實 `$HOME` 的情況下測試：
+要在不動真實 `$HOME` 的情況下試跑：
 
 ```bash
 DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --dry-run
@@ -241,39 +223,19 @@ DOT_AGENTS_SETUP_HOME=/tmp/sbhome ./scripts/setup.sh --harness codex --yes
 
 設定 `DOT_AGENTS_SETUP_HOME` 時，`XDG_CONFIG_HOME`、`XDG_DATA_HOME` 與 `CODEX_HOME` 都會被忽略，所有輸出都落在該目錄下。
 
-## Backup cleanup
-
-清除 sync transaction 留下、且狀態可安全清除的備份批次。先列出計畫，再要求輸入 `YES`。
-
-```bash
-./scripts/clean-backups.sh --dry-run   # 只列出
-./scripts/clean-backups.sh             # 全部清除
-./scripts/clean-backups.sh --keep 1    # 保留最新 1 份
-```
-
-只處理符合 `<YYYYmmdd-HHMMSS>-<pid>` 命名的 depth-1 目錄，手動放進 `~/.dot-agents-backups/` 的其他內容一律不動。Transaction status 為 `prepared`、`applying`、`failed`、`invalid` 或未知時，該 batch 會標為 protected 並永遠跳過；cleanup 只會刪除 `committed`、`rolled-back` 與舊版 legacy batch。`--keep` 只計算可安全清除的批次。批次全數清除且該目錄已空時才會移除 backup root。`--yes` 跳過確認供非互動環境使用，非 TTY 且未指定時腳本直接失敗而非盲刪。
-
-清除即失去對應的 rollback 路徑，只在確認安裝正常後執行；若有 protected transaction，先用 `dot-agents doctor` 檢查，不要手動刪除 recovery data。
-
 ## Doctor
 
 `dot-agents doctor` 是唯讀 diagnostics。它檢查：
 
-- canonical source 與 JSON 是否有效
-- canonical settings 是否誤帶常見 machine-specific absolute path
-- device-local override JSON 是否有效
-- harness selection 是否有效，以及目前選擇的管理清單
+- canonical source、canonical settings 與 device-local override 是否有效，canonical settings 是否誤帶本機專用的絕對路徑
+- harness 管理清單是否有效，以及各 harness 的狀態
 - `skills/` 是否缺少 `SKILL.md`；canonical skill tree 含 symlink 直接視為 `FAIL`
+- 各 harness skills 目錄中不受 dot-agents 管理的 skill（只回報）
 - 是否有 pending sync
 - `skills-lock.json` 的每個 entry 是否都有對應的 `skills/<name>/SKILL.md`
-- transaction journal 是否有 `prepared`／`applying`／`failed` 等未完成狀態
-- setup/sync backups 現況
+- transaction journal 是否有未完成狀態，以及備份數量
 
-```bash
-dot-agents doctor
-```
-
-Pending sync 與未完成 transaction 視為 `FAIL`。
+Pending sync 與未完成的 transaction 視為 `FAIL`。
 
 ## Tests
 
@@ -283,7 +245,7 @@ Pending sync 與未完成 transaction 視為 `FAIL`。
 node --test tests/dot-agents.test.js
 ```
 
-測試使用 temporary repo／HOME 與 fake harness executable，涵蓋 Thin Core／衍生 Skill 分離、生成 Skill 驗證與安全拒絕、materialization drift、JSON/TOML merge（含多行 value、dotted key、無法安全 patch 與不合法 runtime JSON 的拒絕）、plan 後 runtime 變動的中止、`CODEX_HOME` 隔離、override precedence、skill ownership cleanup（含 harness 暫時缺席與不安全的 ownership entry）、host-facing projection（無 harness、runtime gate、target restriction、catalog/hash、drift、stale cleanup、frontmatter validation）、WAIT semantics、transaction rollback 與 protected cleanup（含無可清除批次），不會修改真實 runtime。
+測試在 temporary repo／HOME 中使用 fake harness executable，不會修改真實 runtime。Fixture 只複製 Git 會提交的檔案（已追蹤，以及未追蹤但未被忽略的檔案），工作目錄裡的本機雜物不會影響結果。涵蓋範圍以 `tests/dot-agents.test.js` 的測試名稱為準。
 
 ## 日常操作
 
@@ -294,7 +256,7 @@ node --test tests/dot-agents.test.js
 編輯 `harnesses/<harness>/AGENTS.md`／`CLAUDE.md`／`instructions.md`，再執行 `dot-agents check`／`dot-agents sync`。只影響該 harness。
 
 **改某個 harness 的 settings**
-編輯 `harnesses/<harness>/settings.json` 後執行 `dot-agents sync`；canonical source 不會直接連到 runtime。單機差異放 `~/.config/dot-agents/overrides/`。
+編輯 `harnesses/<harness>/settings.json` 後執行 `dot-agents sync`；canonical source 不會直接連到 runtime。單機差異放 `~/.config/dot-agents/overrides/`。從 canonical 刪除的 key，下一次 sync 也會從 runtime 移除（值被改過的除外，見 Sync model）。
 
 **新增自己撰寫的 skill**
 建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），再執行 `dot-agents sync` materialize 到各 harness。撰寫與稽核流程見 `maintain-skill` skill。
@@ -344,6 +306,7 @@ Project-local instructions 可以補充或覆蓋個人偏好。實際 precedence
 - 共通溝通、推理、決策、研究、購物偏好與工程原則拆到 `preferences/`；execution、tool-specific interaction、model routing 等依 harness 能力拆到 `harnesses/<harness>/`。
 - `scripts/setup-claude.sh` 曾由多 harness `scripts/setup.sh` 取代；目前以 `dot-agents setup` 作為 bootstrap，日常則使用 explicit `dot-agents check`／`dot-agents sync`。
 - 所有 harness deployment 都不再 symlink 回 repository；Always-on instructions 從精簡 Core 生成，一般 Skills 採 directory copy，衍生 Skills 採 file generation，mutable JSON settings 採 managed merge。
+- `clean-backups.sh` 與 `doctor.sh` 併入 `dot-agents backups`／`dot-agents doctor`；CLI 拆成 `lib/` 模組，介面改為繁中，並加入互動選單、`status`、`skills` 與 `harness` 指令。Sync 開始記錄自己寫入的內容，canonical 刪除的 key 與停止管理的 harness 會依紀錄清理。
 - Pi CLI 與 Node.js extension 不恢復；目前 `dot-agents` 只是 repository-local sync CLI，不是 agent framework 或發布套件。
 
 細節可由 git history 復原。

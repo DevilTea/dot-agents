@@ -13,4 +13,4 @@ Claude Code 官方支援 user instructions `~/.claude/CLAUDE.md` 與 personal sk
 
 `~/.claude` 仍是 Claude Code-owned runtime directory；dot-agents 只在 explicit `sync` 時 materialize 自己管理的 outputs。
 
-來源：[Claude Code memory／imports](https://code.claude.com/docs/en/memory)、[Claude Code skills](https://code.claude.com/docs/en/slash-commands)。
+來源：[Claude Code memory／imports](https://code.claude.com/docs/en/memory)、[Claude Code skills](https://code.claude.com/docs/en/skills)、[Claude Code settings](https://code.claude.com/docs/en/settings)。
