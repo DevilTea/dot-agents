@@ -115,7 +115,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/dot-agents/skill-projection/v1/
 └── skills/<name>/...
 ```
 
-這是 agent-vm-mcp 與其他 host 可讀取的 consumer-neutral 發布介面；它不會建立 ChatGPT-specific skill copy，也不會分叉 Canonical Source。projection 包含符合 runtime gate 的一般 Skills，以及從 Preferences 生成的兩個研究 Skills。此處不套用 `dot-agents.json` 的 harness `targets` 限制，因此 `model-routing` 等 target-restricted Skill 仍可出現在 projection。
+這是 agent-vm-mcp 與其他 host 可讀取的 consumer-neutral 發布介面；它不會建立 ChatGPT-specific skill copy，也不會分叉 Canonical Source。projection 包含符合 runtime gate 的一般 Skills，以及從 Preferences 生成的兩個研究 Skills。此處不套用 `dot-agents.json` 的 harness `targets` 限制，因此 `delegation-presets` 等 target-restricted Skill 仍可出現在 projection。
 
 `catalog.json` 是 deterministic v1 JSON，欄位如下：
 

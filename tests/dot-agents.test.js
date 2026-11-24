@@ -643,7 +643,7 @@ test("projection ignores harness target restrictions", () => {
     const setup = runCli(fixture, ["setup", "--none", "--yes"]);
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
     const catalog = JSON.parse(fs.readFileSync(path.join(projectionRoot(fixture), "catalog.json"), "utf8"));
-    assert.ok(catalog.skills.some((skill) => skill.name === "model-routing"));
+    assert.ok(catalog.skills.some((skill) => skill.name === "delegation-presets"));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -1347,7 +1347,7 @@ test("skills views show per-harness status, reasons, and unmanaged skills", () =
     assert.equal(matrix.status, 0, matrix.stderr || matrix.stdout);
     assert.match(matrix.stdout, /^Skill\s+來源\s+Claude Code\s+Codex\s+Google Antigravity$/m);
     assert.match(matrix.stdout, /^commit\s+本地\s+✓\s+△\s+—$/m);
-    assert.match(matrix.stdout, /^model-routing\s+本地\s+✓\s+—\s+—$/m);
+    assert.match(matrix.stdout, /^delegation-presets\s+本地\s+✓\s+—\s+—$/m);
     assert.match(matrix.stdout, /^evidence-research\s+衍生\s+✓\s+✓\s+—$/m);
     assert.match(matrix.stdout, /^cmux\s+外部\s+—\s+—\s+—$/m);
     assert.match(matrix.stdout, /找不到 cmux 執行檔/);
@@ -1375,7 +1375,7 @@ test("skills views show per-harness status, reasons, and unmanaged skills", () =
     addExecutable(fixture, "agy");
     assert.equal(runCli(fixture, ["harness", "add", "antigravity", "--yes"]).status, 0);
     const partial = runCli(fixture, ["skills"]);
-    assert.match(partial.stdout, /Codex、Google Antigravity：model-routing（dot-agents\.json 限制部署對象）/);
+    assert.match(partial.stdout, /Codex、Google Antigravity：delegation-presets（dot-agents\.json 限制部署對象）/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
