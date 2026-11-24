@@ -96,6 +96,14 @@
       "skillPath": "skills/gh/SKILL.md",
       "computedHash": "30ce82e81a0cc75feaa5276b9fb11873543682da0182ed44c21eb4d2f39993f3",
       "installMode": "copy"
+    },
+    "vue-best-practices": {
+      "source": "vuejs-ai/skills",
+      "commit": "198f0cd8f7f9c0a3d9b566ccc16de6677519ee78",
+      "sourceType": "github",
+      "skillPath": "skills/vue-best-practices/SKILL.md",
+      "computedHash": "2b4ee45c8b9d77d99896c510ca1c0ecb56914b7bdda84dcbd872f3941d3b9f54",
+      "installMode": "copy"
     }
   }
 }
