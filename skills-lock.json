@@ -81,14 +81,6 @@
       "computedHash": "d570bfaa417463debf182dcdf75c0cff2e4f00f006ccc18f5445a8d3742c851a",
       "installMode": "copy"
     },
-    "eli5": {
-      "source": "DreambigOu/ELI5",
-      "commit": "a766623b062331fdde53467001379b4ddf3acc2f",
-      "sourceType": "github",
-      "skillPath": "skills/eli5/SKILL.md",
-      "computedHash": "f37823aefdde2103c242d83b7358346a3d8d57ae362158ee69b85ecb45d14aa2",
-      "installMode": "copy"
-    },
     "gh": {
       "source": "cli/cli",
       "commit": "0536d5e5288458c696ccbeac0e68d87128300069",

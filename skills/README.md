@@ -4,13 +4,27 @@
 
 不同 harness 可能有不同的 discovery、invocation、frontmatter、arguments、tools、subagents 與 output schema。使用 skill 的原則是「能實質協助目前任務時使用」；基本正確性不能依賴 skill 是否成功被自動發現。
 
-購物推薦資格與必要授權邊界已保留在 Always-on Core。Skill 是否被自動選用由各 Harness 決定，不因安裝成功就能宣稱已套用詳細流程。
+購物推薦資格、必要授權邊界和台灣繁體中文的溝通原則都寫在常駐的 `instructions/core.md`。Skill 是否被自動選用由各 harness 決定，不能因為安裝成功就宣稱已經套用了詳細流程。
 
-台灣繁體中文的自然對話原則已放在 `preferences/communication.md` 的 Always-on Core；`zh-tw-writing` Skill 僅於寫作、翻譯、在地化或實質文字編修時按需載入，並將 Don't / Do 範例拆分到 `references/`，避免每次對話載入整份對照表。
+## 自維護 skill
+
+不在 `skills-lock.json` 裡的 skill 都是自維護的，一律用台灣繁體中文寫成 SOP（編號步驟加完成條件），`name` 用英文。撰寫準則見 `maintain-skill`。
+
+| Skill | 用途 |
+| --- | --- |
+| `commit` | Commit 前的檢查與訊息慣例 |
+| `change-verification` | 驗證非小型的行為變更 |
+| `root-cause-debugging` | 除錯與找根因 |
+| `review-changes` | 唯讀 code review（只部署到 Codex、Antigravity；Claude Code 使用內建的 `/code-review`） |
+| `evidence-research` | 多來源研究與證據評估 |
+| `product-research` | 實體商品選購研究 |
+| `delegation-presets` | Claude Code 的委派預設（只部署到 Claude Code） |
+| `zh-tw-writing` | 台灣繁體中文寫作與編修，附 278 條 Don't／Do 範例 |
+| `maintain-skill` | 建立、審查與驗證 skill |
 
 ## Portability notes
 
-- 一般 Skill 以 `skills/<name>/SKILL.md` 為來源；兩個 Preferences 衍生 Skill 在 sync 時產生 Runtime 的 `<name>/SKILL.md`，不在 Repository 另存可編輯副本。
+- 每個 skill 以 `skills/<name>/SKILL.md` 為唯一來源。
 - `name`、`description` 是目前各 harness 最穩定的共同 metadata。
 - 額外 frontmatter 或明確工具名稱可能是 harness adapter。其他 harness 應忽略不支援的欄位，或依能力採等價流程。
 - Skill 內出現 Claude Code、Codex 或特定 tool syntax 時，應視為標示清楚的 integration section 或範例，而非全域 policy。
@@ -20,7 +34,7 @@
 
 ## Composition
 
-發布清單包含此目錄中的本地／外部 Skills，以及由 [`../preferences/`](../preferences/) 衍生的 `evidence-research`、`product-research`。兩個衍生 Skill 不在本目錄保存另一份來源，而是在同步時直接生成 `SKILL.md`，納入既有的 drift、ownership 與 projection 管理。外部來源 provenance 由 [`../skills-lock.json`](../skills-lock.json) 保存。
+發布清單就是這個目錄裡的自維護和外部 skill。外部來源的 provenance 記錄在 [`../skills-lock.json`](../skills-lock.json)。
 
 cmux 系列只安裝 end-user 導向的 skill（topology、workspace、browser、settings、diagnostics、customization 等）。針對 cmux 原始碼開發的 skill（architecture、backend、testing、release 等）不安裝：本機沒有 cmux 原始碼，它們永遠不會正確觸發，只會佔用每個 session 的 context 並稀釋 skill 選擇。同一標準適用於其他外部來源 —— 只安裝與實際使用情境相符的 skill，不整包引入。
 

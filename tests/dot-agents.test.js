@@ -8,7 +8,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 const { parseToml } = require("../lib/toml");
-const { CORE_FILES, GENERATED_SKILLS, coreSection, generatedSkill } = require("../lib/instructions");
+const { coreInstructions } = require("../lib/instructions");
 const { apply, inspectTransactions } = require("../lib/transaction");
 
 const SOURCE_REPO = path.resolve(__dirname, "..");
@@ -108,7 +108,8 @@ function setupHarness(fixture, harness) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 }
 
-test("Claude instructions are materialized and preference drift is detectable", () => {
+
+test("Claude instructions are materialized and core drift is detectable", () => {
   const fixture = makeFixture();
   try {
     setupHarness(fixture, "claude");
@@ -116,16 +117,10 @@ test("Claude instructions are materialized and preference drift is detectable", 
     const target = path.join(fixture.home, ".claude", "CLAUDE.md");
     const generated = fs.readFileSync(target, "utf8");
     assert.match(generated, /Generated from dot-agents/);
-    for (const name of CORE_FILES) {
-      const source = fs.readFileSync(path.join(fixture.repo, "preferences", name), "utf8");
-      assert.ok(generated.includes(coreSection(source, name)), `${name} core must be present`);
-      assert.ok(!generated.includes(source.trim()), `${name} full preference must not be always-on`);
-    }
-    assert.ok(!generated.includes(`@${fixture.repo}/preferences/`));
+    assert.ok(generated.includes(coreInstructions(fixture.repo)), "shared core must be present");
+    assert.ok(generated.includes(fs.readFileSync(path.join(fixture.repo, "harnesses", "claude", "CLAUDE.md"), "utf8").trim()));
 
-    const communication = path.join(fixture.repo, "preferences", "communication.md");
-    const original = fs.readFileSync(communication, "utf8");
-    fs.writeFileSync(communication, original.replace("<!-- dot-agents:core:end -->", "- regression core change token\n<!-- dot-agents:core:end -->"));
+    fs.appendFileSync(path.join(fixture.repo, "instructions", "core.md"), "\n- regression core change token\n");
     const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
     assert.match(check.stdout, /Claude Code 全域指示/);
@@ -134,90 +129,124 @@ test("Claude instructions are materialized and preference drift is detectable", 
   }
 });
 
-test("every harness receives only marked core preferences, detects skill drift, and rejects missing sources", () => {
+
+test("every harness receives the shared core before its own policy, detects drift, and rejects missing sources", () => {
   const fixture = makeFixture();
   try {
     for (const executable of ["codex", "claude", "agy"]) addExecutable(fixture, executable);
     const setup = runCli(fixture, ["setup", "--all", "--yes"]);
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
 
-    const names = CORE_FILES;
     const outputs = [
-      path.join(fixture.home, ".codex", "AGENTS.md"),
-      path.join(fixture.home, ".claude", "CLAUDE.md"),
-      path.join(fixture.home, ".gemini", "GEMINI.md"),
+      [path.join(fixture.home, ".codex", "AGENTS.md"), path.join("codex", "AGENTS.md")],
+      [path.join(fixture.home, ".claude", "CLAUDE.md"), path.join("claude", "CLAUDE.md")],
+      [path.join(fixture.home, ".gemini", "GEMINI.md"), path.join("antigravity", "instructions.md")],
     ];
+    const core = coreInstructions(fixture.repo);
     const originalOutputs = [];
-    for (const output of outputs) {
+    for (const [output, policy] of outputs) {
       const generated = fs.readFileSync(output, "utf8");
       originalOutputs.push(generated);
-      let previous = -1;
-      for (const name of names) {
-        const source = fs.readFileSync(path.join(fixture.repo, "preferences", name), "utf8");
-        const offset = generated.indexOf(coreSection(source, name));
-        assert.ok(offset > previous, `${name} core must appear in order in ${output}`);
-        previous = offset;
-      }
+      const policyText = fs.readFileSync(path.join(fixture.repo, "harnesses", policy), "utf8").trim();
+      assert.ok(generated.indexOf(core) >= 0, `core must be present in ${output}`);
+      assert.ok(generated.indexOf(policyText) > generated.indexOf(core), `harness policy must follow core in ${output}`);
     }
 
-    const shopping = path.join(fixture.repo, "preferences", "shopping.md");
-    fs.appendFileSync(shopping, "\n- regression new preference token\n");
+    fs.appendFileSync(path.join(fixture.repo, "instructions", "core.md"), "\n- regression new rule token\n");
     const drift = runCli(fixture, ["check"]);
     assert.equal(drift.status, 1, drift.stderr || drift.stdout);
     assert.match(drift.stdout, /待同步/);
-    for (const [index, output] of outputs.entries()) {
+    for (const [index, [output]] of outputs.entries()) {
       assert.equal(fs.readFileSync(output, "utf8"), originalOutputs[index], "check must not modify runtime");
     }
 
-    const research = path.join(fixture.repo, "preferences", "research.md");
-    fs.rmSync(research);
+    fs.rmSync(path.join(fixture.repo, "instructions", "core.md"));
     const invalid = runCli(fixture, ["sync", "--yes"]);
-    assert.notEqual(invalid.status, 0, "missing preference must fail before mutation");
-    for (const [index, output] of outputs.entries()) {
+    assert.notEqual(invalid.status, 0, "missing core must fail before mutation");
+    for (const [index, [output]] of outputs.entries()) {
       assert.equal(fs.readFileSync(output, "utf8"), originalOutputs[index], "failed sync must not modify runtime");
     }
-    const doctor = runCli(fixture, ["doctor"]);
-    assert.notEqual(doctor.status, 0);
-    assert.match(doctor.stdout, /缺少 preferences\/research\.md/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
-test("essential preference contracts survive Thin Core compression", () => {
-  const core = require("../lib/instructions").generatedCore(SOURCE_REPO);
+test("doctor reports a missing shared core", () => {
+  const fixture = makeFixture();
+  try {
+    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
+    fs.rmSync(path.join(fixture.repo, "instructions", "core.md"));
+    const doctor = runCli(fixture, ["doctor"]);
+    assert.notEqual(doctor.status, 0);
+    assert.match(`${doctor.stderr}\n${doctor.stdout}`, /不是 dot-agents repository/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+
+test("essential always-on contracts stay in the shared core", () => {
+  const core = coreInstructions(SOURCE_REPO);
   const expectations = [
-    [/Taiwan Traditional Chinese/, "Taiwan language"],
-    [/commonly retained English technical terms/, "Taiwan English terminology"],
-    [/formulaic AI rhetoric/, "no repetitive AI style in all conversations"],
+    [/所有對使用者的回覆.*台灣繁體中文/, "Taiwan language"],
+    [/API、SDK、PR、commit/, "Taiwan English terminology"],
+    [/公式化的 AI 腔/, "no repetitive AI style in all conversations"],
+    [/這些規則適用於每一則中文回覆/, "Chinese writing rules apply to conversation"],
+    [/去掉翻譯腔/, "translationese"],
+    [/全形標點/, "full-width punctuation"],
     [/Status: done \| partial \| blocked \| unverified/, "four status states"],
+    [/狀態：完成／部分完成／受阻／未驗證/, "four status states in Chinese"],
     [/context compaction/, "long-running work state"],
     [/True Decision/, "classification"],
-    [/out-of-scope edits, commit, push, deployment, or merge/, "authorization"],
-    [/material strategic decision-making influence/, "PRC control"],
-    [/non-controlling minority investment/, "non-controlling investment"],
-    [/cannot be reasonably verified/, "unverified brand exclusion"],
-    [/without the user's request/, "Node and shell default without mandatory Python"],
-    [/destructive operations visible before execution/, "destructive visibility"],
-    [/revise repeated failures/, "failure hypothesis revision"],
-    [/add\/update regression tests/, "regression tests for behavior changes"],
-    [/Visual inspection cannot replace executable checks/, "executable verification"],
-    [/do not derive all validation expectations solely from the implementation/, "independent validation oracle"],
-    [/shared assumptions and remaining gaps/, "correlated validation failures"],
-    [/code review as read-only/, "read-only review"],
+    [/範圍外的修改、commit、push、部署或 merge/, "authorization"],
+    [/擁有工具權限不等於得到授權/, "tools do not expand authorization"],
+    [/策略決策受中國資本實質影響/, "PRC control"],
+    [/不具控制力的少數股權/, "non-controlling investment"],
+    [/無法合理確認所有權或控制關係/, "unverified brand exclusion"],
+    [/不要讓 Python 變成必要條件/, "Node and shell default without mandatory Python"],
+    [/破壞性操作先明確顯示再執行/, "destructive visibility"],
+    [/重複失敗時換假設或做法/, "failure hypothesis revision"],
+    [/新增或更新回歸測試/, "regression tests for behavior changes"],
+    [/目視檢查不能取代可執行的檢查/, "executable verification"],
+    [/不能全部從實作本身推出來/, "independent validation oracle"],
+    [/共用的假設和剩下的缺口/, "correlated validation failures"],
+    [/Code review 預設唯讀/, "read-only review"],
+    [/multi-agent 編排.*要使用者明確同意/, "multi-agent opt-in"],
+    [/範圍不超過任務實際需要/, "minimal approval scope"],
+    [/不能放寬授權邊界、權限和購物資格/, "project instructions cannot loosen boundaries"],
+    [/任何「完成」「已修好」的說法，都要有實際的檢查或驗證支撐/, "completion claims need verification"],
+    [/優先用 harness 內建的提問工具/, "structured question tools"],
   ];
   for (const [pattern, label] of expectations) {
     assert.match(core, pattern, label);
   }
-  assert.ok(!core.includes("P01 — Local availability and support"));
-  assert.ok(!core.includes("For laws, regulations, standards"));
+  assert.ok(!core.includes("P01"), "purchase procedure stays in product-research");
+  assert.ok(!core.includes("unknown or undocumented"), "research procedure stays in evidence-research");
+});
+
+test("harness policies share one section skeleton and name their question tool", () => {
+  const order = ["指示載入", "規劃", "提問", "委派與模型", "權限與執行"];
+  const policies = {
+    claude: ["CLAUDE.md", "AskUserQuestion"],
+    codex: ["AGENTS.md", "request_user_input"],
+    antigravity: ["instructions.md", "ask_question"],
+  };
+  for (const [harness, [file, tool]] of Object.entries(policies)) {
+    const text = fs.readFileSync(path.join(SOURCE_REPO, "harnesses", harness, file), "utf8");
+    const headings = [...text.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+    assert.ok(headings.length > 0, harness);
+    for (const heading of headings) assert.ok(order.includes(heading), `${harness} has unexpected section ${heading}`);
+    assert.deepEqual(headings, [...headings].sort((a, b) => order.indexOf(a) - order.indexOf(b)), `${harness} section order`);
+    assert.match(text, new RegExp(`\\b${tool}\\b`), `${harness} question tool`);
+  }
 });
 
 test("Taiwan Chinese rules are always-on while 278 editorial examples stay on-demand", () => {
-  const core = require("../lib/instructions").generatedCore(SOURCE_REPO);
-  assert.match(core, /all.*user-facing responses.*everyday conversation/);
-  assert.match(core, /commonly retained English technical terms/);
-  assert.match(core, /formulaic AI rhetoric/);
+  const core = coreInstructions(SOURCE_REPO);
+  assert.match(core, /所有對使用者的回覆.*日常對話/);
+  assert.match(core, /API、SDK、PR、commit/);
+  assert.match(core, /公式化的 AI 腔/);
   assert.ok(!core.includes("A01 |"));
   const skill = path.join(SOURCE_REPO, "skills", "zh-tw-writing");
   const guide = fs.readFileSync(path.join(skill, "SKILL.md"), "utf8");
@@ -227,7 +256,7 @@ test("Taiwan Chinese rules are always-on while 278 editorial examples stay on-de
     "english-terms.md",
     "quality-and-sources.md",
   ];
-  assert.match(guide, /Ordinary conversation already follows the always-on communication preferences/);
+  assert.match(guide, /常駐指示的「中文表達」規則/);
   const seen = new Set();
   for (const name of references) {
     assert.ok(guide.includes("references/" + name), name + " must be discoverable");
@@ -244,7 +273,7 @@ test("Taiwan Chinese rules are always-on while 278 editorial examples stay on-de
   try {
     setupHarness(fixture, "codex");
     const instructions = fs.readFileSync(path.join(fixture.home, ".codex", "AGENTS.md"), "utf8");
-    assert.match(instructions, /formulaic AI rhetoric/);
+    assert.match(instructions, /公式化的 AI 腔/);
     assert.ok(!instructions.includes("A01 |"), "full guide must not be always-on");
     const projected = path.join(projectionRoot(fixture), "skills", "zh-tw-writing");
     assert.ok(fs.existsSync(path.join(projected, "SKILL.md")));
@@ -264,64 +293,26 @@ test("Taiwan Chinese rules are always-on while 278 editorial examples stay on-de
   }
 });
 
-test("inactive reference material is explicitly labeled and cannot accidentally affect runtime", () => {
-  const names = ["communication.md", "reasoning.md", "decisions.md", "engineering.md"];
-  for (const name of names) {
-    const source = fs.readFileSync(path.join(SOURCE_REPO, "preferences", name), "utf8");
-    assert.match(source, /## Detailed reference \(not deployed\)/);
-    assert.ok(source.indexOf("## Detailed reference (not deployed)") > source.indexOf("<!-- dot-agents:core:end -->"));
-    assert.ok(source.includes("editing this reference alone does not cause runtime drift"));
-  }
-
-  const fixture = makeFixture();
-  try {
-    setupHarness(fixture, "claude");
-    const globalPath = path.join(fixture.home, ".claude", "CLAUDE.md");
-    const generatedBefore = fs.readFileSync(globalPath, "utf8");
-    const source = path.join(fixture.repo, "preferences", "engineering.md");
-    fs.appendFileSync(source, "\n- future reference idea, not yet active\n");
-    const check = runCli(fixture, ["check"]);
-    assert.equal(check.status, 0, check.stderr || check.stdout);
-    assert.equal(fs.readFileSync(globalPath, "utf8"), generatedBefore);
-    assert.ok(!generatedBefore.includes("future reference idea"));
-  } finally {
-    fs.rmSync(fixture.root, {recursive: true, force: true});
-  }
-});
 
 test("research and product skills preserve unknown vs absent and evidence-limited comparisons", () => {
-  const research = generatedSkill(SOURCE_REPO, "evidence-research");
-  const shopping = generatedSkill(SOURCE_REPO, "product-research");
+  const research = fs.readFileSync(path.join(SOURCE_REPO, "skills", "evidence-research", "SKILL.md"), "utf8");
+  const shopping = fs.readFileSync(path.join(SOURCE_REPO, "skills", "product-research", "SKILL.md"), "utf8");
   assert.match(research, /unknown or undocumented/);
   assert.match(research, /verified absence/);
-  assert.match(shopping, /unverified warranty remains \*\*unknown\*\*/);
-  assert.match(shopping, /does not prove that a product is best overall/);
-  const core = require("../lib/instructions").generatedCore(SOURCE_REPO);
-  assert.ok(!core.includes("unverified warranty remains"));
-  assert.ok(!core.includes("unknown or undocumented"));
+  assert.match(shopping, /沒有查到的保固仍然是\*\*未知\*\*/);
+  assert.match(shopping, /不能證明商品整體最佳/);
+  for (const id of ["P01", "P02", "P03", "P04", "P05"]) assert.ok(shopping.includes(id), id);
 });
 
-test("doctor labels generated and repository skills separately", () => {
-  const fixture = makeFixture();
-  try {
-    const setup = runCli(fixture, ["setup", "--none", "--yes"]);
-    assert.equal(setup.status, 0, setup.stderr || setup.stdout);
-    const doctor = runCli(fixture, ["doctor"]);
-    assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /2 個由 preferences 衍生：evidence-research、product-research/);
-    assert.doesNotMatch(doctor.stdout, /本地撰寫（不在 lockfile）的 skill：.*evidence-research/);
-  } finally {
-    fs.rmSync(fixture.root, {recursive: true, force: true});
-  }
-});
 
-test("generated skills deploy to all selected harnesses and respond to non-core edits without changing core", () => {
+test("skill edits redeploy the skill to every harness without touching global instructions", () => {
   const fixture = makeFixture();
   try {
     for (const executable of ["codex", "claude", "agy"]) addExecutable(fixture, executable);
     const setup = runCli(fixture, ["setup", "--all", "--yes"]);
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
 
+    const source = path.join(fixture.repo, "skills", "product-research", "SKILL.md");
     const targets = [
       path.join(projectionRoot(fixture), "skills", "product-research", "SKILL.md"),
       path.join(fixture.home, ".agents", "skills", "product-research", "SKILL.md"),
@@ -330,13 +321,8 @@ test("generated skills deploy to all selected harnesses and respond to non-core 
     ];
     const baselines = targets.map((target) => fs.readFileSync(target, "utf8"));
     const originalGlobal = fs.readFileSync(path.join(fixture.home, ".codex", "AGENTS.md"), "utf8");
-    assert.ok(originalGlobal.includes("material strategic decision-making influence"));
-    assert.ok(originalGlobal.includes("Do not treat a draft"));
-    assert.ok(!originalGlobal.includes("P01 — Local availability and support"));
-    assert.ok(!originalGlobal.includes("For laws, regulations, standards"));
 
-    const source = path.join(fixture.repo, "preferences", "shopping.md");
-    fs.appendFileSync(source, "\n- Verify the product review after each significant new source.\n");
+    fs.appendFileSync(source, "\n- 每找到一個重要的新來源，就重新檢查推薦。\n");
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
     assert.match(check.stdout, /product-research/);
@@ -345,9 +331,7 @@ test("generated skills deploy to all selected harnesses and respond to non-core 
 
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
-    for (const target of targets) {
-      assert.equal(fs.readFileSync(target, "utf8"), generatedSkill(fixture.repo, "product-research"));
-    }
+    for (const target of targets) assert.equal(fs.readFileSync(target, "utf8"), fs.readFileSync(source, "utf8"));
     assert.equal(fs.readFileSync(path.join(fixture.home, ".codex", "AGENTS.md"), "utf8"), originalGlobal);
     const settled = runCli(fixture, ["check"]);
     assert.equal(settled.status, 0, settled.stderr || settled.stdout);
@@ -356,72 +340,21 @@ test("generated skills deploy to all selected harnesses and respond to non-core 
   }
 });
 
-test("missing or duplicated core markers fail before mutation even without a selected harness", () => {
-  for (const defect of ["missing", "duplicated"]) {
-    const fixture = makeFixture();
-    try {
-      const setup = runCli(fixture, ["setup", "--none", "--yes"]);
-      assert.equal(setup.status, 0, setup.stderr || setup.stdout);
-      const catalog = path.join(projectionRoot(fixture), "catalog.json");
-      const before = fs.readFileSync(catalog);
-      const source = path.join(fixture.repo, "preferences", "decisions.md");
-      const body = fs.readFileSync(source, "utf8");
-      const mutated = defect === "missing"
-        ? body.replace("<!-- dot-agents:core:end -->", "")
-        : body.replace("<!-- dot-agents:core:end -->", "<!-- dot-agents:core:end -->\n<!-- dot-agents:core:end -->");
-      fs.writeFileSync(source, mutated);
-      const sync = runCli(fixture, ["sync", "--yes"]);
-      assert.notEqual(sync.status, 0);
-      assert.match(`${sync.stderr}\n${sync.stdout}`, /core 標記/);
-      assert.deepEqual(fs.readFileSync(catalog), before);
-    } finally {
-      fs.rmSync(fixture.root, { recursive: true, force: true });
-    }
-  }
-});
 
-test("generated skill collision and unexpected destination files refuse unsafe sync", () => {
-  const fixture = makeFixture();
-  try {
-    setupHarness(fixture, "codex");
-    const target = path.join(fixture.home, ".agents", "skills", "product-research");
-    const extra = path.join(target, "user-notes.md");
-    fs.writeFileSync(extra, "DO NOT DELETE\n");
-    const source = path.join(fixture.repo, "preferences", "shopping.md");
-    fs.appendFileSync(source, "\n- new guidance\n");
-    const sync = runCli(fixture, ["sync", "--yes"]);
-    assert.notEqual(sync.status, 0);
-    assert.match(`${sync.stderr}\n${sync.stdout}`, /不受 dot-agents 管理的檔案/);
-    assert.equal(fs.readFileSync(extra, "utf8"), "DO NOT DELETE\n");
-
-    fs.rmSync(extra);
-    const collision = path.join(fixture.repo, "skills", "product-research");
-    fs.mkdirSync(collision);
-    fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
-    const check = runCli(fixture, ["check"]);
-    assert.notEqual(check.status, 0);
-    assert.match(`${check.stderr}\n${check.stdout}`, /衝突/);
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true });
-  }
-});
-
-test("doctor reports generated skill collision but continues other diagnostics", () => {
+test("an empty shared core fails before mutation even without a selected harness", () => {
   const fixture = makeFixture();
   try {
     const setup = runCli(fixture, ["setup", "--none", "--yes"]);
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
-    const collision = path.join(fixture.repo, "skills", "product-research");
-    fs.mkdirSync(collision);
-    fs.writeFileSync(path.join(collision, "SKILL.md"), "---\nname: product-research\ndescription: collision\n---\n");
-    const doctor = runCli(fixture, ["doctor"]);
-    assert.equal(doctor.status, 1, doctor.stderr || doctor.stdout);
-    assert.match(doctor.stdout, /衍生 skill 名稱與 skills\/ 中的 skill 衝突/);
-    assert.match(doctor.stdout, /同步狀態/);
-    assert.match(doctor.stdout, /\nTransaction\n/);
-    assert.match(doctor.stdout, /\n備份\n/);
+    const catalog = path.join(projectionRoot(fixture), "catalog.json");
+    const before = fs.readFileSync(catalog);
+    fs.writeFileSync(path.join(fixture.repo, "instructions", "core.md"), "\n\n");
+    const sync = runCli(fixture, ["sync", "--yes"]);
+    assert.notEqual(sync.status, 0);
+    assert.match(`${sync.stderr}\n${sync.stdout}`, /core\.md 是空的/);
+    assert.deepEqual(fs.readFileSync(catalog), before);
   } finally {
-    fs.rmSync(fixture.root, {recursive: true, force: true});
+    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
@@ -488,7 +421,7 @@ test("sync transaction rolls back previously applied actions on failure", () => 
 });
 
 
-test("rollback of new generated skill removes its empty new folder without deleting user files", () => {
+test("rollback of a new skill file removes its empty new folder without deleting user files", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dot-agents-empty-parent-"));
   const home = path.join(root, "home");
   fs.mkdirSync(home);
@@ -586,14 +519,14 @@ test("projection accepts folded and literal block-scalar descriptions", () => {
   try {
     const commitPath = path.join(fixture.repo, "skills", "commit", "SKILL.md");
     fs.writeFileSync(commitPath, "---\nname: commit\ndescription: >\n  Commit repository changes\n  with a portable workflow.\n---\n\n# Commit\n");
-    const eli5Path = path.join(fixture.repo, "skills", "eli5", "SKILL.md");
-    fs.writeFileSync(eli5Path, "---\nname: eli5\ndescription: |\n  Explain clearly.\n  Keep useful detail.\n---\n\n# ELI5\n");
+    const literalPath = path.join(fixture.repo, "skills", "change-verification", "SKILL.md");
+    fs.writeFileSync(literalPath, "---\nname: change-verification\ndescription: |\n  Explain clearly.\n  Keep useful detail.\n---\n\n# Verify\n");
 
     const setup = runCli(fixture, ["setup", "--none", "--yes"]);
     assert.equal(setup.status, 0, setup.stderr || setup.stdout);
     const catalog = JSON.parse(fs.readFileSync(path.join(projectionRoot(fixture), "catalog.json"), "utf8"));
     assert.equal(catalog.skills.find((skill) => skill.name === "commit").description, "Commit repository changes with a portable workflow.");
-    assert.equal(catalog.skills.find((skill) => skill.name === "eli5").description, "Explain clearly.\nKeep useful detail.");
+    assert.equal(catalog.skills.find((skill) => skill.name === "change-verification").description, "Explain clearly.\nKeep useful detail.");
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -661,13 +594,8 @@ test("projection catalog metadata and tree hashes are deterministic", () => {
     for (const skill of catalog.skills) {
       assert.equal(skill.entrypoint, "SKILL.md");
       assert.match(skill.description, /\S/);
-      const source = GENERATED_SKILLS[skill.name]
-        ? path.join(projectionRoot(fixture), "skills", skill.name)
-        : path.join(fixture.repo, "skills", skill.name);
+      const source = path.join(fixture.repo, "skills", skill.name);
       assert.equal(skill.hash, `sha256:${fixtureTreeDigest(source)}`);
-      if (GENERATED_SKILLS[skill.name]) {
-        assert.equal(fs.readFileSync(path.join(source, "SKILL.md"), "utf8"), generatedSkill(fixture.repo, skill.name));
-      }
     }
 
     const second = runCli(fixture, ["sync", "--yes"]);
@@ -705,14 +633,14 @@ test("stale projected skills are cleaned without touching unrelated files", () =
     const unrelated = path.join(skillsRoot, "manual-skill");
     fs.mkdirSync(unrelated, { recursive: true });
     fs.writeFileSync(path.join(unrelated, "SKILL.md"), "manual\n");
-    fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
+    fs.rmSync(path.join(fixture.repo, "skills", "change-verification"), { recursive: true, force: true });
 
     const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /移除 skill projection：eli5/);
+    assert.match(check.stdout, /移除 skill projection：change-verification/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
-    assert.ok(!fs.existsSync(path.join(skillsRoot, "eli5")));
+    assert.ok(!fs.existsSync(path.join(skillsRoot, "change-verification")));
     assert.ok(fs.existsSync(path.join(unrelated, "SKILL.md")));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -852,20 +780,20 @@ test("skill ownership survives a sync while the harness is missing from PATH", (
   const fixture = makeFixture();
   try {
     setupHarness(fixture, "codex");
-    const stale = path.join(fixture.home, ".agents", "skills", "eli5");
+    const stale = path.join(fixture.home, ".agents", "skills", "change-verification");
     assert.ok(fs.existsSync(stale));
 
     fs.rmSync(path.join(fixture.bin, "codex"));
     const missing = runCli(fixture, ["sync", "--yes"]);
     assert.equal(missing.status, 0, missing.stderr || missing.stdout);
     const state = JSON.parse(fs.readFileSync(path.join(fixture.home, ".config", "dot-agents", "state.json"), "utf8"));
-    assert.ok(state.skills.codex.includes("eli5"));
+    assert.ok(state.skills.codex.includes("change-verification"));
 
-    fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
+    fs.rmSync(path.join(fixture.repo, "skills", "change-verification"), { recursive: true, force: true });
     addExecutable(fixture, "codex");
     const check = runCli(fixture, ["check", "--verbose"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /移除 .*（移除 codex skill：eli5）/);
+    assert.match(check.stdout, /移除 .*（移除 codex skill：change-verification）/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(stale));
@@ -904,16 +832,16 @@ test("removed managed skills are cleaned up without touching unmanaged runtime s
   try {
     setupHarness(fixture, "codex");
     const runtimeSkills = path.join(fixture.home, ".agents", "skills");
-    const managed = path.join(runtimeSkills, "eli5");
+    const managed = path.join(runtimeSkills, "change-verification");
     const unmanaged = path.join(runtimeSkills, "manual-skill");
     assert.ok(fs.existsSync(managed));
     fs.mkdirSync(unmanaged, { recursive: true });
     fs.writeFileSync(path.join(unmanaged, "SKILL.md"), "manual\n");
-    fs.rmSync(path.join(fixture.repo, "skills", "eli5"), { recursive: true, force: true });
+    fs.rmSync(path.join(fixture.repo, "skills", "change-verification"), { recursive: true, force: true });
 
     const check = runCli(fixture, ["check"]);
     assert.equal(check.status, 1, check.stderr || check.stdout);
-    assert.match(check.stdout, /移除.*eli5/);
+    assert.match(check.stdout, /移除.*change-verification/);
     const sync = runCli(fixture, ["sync", "--yes"]);
     assert.equal(sync.status, 0, sync.stderr || sync.stdout);
     assert.ok(!fs.existsSync(managed));
@@ -1348,7 +1276,7 @@ test("skills views show per-harness status, reasons, and unmanaged skills", () =
     assert.match(matrix.stdout, /^Skill\s+來源\s+Claude Code\s+Codex\s+Google Antigravity$/m);
     assert.match(matrix.stdout, /^commit\s+本地\s+✓\s+△\s+—$/m);
     assert.match(matrix.stdout, /^delegation-presets\s+本地\s+✓\s+—\s+—$/m);
-    assert.match(matrix.stdout, /^evidence-research\s+衍生\s+✓\s+✓\s+—$/m);
+    assert.match(matrix.stdout, /^evidence-research\s+本地\s+✓\s+✓\s+—$/m);
     assert.match(matrix.stdout, /^cmux\s+外部\s+—\s+—\s+—$/m);
     assert.match(matrix.stdout, /找不到 cmux 執行檔/);
     assert.match(matrix.stdout, /Google Antigravity：全部 skill（harness 未管理）/);
@@ -1390,7 +1318,7 @@ test("status summarizes harnesses, pending sync, skills, and backups", () => {
     assert.equal(clean.status, 0, clean.stderr || clean.stdout);
     assert.match(clean.stdout, /^Harness：Claude Code、Codex（未選取）、Google Antigravity（未選取）$/m);
     assert.match(clean.stdout, /同步：所有受管理的輸出都已同步/);
-    assert.match(clean.stdout, /Skills：\d+ 個（本地 \d+、外部 \d+、衍生 2）/);
+    assert.match(clean.stdout, /Skills：\d+ 個（本地 \d+、外部 \d+）/);
 
     fs.writeFileSync(path.join(fixture.home, ".claude", "CLAUDE.md"), "drift\n");
     const pending = runCli(fixture, ["status"]);

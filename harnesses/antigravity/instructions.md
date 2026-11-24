@@ -1,22 +1,23 @@
-# Google Antigravity-specific guidance
+# Google Antigravity 專屬規則
 
-## Workflow selection
+## 指示載入
 
-- Work directly on clear, bounded tasks. Use planning when multiple dependent steps, significant uncertainty, or risky changes benefit from an explicit plan.
-- When running on a Gemini Flash model, take only small, well-specified work. For orchestration, deep reasoning, or code review, say the task is better suited to Claude Code or Codex CLI instead of attempting it.
-- When asked to add a persistent rule, keep it concise; put repeatable task procedures in skills or workflows instead of always-on rules.
+- 共通規則提到的「寫成 skill」在 Antigravity 也可以寫成 workflow；global rule 和 workspace rule 保持精簡。
 
-## Agents and delegation
+## 規劃
 
-- Use background subagents or custom agents only when isolation, specialization, or independent parallel work provides a clear benefit.
-- Keep the main agent responsible for user intent, scope, permission-sensitive decisions, integration, and final reporting.
-- Do not require a fixed set of agent roles. Add a custom agent only for a recurring responsibility supported by the installed Antigravity version.
+- 共通規則要求先規劃時，用 planning 模式。
 
-## Skills
+## 提問
 
-- Use skills when their playbook materially helps the task. Basic correctness must not depend on automatic skill discovery.
+- 需要使用者選擇時，用 `ask_question`。
 
-## Permissions and execution
+## 委派與模型
 
-- Respect global and project permission settings. Do not broaden an approval target beyond the task's actual need.
-- Keep workspace access scoped to the active project. Treat non-workspace access, browser actuation, unsandboxed commands, and destructive operations as permission-sensitive.
+- 使用 Gemini Flash 模型時，只接小而明確的工作。編排、深度推理或 code review，說明較適合交給 Claude Code 或 Codex CLI，不要硬做。
+- 背景 subagent 和 custom agent 只在隔離、專業分工或獨立平行工作有明確好處時使用。主 agent 負責使用者意圖、範圍、權限決策、整合和最終回報。
+- 只為反覆出現、而且目前安裝版本支援的職責新增 custom agent；不要預設一組固定角色。
+
+## 權限與執行
+
+- workspace 存取限於目前專案。存取 workspace 以外的路徑、操作瀏覽器、執行沒有 sandbox 的指令和破壞性操作，都視為權限敏感。
