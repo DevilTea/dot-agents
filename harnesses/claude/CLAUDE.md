@@ -19,7 +19,8 @@
 - Reserve the top tier (`fable`) for orchestration — planning, decomposition, cross-agent integration, final synthesis — and for hard research the user has explicitly asked it to handle. Do not use it for implementation, review, search, mechanical edits, or documentation.
 - Do not self-authorize a top-tier escalation. When a unit looks harder than its assigned tier, attempt it at that tier; if it fails, report the evidence and let the user decide whether to escalate.
 - Subagents and workflow agents inherit the main session's model when the `model` option is omitted. Whenever the main session runs a tier above the delegated task class, set `model` explicitly on every delegated unit — an omitted option silently runs the entire fan-out at the session's tier.
-- Route delegated work through the `model-routing` skill's table rather than from memory.
+- Default delegated work to Opus with effort matched to the task; use Haiku only for low-judgment search and reporting; do not use Sonnet.
+- Take model, effort, agent type and brief contents from the `delegation-presets` skill rather than from memory.
 
 ## Tools and permissions
 
