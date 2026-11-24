@@ -24,7 +24,7 @@
 
 cmux 系列只安裝 end-user 導向的 skill（topology、workspace、browser、settings、diagnostics、customization 等）。針對 cmux 原始碼開發的 skill（architecture、backend、testing、release 等）不安裝：本機沒有 cmux 原始碼，它們永遠不會正確觸發，只會佔用每個 session 的 context 並稀釋 skill 選擇。同一標準適用於其他外部來源 —— 只安裝與實際使用情境相符的 skill，不整包引入。
 
-`cmux`／`cmux-*`、`gh`、`agent-browser` 都是 runtime-gated skills：`dot-agents sync` 只有在對應 executable 存在於 `PATH` 時才部署它們，gate 清單以 `scripts/dot-agents` 的 `SKILL_RUNTIME_REQUIREMENTS` 為準。這些 Skill 追蹤 upstream 最新內容，可能描述比本機工具更新的指令；更新 Skill 時應一併把對應工具升級到最新版本。Runtime 不可用時會列出被略過的 skill；若曾經部署過，sync 會透過 local ownership state 清理 stale copies，避免 runtime 消失後殘留不可用的 skill。
+`cmux`／`cmux-*`、`gh`、`agent-browser` 都是 runtime-gated skills：`dot-agents sync` 只有在對應 executable 存在於 `PATH` 時才部署它們，gate 清單以 `lib/skills.js` 的 `SKILL_RUNTIME_REQUIREMENTS` 為準。這些 Skill 追蹤 upstream 最新內容，可能描述比本機工具更新的指令；更新 Skill 時應一併把對應工具升級到最新版本。Runtime 不可用時會列出被略過的 skill；若曾經部署過，sync 會透過 local ownership state 清理 stale copies，避免 runtime 消失後殘留不可用的 skill。
 
 Setup 只逐一安裝此目錄的內容，不會安裝 [`../optional-skills/`](../optional-skills/)。canonical skill 移除後，sync 只會清理 local ownership state 記錄為 dot-agents 管理的 copy，不碰 harness 自己或使用者手動放置的 skill。
 
