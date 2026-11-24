@@ -1,84 +1,83 @@
 ---
 name: delegation-presets
-description: Ready-made presets for Claude Code subagents and workflows — model, effort, agent type, brief contents and expected report for each recurring kind of delegated work (search, implementation, review, finding verification, debugging, research, docs). Use when spawning a subagent, authoring a workflow script, or running an independent review in a separate session.
+description: Claude Code subagent 和 workflow 的委派預設（delegate, subagent, workflow, model, effort）。每一類常見的委派工作（搜尋、實作、review、finding 驗證、除錯、研究、文件）各有 model、effort、agent type、brief 內容和預期回報。派出 subagent、撰寫 workflow script，或在另一個 session 做獨立 review 時使用。
 ---
 
-# Delegation Presets
+# 委派預設
 
-Pick the preset that matches the delegated unit and apply all of its fields. Explicit user or project instructions about model, effort or agent type always win.
+選出符合委派單位的預設，套用它的所有欄位。使用者或專案對 model、effort、agent type 的明確指示永遠優先。
 
-## Model policy
+模型分級的硬規則（`fable` 只作為主 session、一律明確設定 `model`、不用 Sonnet）寫在 Claude Code 的常駐規則裡，這裡只補充細節：
 
-- **Opus is the working tier.** Vary effort to match the task instead of switching to a faster model; a cheaper model that needs extra correction rounds costs more than it saves.
-- **Haiku only for low-judgment search and reporting**: locating files, symbols, strings and configuration, and quoting what is there. If the unit has to decide whether something is a bug, which design is better, or what to change, it is not a Haiku unit.
-- **Do not use Sonnet**, including custom agent types whose definition pins it (such as `sonnet-high`).
-- **Fable** runs only as the main session for orchestration, or for hard research the user explicitly assigned to it. Never delegate a unit to it.
-- **Always set `model` and `effort` explicitly.** An omitted `model` inherits the main session's model, so a fan-out from a Fable session runs entirely on Fable. Leave `effort` unset only for Haiku units.
+- **Opus 是主力。** 依任務調整 effort，不要改用比較快的模型；便宜的模型如果需要額外修正，總成本反而更高。
+- **Haiku 只做低判斷的搜尋和回報**：找檔案、符號、字串和設定，並引用找到的內容。需要判斷是不是 bug、哪個設計比較好，或該改什麼的單位，都不交給 Haiku。
+- 不使用把模型固定為 Sonnet 的 custom agent type（例如 `sonnet-high`）。
+- `effort` 也一律明確設定，只有 Haiku 單位可以不設。
 
-## Presets
+## 預設一覽
 
-| Preset | Agent type | Model | Effort |
+| 預設 | Agent type | Model | Effort |
 | --- | --- | --- | --- |
-| Search and report | `Explore` | `haiku` | — |
-| Implementation | `general-purpose` | `opus` | `medium`; `high` for unfamiliar code, cross-module changes, concurrency or persistent data |
-| Independent review | `general-purpose` | `opus` | `high`; `xhigh` for release, security, data-loss or final review |
-| Finding verification | workflow stage | `opus` | `medium` |
-| Debugging and root cause | `general-purpose` | `opus` | `xhigh` |
-| Research | `general-purpose` | `opus` | `medium` for collecting and summarizing; `xhigh` for conflicting evidence or deep comparison |
-| Docs and mechanical edits | `general-purpose` | `opus` | `low` |
+| 搜尋與回報 | `Explore` | `haiku` | — |
+| 實作 | `general-purpose` | `opus` | `medium`；不熟的程式碼、跨模組、並行或持久資料用 `high` |
+| 獨立 review | `general-purpose` | `opus` | `high`；release、安全、資料遺失或最終 review 用 `xhigh` |
+| Finding 驗證 | workflow stage | `opus` | `medium` |
+| 除錯與根因 | `general-purpose` | `opus` | `xhigh` |
+| 研究 | `general-purpose` | `opus` | 收集和摘要用 `medium`；證據矛盾或深入比較用 `xhigh` |
+| 文件和機械性修改 | `general-purpose` | `opus` | `low` |
 
-`Explore` and `Plan` do not receive CLAUDE.md files; other agent types do, so name the specific rule a unit needs instead of pasting the whole policy.
+`Explore` 和 `Plan` 不會收到 CLAUDE.md，其他 agent type 會收到；所以只要點名單位需要的那條規則，不要貼整份政策。
 
-### Search and report
+### 搜尋與回報
 
-- Brief: the exact question, the search scope, and the output format (`path:line` plus a short quote per hit, and what was searched but not found).
-- Forbid recommendations and judgments; the caller interprets the results.
+- Brief：明確的問題、搜尋範圍和輸出格式（每個結果附 `path:line` 和簡短引文，並列出搜尋過但沒找到的項目）。
+- 禁止給建議或判斷，由呼叫端解讀結果。
 
-### Implementation
+### 實作
 
-- Brief: objective, acceptance criteria, files or areas in scope, the branch or worktree to work in, constraints (no push, no unrelated edits), and the checks to run.
-- Require that every test claimed to guard a fix is shown to fail without the fix.
-- Report: status, changes, checks run and not run, open questions, remaining risks.
+- Brief：目標、驗收條件、範圍內的檔案或區域、要使用的分支或 worktree、限制（不 push、不改無關內容），以及要跑的檢查。
+- 要求每個宣稱能保護修正的測試，都要證明在沒有修正時會失敗。
+- 回報：狀態、變更、跑過和沒跑的檢查、未解的問題、剩下的風險。
 
-### Independent review
+### 獨立 review
 
-- Give the target (diff range, branch, PR) and any authoritative spec or acceptance criteria.
-- **Withhold the author's rationale and conclusions.** A reviewer handed the author's view tends to confirm it.
-- Ask for findings with `file:line`, a concrete failure scenario and the evidence; "no findings" is an acceptable answer. Review is read-only.
+- 提供審查目標（diff 範圍、分支、PR），以及權威的規格或驗收條件。
+- **不要提供作者的理由和結論。** 拿到作者觀點的 reviewer 容易只是附和。
+- 要求每個 finding 附 `file:line`、具體的失敗情境和證據；「沒有發現問題」是可以接受的答案。Review 是唯讀的。
 
-### Finding verification
+### Finding 驗證
 
-- One unit per finding. Prompt it to refute the finding, defaulting to refuted when the evidence is insufficient.
-- Use several independent verifiers or distinct lenses (correctness, security, reproducibility) for high-stakes findings.
+- 每個 finding 一個單位。要求它嘗試推翻 finding，證據不足時預設判定為推翻。
+- 高風險的 finding 用多個獨立驗證者，或不同的角度（正確性、安全性、可重現性）。
 
-### Debugging and root cause
+### 除錯與根因
 
-- Brief: the observed failure, reproduction steps, what has been ruled out, and what counts as a confirmed cause.
-- Ask for evidence of the cause (a failing check that the fix turns green), not just a plausible story.
+- Brief：觀察到的失敗、重現步驟、已經排除的項目，以及怎樣才算確認原因。
+- 要求原因的證據（一個修正前失敗、修正後通過的檢查），不只是說得通的故事。
 
-### Research
+### 研究
 
-- Brief: the question, the decision it informs, the sources that count, and how time-sensitive the facts are.
-- Ask for claims separated from inferences, with sources and dates.
+- Brief：問題、它要支援的決定、可採信的來源，以及事實的時效性。
+- 要求主張和推論分開，並附來源和日期。
 
-## Escalation
+## 升級
 
-- On repeated failure of the same unit, raise effort one step with the new evidence in the brief; never retry unchanged.
-- Use `max` only on user request, or as one step above a failed `xhigh` unit, and say so in the report.
-- Never move a unit to Fable on your own judgment. Report the failure evidence and let the user decide.
-- If the failure traces to an unclear spec, fix the spec instead; no effort level compensates for an unstated acceptance criterion.
+- 同一個單位重複失敗時，把新的證據寫進 brief，effort 調高一級；不要原樣重試。
+- `max` 只在使用者要求時使用，或作為 `xhigh` 失敗後的下一級，並在回報中說明。
+- 不要自行把單位改成 Fable，回報失敗證據，讓使用者決定。
+- 失敗源自規格不清楚時，先修規格；任何 effort 等級都補不了沒寫出來的驗收條件。
 
-## Workflow presets
+## Workflow 預設
 
-Multi-agent workflows still need the user's explicit opt-in. When proposing one, state its shape and the rough agent count.
+Multi-agent workflow 仍然需要使用者明確同意。提議時說明它的形狀和大概的 agent 數量。
 
-| Workflow | Shape | Agents |
+| Workflow | 形狀 | Agent 數量 |
 | --- | --- | --- |
-| Review then verify | one independent review per dimension → one finding verification per finding | dimensions + findings |
-| Parallel implementation | one implementation unit per issue with `isolation: 'worktree'` → one independent review per result | 2 × issues |
-| Broad search sweep | several search-and-report units, each searching a different way → synthesis in the main session | searchers |
+| 先 review 再驗證 | 每個面向一個獨立 review → 每個 finding 一個驗證 | 面向數 + finding 數 |
+| 平行實作 | 每個 issue 一個實作單位（`isolation: 'worktree'`）→ 每個結果一個獨立 review | 2 × issue 數 |
+| 廣泛搜尋 | 多個搜尋單位，各用不同方式搜尋 → 由主 session 彙整 | 搜尋單位數 |
 
-Set the preset's fields on every `agent()` call:
+每個 `agent()` 呼叫都要設定預設的欄位：
 
 ```js
 agent(reviewPrompt, { label: 'review:correctness', model: 'opus', effort: 'high', schema: FINDINGS })
@@ -86,21 +85,21 @@ agent(refutePrompt, { label: `verify:${finding.file}`, model: 'opus', effort: 'm
 agent(searchPrompt, { label: 'search:config', model: 'haiku', agentType: 'Explore' })
 ```
 
-## Independent review in a separate session
+## 在另一個 session 做獨立 review
 
-A subagent inherits CLAUDE.md, and a review inside the authoring session sees its own earlier reasoning. For a review that should challenge the work, start a fresh session in safe mode, which skips CLAUDE.md, auto-memory, skills, plugins, hooks and MCP servers:
+Subagent 會繼承 CLAUDE.md，而在撰寫的 session 裡做 review，會看到自己先前的推理。要真正挑戰成果的 review，應該開一個 safe mode 的新 session；safe mode 會略過 CLAUDE.md、auto-memory、skill、plugin、hook 和 MCP server：
 
 ```bash
 claude --safe-mode -p "Review main...HEAD. Challenge each design decision and report findings with file:line and evidence."
 ```
 
-- To add skill knowledge, tell it to read the skill file first (for example `~/.claude/skills/vue-best-practices/SKILL.md`) and follow its references. `--plugin-dir` is ignored in safe mode; `--append-system-prompt-file` works for a single file.
-- Pass only the target, not the PR description or the author's conclusions.
+- 需要 skill 知識時，請它先讀 skill 檔案（例如 `~/.claude/skills/vue-best-practices/SKILL.md`），再依照其中的 references 操作。Safe mode 會忽略 `--plugin-dir`；`--append-system-prompt-file` 可以附加單一檔案。
+- 只提供審查目標，不要提供 PR 描述或作者的結論。
 
-## Reporting
+## 回報
 
-For each delegated unit, state the preset and the model and effort used, so the choice is reviewable.
+每個委派單位都要寫出使用的預設、model 和 effort，讓這個選擇可以被檢查。
 
-## Maintenance
+## 維護
 
-Use model aliases (`opus`, `haiku`, `fable`), which Claude Code resolves to current model IDs. The session default lives in dot-agents' Claude settings (`model` plus `modelSettings.<model>.effortLevel`, keyed by the full model ID); when the Opus generation changes, update both keys together.
+使用 model alias（`opus`、`haiku`、`fable`），Claude Code 會解析成目前的 model ID。Session 的預設值在 dot-agents 的 Claude settings 裡（`model` 加上 `modelSettings.<model>.effortLevel`，以完整的 model ID 為 key）；Opus 世代更換時，兩個 key 要一起更新。

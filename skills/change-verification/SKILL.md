@@ -1,66 +1,52 @@
 ---
 name: change-verification
-description: Establish independent, risk-proportionate evidence for nontrivial code changes and bug fixes. Use when validating AI-generated behavior, investigating regressions, or auditing whether passing tests and reviews actually support correctness. Skip for trivial changes already covered by ordinary checks.
+description: 驗證程式變更的 SOP（verify a change, validate a fix, test plan, regression check）。用於不算小的行為變更和 bug 修正：驗證 AI 產生的實作、調查回歸，或檢查通過的測試和 review 是否真的能支持「正確」這個結論。已經被一般檢查涵蓋的小改動不需要載入。
 ---
 
-# Change Verification
+# 驗證變更
 
-Validate intended behavior, not merely the implementation's self-consistency. Checks sharing the same mistaken assumption do not necessarily increase confidence.
+驗證的是「預期的行為」，不只是實作和它自己的測試互相一致。共用同一個錯誤假設的檢查，再多也不會提高信心。
 
-## When to use
+專案的指示和授權要求優先於這份流程。低風險的文字、樣式或機械性修改，不要硬套完整的多階段流程。
 
-Apply this playbook to nontrivial behavior changes, consequential bug fixes, and reviews of potentially correlated AI-generated implementations and tests. Do not turn low-risk text, styling, or mechanical edits into a fixed multi-stage ceremony. Existing project instructions and authorization requirements take precedence.
+## 步驟
 
-## Workflow
+1. **確立判準（oracle）。**
+   - 找出這次改變的行為，以及預期結果的權威依據：已接受的需求、公開契約、不變量、可靠的外部規格，或可重現的觀察。
+   - 區分**應有的行為**和**目前的行為**、推測的意圖和假設。baseline 只記錄發生了什麼，不證明那是對的。
+   - 每個重要的驗收條件，都要追溯到**不只來自新實作**的證據。不要從程式碼產生全部測試，再把它們的一致當成獨立確認。
+   - 無法確立預期行為時，標為未知；能檢查的部分照常檢查，不要自己發明需求，真正需要使用者決定的地方提出來。
+2. **找出有意義的失敗模式。**
+   - 依相關性優先考慮：邊界輸入、無效狀態、錯誤路徑、並行、相容性、安全性、資料完整性，以及和周邊元件的互動。
+   - Bug 修正：可行時，先重現修正前的失敗。優先寫一個在錯誤行為下失敗、修正後通過的回歸檢查；做不到時記錄原因。
+   - 把力氣放在影響大、可能發生的失敗上，不要列舉假想案例。
+3. **挑選互補的檢查。** 用最少的檢查涵蓋不同的失敗模式：
 
-### 1. Establish the oracle
+   | 證據 | 回答的問題 |
+   | --- | --- |
+   | Typecheck、lint、靜態分析 | 有沒有違反機械性的限制？ |
+   | 以需求為依據的單元測試或 property-based 測試 | 個別行為是否符合契約和不變量？ |
+   | 使用真實相依的整合測試 | 元件邊界組合起來是否正確？ |
+   | E2E 或實際 runtime 檢查 | 使用者看到的流程在目標環境能不能用？ |
+   | Fuzzing、mutation、故障注入、對抗式探測 | 檢查能不能抓到真實的反例？ |
 
-- Identify the changed behavior and the authoritative basis for its expected outcome: accepted requirements, public contracts, invariants, reliable external specifications, or reproducible observations.
-- Separate **required behavior** from **current behavior**, inferred intent, and assumptions. A baseline records what happened; it is not proof that the behavior is desirable.
-- For each consequential acceptance criterion, trace its expectation to evidence **not derived solely from the new implementation**. Do not generate all tests from the code and then treat their agreement as independent confirmation.
-- When the expected behavior cannot be established, label it unknown. Validate what can be checked without inventing requirements; surface any decision that genuinely requires the user.
+   這些是選項，不是必做清單。檢查不同檢查之間是否共用相依、fixture、mock、預期值和假設。兩個 agent 用同一個錯誤的判準，不會因為是不同的 agent 就變成獨立驗證；這份流程從不要求委派。
+4. **執行並挑戰證據。**
+   - 依風險執行檢查，使用專案現有的工具；保留可重現的指令和觀察到的結果。
+   - 不確定性或後果夠大時，用反例、刻意寫錯的版本、調換順序的回應或真實相依，挑戰關鍵假設，而不是只加更多 happy path 測試。
+   - 檢查無法執行、失敗或結果不明時，調查或回報缺口；不要把沒有執行或沒有結論的檢查當成通過。
+5. **回報有支撐的結論。** 區分**觀察到的證據**、**推論**和**剩下的未知**，並寫出：
+   - 檢查的需求或不變量，以及它的判準來源。
+   - 實際執行的檢查、執行環境和結果。
+   - 涵蓋了哪些重要的失敗模式，以及測試和 review 是否共用同樣的假設。
+   - 沒有執行的重要檢查、剩下的風險和尚未解決的決定。
 
-### 2. Identify meaningful failure modes
+通過的檢查只在它涵蓋的行為和環境內建立信心。沒有證據時，不要宣稱整體正確、經過獨立審查或已完整驗證。
 
-- Prioritize how the change can fail: boundary inputs, invalid states, error paths, concurrency, compatibility, security, data integrity, and interactions with surrounding components, as relevant.
-- For a bug fix, reproduce the original failure before the fix where feasible. Prefer a regression check that fails against the faulty behavior and passes with the fix; otherwise record why that comparison is unavailable.
-- Focus effort on failures with material impact and plausible likelihood rather than enumerating hypothetical cases.
+## 依風險調整
 
-### 3. Select complementary checks
+- **低風險：** 看過 diff、跑現有的相關檢查即可，通常不需要專門的驗證計畫。
+- **中風險：** 確認有獨立依據的驗收預期、一個針對性的回歸或負面案例，以及受影響的整合邊界。
+- **高風險**（授權、破壞性操作、migration、並行等）：優先處理不變量、對抗式案例、真實的整合或 runtime 證據，必要時準備復原方案。
 
-Choose the smallest set of checks that can detect distinct failure modes:
-
-| Evidence | Primary question |
-| --- | --- |
-| Typecheck, lint, static analysis | Does the change violate mechanical constraints? |
-| Unit or property-based tests grounded in requirements | Do isolated behaviors satisfy contracts and invariants? |
-| Integration tests with realistic dependencies | Do component boundaries behave correctly together? |
-| E2E or actual-runtime checks | Does the user-visible workflow work in the target environment? |
-| Fuzzing, mutation, fault injection, or adversarial probes | Can the check detect a realistic counterexample? |
-
-These are options, not a required checklist. Evaluate shared dependencies, fixtures, mocks, expected values, and assumptions across checks. Two agents using the same incorrect oracle are not independent merely because they are different agents; delegation is never required by this skill.
-
-### 4. Execute and challenge the evidence
-
-- Run checks appropriate to the risk, using the project's existing tooling. Preserve reproducible commands and observed results.
-- Where uncertainty or consequence justifies it, challenge a critical assumption with a counterexample, deliberately faulty variant, reordered response, or real dependency instead of just adding more happy-path tests.
-- If a check cannot run, fails, or yields ambiguous results, investigate or report the gap. Do not convert an unexecuted or inconclusive check into a pass.
-
-### 5. Report the supported conclusion
-
-Distinguish **observed evidence**, **inferences**, and **remaining unknowns**. Summarize:
-
-- The requirement or invariant checked, with its oracle/source.
-- Checks actually executed, their environment, and outcomes.
-- Important failure modes covered and whether tests/reviews rely on shared assumptions.
-- Material checks not executed, remaining risks, and any unresolved decision.
-
-Passing checks establish confidence only within the behavior and environment they cover. Do not claim general correctness, independent review, or complete validation without supporting evidence.
-
-## Proportionality
-
-- **Low risk:** inspect the diff and run existing relevant checks; normally no dedicated verification plan.
-- **Moderate risk:** confirm independent acceptance expectations, a focused regression or negative case, and affected integration boundaries.
-- **High risk (e.g., authorization, destructive operations, migrations, concurrency):** prioritize invariants, adversarial cases, realistic integration/runtime evidence, and a recovery strategy where relevant.
-
-Increase validation depth only when it targets a credible blind spot. If extra validation would repeat the same oracle without new detection capability, state that limitation instead of manufacturing more tests.
+只有在能補上一個可信的盲點時，才加深驗證。如果額外的驗證只是重複同一個判準、沒有新的偵測能力，就說明這個限制，不要硬湊更多測試。
