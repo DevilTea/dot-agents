@@ -4,18 +4,18 @@ Canonical sources：
 
 - [`instructions.md`](./instructions.md)：Antigravity-specific always-on guidance。
 - [`settings.json`](./settings.json)：dot-agents 管理的 Antigravity CLI settings subset。
-- 共通 preferences：[`../../preferences/`](../../preferences/)。
+- 共通規則：[`../../instructions/core.md`](../../instructions/core.md)。
 
 ## Sync model
 
-Antigravity global rules 位於 `~/.gemini/GEMINI.md`。`dot-agents sync` 依固定順序加入五份 Core 標記區段（communication、reasoning、decisions、shopping、engineering），再接上 Antigravity-specific guidance。研究與購物細則由 `evidence-research`、`product-research` Skills 按需載入。
+Antigravity global rules 位於 `~/.gemini/GEMINI.md`。`dot-agents sync` 先放 `instructions/core.md`，再接 Antigravity 專屬規則。研究與購物的詳細流程寫在 `evidence-research`、`product-research` skill，按需載入。
 
 Skills 路徑依 surface 不同：
 
 - IDE：`~/.gemini/config/skills/<name>/`
 - `agy` CLI：`~/.gemini/antigravity-cli/skills/<name>/`
 
-一般 Skills 以 directory copy materialize，兩個 Preferences 衍生 Skills 以生成 `SKILL.md` 的方式 materialize，均不使用 symlink。
+Skill 以 directory copy materialize，不使用 symlink。
 
 CLI settings 也不使用 symlink。已觀察到 `agy` 會以 temp-file + rename 類型的寫入方式把 `settings.json` symlink 換成一般檔，因此 symlink 不是穩定的 ownership boundary。現在 `dot-agents sync` 會把 canonical settings 與本機 `~/.config/dot-agents/overrides/antigravity-settings.json` 合成 managed values，再 merge 到現有 runtime JSON；unknown runtime keys 保留。`check` 只比較 managed keys，因此單純 key reorder 或額外 runtime state 不算 drift。
 

@@ -1,36 +1,44 @@
 ---
 name: zh-tw-writing
-description: Write, translate, localize, edit, or review substantial Taiwan Traditional Chinese text. Use for articles, posts, product or UX copy, documentation, announcements, and requests to remove formulaic AI writing or unnatural Mainland/translationese phrasing. Ordinary conversation already follows the always-on communication preferences; do not load the full guide for routine answers.
+description: 台灣繁體中文寫作、翻譯與編修的 SOP（Taiwan Traditional Chinese writing, translation, localization, copy editing）。只要產出或修改要給人看的中文文字就先載入：翻譯或在地化產品文字（UI 字串、README、公告、說明文件，不論長短）或超過一兩句的內容，撰寫或改寫文章、貼文、產品或 UX 文案、文件、公告、簡報文字，審稿或去除 AI 腔、中國用語、翻譯腔。使用者指出回覆的中文不自然、難讀或有翻譯腔時，也要載入並依參考檔修正。
 ---
 
-# Natural Taiwan Traditional Chinese Writing
+# 自然的台灣繁體中文寫作
 
-Help produce clear, idiomatic zh-TW text for the actual audience. This is an editing playbook, **not** an AI authorship detector or an unconditional word blacklist. The always-on rules in `preferences/communication.md` apply to *all* user-facing responses without this skill.
+為實際的讀者寫出清楚、道地的台灣繁體中文。這是一份編修流程，**不是** AI 寫作偵測器，也不是無條件的禁用詞清單。
 
-## Trigger / scope
+## 適用範圍
 
-Use for drafting or materially revising prose, localization, translation, tone review, or editorial consistency checks. For a brief everyday reply, answer directly under the global communication core; do not load the large references by default. Honor user-specified style, project terminology, and the original author's voice.
+- **對話：** 每一則中文回覆都由常駐指示的「中文表達」規則處理，那些規則是從這份 skill 的參考檔精選出來的，不需要為了日常回覆載入這個 skill。
+- **產出或修改文字：** 翻譯、在地化、撰寫或改寫要給人看的中文、審稿、用詞一致性檢查時，照下面的步驟做，並只讀需要的參考檔。
+- **使用者指出回覆的中文不好讀時：** 對照參考檔找出問題（翻譯腔、套話、用詞、標點），改寫那段回覆，之後的回覆照同樣的標準寫。
 
-## Workflow
+尊重使用者指定的風格、專案用詞和原作者的語氣。
 
-1. **Identify constraints.** Determine audience (technical or general), medium, intended tone, and repository or product glossary. Confirm which text is source material versus commentary. If the user only requests a translation, preserve its intent and degree of certainty.
-2. **Protect meaning first.** Retain facts, numbers, names, commands, paths, identifiers, direct quotes, legal qualifications, claims, and uncertainty. Do not invent evidence, personal anecdotes, or completed actions.
-3. **Localize with context.** Use natural Taiwan phrasing, not literal Simplified-to-Traditional conversion. Keep common English technical terms when Taiwan readers naturally use them (e.g. API, SDK, PR, commit); prefer established Taiwan translations where natural (e.g. 資料庫, 快取, 伺服器). Do not blindly substitute ambiguous words such as 質量, 程序, 函數, 文件, token, or deployment.
-4. **Reduce template language.** Remove hollow introductions/closings, false contrasts ("不是 X，而是 Y" without a useful distinction), repetitive praise, vague jargon, excess structure, and bureaucratic translationese. Preserve rhetorical figures that genuinely clarify the argument or match the requested voice.
-5. **Verify the rewrite.** Compare before and after for meaning, technical accuracy, terminology consistency, factual claims, tone, and readability. If the user requested an audit, give concrete findings and suggested edits; if the user requested a revised text, provide the revised text rather than only advice.
+## 步驟
 
-## Load only the relevant reference
+1. **確認限制。** 確認讀者（技術或一般）、媒介、語氣，以及 repository 或產品的詞彙表。分清楚哪些是原文、哪些是評論。使用者只要求翻譯時，保留原文的意圖和確定程度。
+2. **先保住意思。** 保留事實、數字、名稱、指令、路徑、識別字、直接引述、法律上的限定條件、主張和不確定性。不要編造證據、個人經歷或已完成的動作。
+3. **依脈絡在地化。** 用自然的台灣說法，不是逐字的簡轉繁。台灣讀者慣用的英文技術詞照用（例如 API、SDK、PR、commit）；已通行的台灣譯詞照用（例如資料庫、快取、伺服器）。有歧義的詞不要機械替換，例如質量、程序、函數、文件、token、deployment。
+4. **減少模板語言。** 刪掉空洞的開場和結語、沒有實質區分的假對比（「不是 X，而是 Y」）、重複的稱讚、模糊的術語、多餘的結構，以及公文式的翻譯腔。真正有助於論證、或符合要求語氣的修辭可以保留。
+5. **檢查改寫結果。** 對照改寫前後的意思、技術正確性、用詞一致性、事實主張、語氣和可讀性。使用者要的是審閱時，給具體的問題和修改建議；要的是改寫後的文字時，直接給改寫後的文字，不要只給建議。
 
-- Repetitive AI-styled rhetoric, boilerplate structure, marketing jargon, translationese: [references/ai-patterns.md](references/ai-patterns.md).
-- Taiwan everyday and software terminology, including exceptions: [references/taiwan-terminology.md](references/taiwan-terminology.md).
-- English terminology that is often better left untranslated in Taiwan: [references/english-terms.md](references/english-terms.md).
-- Hallucination checks, typography, editorial review order, model evidence limits, and sources: [references/quality-and-sources.md](references/quality-and-sources.md).
+## 只載入需要的參考檔
 
-The references retain **278 contextual Don't / Do examples** from the 2026-11-17 working guide. They are not categorical bans, and the model-comparison notes are limited by their source corpus. Do not promise measured quality improvements without a baseline or controlled evaluation.
+- 重複的 AI 式修辭、制式結構、行銷術語、翻譯腔：[references/ai-patterns.md](references/ai-patterns.md)。
+- 台灣日常和軟體用詞，包括例外：[references/taiwan-terminology.md](references/taiwan-terminology.md)。
+- 在台灣通常保留英文、不翻譯比較好的詞：[references/english-terms.md](references/english-terms.md)。
+- 幻覺檢查、標點排版、編修審閱順序、模型證據的限制和資料來源：[references/quality-and-sources.md](references/quality-and-sources.md)。
 
-## Completion criteria
+參考檔收錄了 2026-11-17 工作指南中的 **278 條依脈絡判斷的 Don't／Do 範例**。它們不是絕對的禁令，模型比較的註記也受限於原始語料。沒有 baseline 或對照評估時，不要承諾可量測的品質提升。
 
-- The result reads naturally to its intended Taiwanese audience.
-- Meaning, identifiers, verifiable claims, and uncertainty are preserved.
-- English terms and Taiwan translations follow audience and project convention.
-- Editorial suggestions are specific, not generic "AI-detector" claims.
+## 維護
+
+常駐指示的「中文表達」是這些參考檔的精選摘要。新增或修改參考檔裡影響很大的規則時，一併檢查常駐指示是否需要更新；常駐指示只放一行能講完的規則，範例和例外留在參考檔。
+
+## 完成條件
+
+- 結果對目標的台灣讀者來說讀起來自然。
+- 意思、識別字、可驗證的主張和不確定性都保留下來。
+- 英文術語和台灣譯詞依讀者和專案慣例處理。
+- 編修建議具體，不是籠統的「像 AI 寫的」判斷。

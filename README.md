@@ -2,9 +2,8 @@
 
 `dot-agents` 是個人 agent environment 的 source of truth。它集中保存：
 
-- portable communication, reasoning, decision, research, and shopping preferences
-- durable engineering principles
-- shared skills
+- 共通的常駐指示（溝通、判斷、決策與授權、工作方式、工程、購物資格）
+- 以 SOP 為主的 shared skills
 - harness-specific policies
 - harness-specific settings
 - 安裝與同步機制
@@ -14,8 +13,7 @@
 ## Architecture
 
 ```text
-                     shared preferences
-                     shared principles
+                  instructions/core.md
                              │
           ┌──────────────────┼──────────────────┐
           ▼                  ▼                  ▼
@@ -29,9 +27,15 @@
 
 共通層只描述穩定、可攜的 user intent。每個 harness 依自己的 instruction hierarchy、tools、permissions、planning 與 delegation 能力實作；共通層不反向依賴任何 harness。
 
-單向依賴：harness policy 可以引用 `preferences/`；`preferences/` 不知道任何 harness 的存在。
+單向依賴：harness policy 可以補充 `instructions/core.md`；core 不提任何特定 harness 的工具或機制。
 
-全域指示採 **Thin Core + On-demand Skills**：五份 Preferences 的明確 Core 區段每次載入，`research.md` 及 `shopping.md` 的深入內容生成 `evidence-research`、`product-research` Skills。詳見 [preferences/README.md](./preferences/README.md)。Skill 能否自動觸發由 Harness 決定；必要授權與商品資格限制仍在 Core。
+全域指示採 **常駐短規則 + SOP Skills**：
+
+- `instructions/core.md` 是手寫的共通常駐規則，一條規則一行，每次載入。就算沒有任何 skill 被觸發，必要的授權邊界和商品資格限制也照樣生效。
+- `harnesses/<harness>/` 的 policy 只寫該 harness 的機制和名稱對照，三份檔案使用同一套章節骨架：指示載入、規劃、提問、委派與模型、權限與執行。沒有對應機制的章節就省略。
+- 可重複的程序寫成 `skills/<name>/SKILL.md` 的 SOP，按需載入。
+
+所有自維護內容都是手寫的 Markdown，沒有產生器或第二份副本；每條規則只放在一個地方。自維護內容用台灣繁體中文撰寫，識別字保留英文。
 
 ## Repository layout
 
@@ -40,14 +44,8 @@
 ├── LICENSE
 ├── README.md
 ├── skills-lock.json
-├── preferences/
-│   ├── README.md
-│   ├── communication.md
-│   ├── reasoning.md
-│   ├── decisions.md
-│   ├── research.md
-│   ├── shopping.md
-│   └── engineering.md
+├── instructions/
+│   └── core.md
 ├── skills/
 │   ├── README.md
 │   └── <skill>/
@@ -66,8 +64,8 @@
     └── dot-agents.test.js
 ```
 
-- `preferences/` 是跨 harness 的可攜 intent，見 [preferences/README.md](./preferences/README.md)。
-- `skills/` 提供一般 global skill source，另外有兩個由 Preferences 衍生的 Skills，見 [skills/README.md](./skills/README.md)。
+- `instructions/core.md` 是跨 harness 的共通常駐規則。
+- `skills/` 是 global skill source，包括自維護的 SOP 和外部安裝的 skill，見 [skills/README.md](./skills/README.md)。
 - `optional-skills/` 是 project opt-in catalog，只記錄來源與安裝方式、不 vendor skill 內容，見 [optional-skills/README.md](./optional-skills/README.md)。
 - `harnesses/` 是不可攜的 policy 與 settings，各 harness 的載入依據與限制見 [harnesses/README.md](./harnesses/README.md)。
 - `lib/` 是 CLI 的實作：參數解析、plan、settings merge、transaction、doctor、各種檢視與互動選單。`scripts/dot-agents` 只是入口。
@@ -92,18 +90,18 @@ materialized harness files / directories
 
 | 安裝位置 | 同步方式 | 來源 |
 | --- | --- | --- |
-| `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | 五份 `preferences/` Core + `harnesses/codex/AGENTS.md` |
+| `$CODEX_HOME/AGENTS.md`（預設 `~/.codex`） | generate | `instructions/core.md` + `harnesses/codex/AGENTS.md` |
 | `$CODEX_HOME/config.toml` | managed TOML key merge | `harnesses/codex/config.toml` + local override + existing runtime config |
-| `~/.agents/skills/<name>` | copy / generate | `skills/<name>` 或由 Preferences 衍生的研究 Skills |
-| `$XDG_DATA_HOME/dot-agents/skill-projection/v1/skills/<name>` | copy / generate | runtime-eligible `skills/<name>` 與兩個衍生 Skills |
+| `~/.agents/skills/<name>` | copy | `skills/<name>` |
+| `$XDG_DATA_HOME/dot-agents/skill-projection/v1/skills/<name>` | copy | runtime-eligible `skills/<name>` |
 | `$XDG_DATA_HOME/dot-agents/skill-projection/v1/catalog.json` | generate | canonical skill frontmatter + tree digest |
-| `~/.claude/CLAUDE.md` | generate | 五份 `preferences/` Core + `harnesses/claude/CLAUDE.md` |
+| `~/.claude/CLAUDE.md` | generate | `instructions/core.md` + `harnesses/claude/CLAUDE.md` |
 | `~/.claude/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
-| `~/.claude/skills/<name>` | copy / generate | 一般 `skills/<name>` 與兩個衍生 Skills |
-| `~/.gemini/GEMINI.md` | generate | 五份 `preferences/` Core + `harnesses/antigravity/instructions.md` |
+| `~/.claude/skills/<name>` | copy | `skills/<name>` |
+| `~/.gemini/GEMINI.md` | generate | `instructions/core.md` + `harnesses/antigravity/instructions.md` |
 | `~/.gemini/antigravity-cli/settings.json` | managed JSON merge | canonical settings + local override + existing runtime state |
-| `~/.gemini/antigravity-cli/skills/<name>` | copy / generate | 一般 `skills/<name>` 與兩個衍生 Skills |
-| `~/.gemini/config/skills/<name>`（IDE） | copy / generate | 一般 `skills/<name>` 與兩個衍生 Skills |
+| `~/.gemini/antigravity-cli/skills/<name>` | copy | `skills/<name>` |
+| `~/.gemini/config/skills/<name>`（IDE） | copy | `skills/<name>` |
 
 ### Host-facing skill projection
 
@@ -134,7 +132,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/dot-agents/skill-projection/v1/
 }
 ```
 
-`skills` 依名稱排序；`hash` 是 deterministic skill tree digest，對一般 Skill 使用 Canonical Source 目錄，對衍生 Skill 則依生成的單一 `SKILL.md` 計算（格式相容）。一般 Skill 的 frontmatter `name`／`description` 在寫入前驗證，兩個衍生 Skill 的 metadata 由固定的程式定義生成。projection ownership 保存在 local sync state，移除 stale copies 時只處理 dot-agents 管理的 Skill。
+`skills` 依名稱排序；`hash` 是 canonical skill 目錄的 deterministic tree digest。Skill 的 frontmatter `name`／`description` 在寫入前驗證。projection ownership 保存在 local sync state，移除 stale copies 時只處理 dot-agents 管理的 Skill。
 
 Managed settings merge 的 precedence：
 
@@ -202,7 +200,7 @@ Plan 依 harness 分組：開頭一行是各 harness 的狀態，同一個 skill
 
 ### Skill 部署
 
-Sync 不下載 harness、不修改 project repository。一般 Skill 採完整 directory copy；Preferences 衍生的 Skill 使用原子寫入。Local sync state 記錄每個 surface 由 dot-agents 擁有的 skill，canonical skill 移除後，下一次 sync 只會移除這些 copy，不碰 harness 或使用者自己放的 skill；`dot-agents skills` 與 `doctor` 會列出這些不受管理的 skill，但不會刪除。即使沒有選取任何 harness，sync 仍會發布 host-facing skill projection。
+Sync 不下載 harness、不修改 project repository。Skill 採完整 directory copy。Local sync state 記錄每個 surface 由 dot-agents 擁有的 skill，canonical skill 移除後，下一次 sync 只會移除這些 copy，不碰 harness 或使用者自己放的 skill；`dot-agents skills` 與 `doctor` 會列出這些不受管理的 skill，但不會刪除。即使沒有選取任何 harness，sync 仍會發布 host-facing skill projection。
 
 `cmux`／`cmux-*`、`gh`、`agent-browser` skill 只在對應 executable 存在於 `PATH` 時部署（只靠 `npx agent-browser` 執行時不算）。Runtime 不可用時，plan 會以 `SKIP` 列出被略過的 skill，先前部署過的 copy 也會依 ownership state 移除；runtime 恢復後重新 sync 即可。
 
@@ -249,17 +247,17 @@ node --test tests/dot-agents.test.js
 
 ## 日常操作
 
-**修改 Canonical Preferences 與衍生 Skills**
-編輯 `preferences/*.md`，再執行 `dot-agents check`／`dot-agents sync`。只有標記的 Core 進入三套全域指示；研究與購物的詳細內容更新相應 Skill。其他四份規則的 Core 外詳述已明確標記為 `Detailed reference (not deployed)`：單獨修改該段不會影響 Runtime 或觸發 drift。欲讓規則生效，請修改 Core 或經核准後建立適當的 Skill。
+**修改共通常駐規則**
+編輯 `instructions/core.md`，再執行 `dot-agents check`／`dot-agents sync`。三份全域指示都會更新。只有每次都必須套用的短規則放這裡；程序寫成 skill。`tests/dot-agents.test.js` 會檢查幾條關鍵規則（語言、授權、購物資格、驗證）還在 core 裡，改寫時如果刻意改變措辭，要一起更新測試的 pattern。
 
 **改某個 harness 的 policy**
-編輯 `harnesses/<harness>/AGENTS.md`／`CLAUDE.md`／`instructions.md`，再執行 `dot-agents check`／`dot-agents sync`。只影響該 harness。
+編輯 `harnesses/<harness>/AGENTS.md`／`CLAUDE.md`／`instructions.md`，再執行 `dot-agents check`／`dot-agents sync`。只影響該 harness。只寫該 harness 的機制，並沿用共同的章節骨架；三個 harness 都適用的規則改寫進 core。
 
 **改某個 harness 的 settings**
 編輯 `harnesses/<harness>/settings.json` 後執行 `dot-agents sync`；canonical source 不會直接連到 runtime。單機差異放 `~/.config/dot-agents/overrides/`。從 canonical 刪除的 key，下一次 sync 也會從 runtime 移除（值被改過的除外，見 Sync model）。
 
 **新增自己撰寫的 skill**
-建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），再執行 `dot-agents sync` materialize 到各 harness。撰寫與稽核流程見 `maintain-skill` skill。
+建立 `skills/<name>/SKILL.md`（references、scripts、assets 為附屬資源），用台灣繁體中文寫成 SOP，再執行 `dot-agents sync` materialize 到各 harness。撰寫準則和驗證流程見 `maintain-skill` skill。
 
 若 skill 只支援特定 harness，可在 skill 目錄放置 repository-private 的 `dot-agents.json`，例如 `{"version": 1, "targets": ["codex", "claude"]}`。未指定 target 的 skill 維持部署到所有已選 harness；target-restricted skill 不會部署到未列出的 harness，既有且由 dot-agents 管理的 stale copy 也會在下一次 sync 清理。
 
@@ -276,7 +274,7 @@ npx skills add <source> --skill <name> --agent openclaw --copy -y
 
 不要手改外部 skill 的內容或 lockfile —— 下次更新會覆蓋。lockfile 的 `skillPath` 記錄的是 **來源 repository 內** 的路徑，不是本地路徑；本地位置一律是 `skills/<name>/`。兩個已知 CLI 行為：一次指令不接受逗號分隔的多個 skill 名稱，需逐一指定；lockfile 若殘留已不存在的 orphan entry，只能手動編輯移除。
 
-一般 Skills 以 `skills-lock.json` 辨識外部來源，其餘 Repository `skills/` 內容為本地撰寫；兩個由 Preferences 產生的研究 Skill 則不屬於上述任何實體來源目錄。
+`skills-lock.json` 裡有記錄的是外部 skill，其餘 `skills/` 內容是自維護的。
 
 **移除 skill**
 刪除 `skills/<name>/`（外部來源者一併處理 lockfile entry）。曾由 dot-agents sync 管理的 deployment copy 會由 local ownership state 辨識，下一次 `sync` 自動移除。
@@ -288,10 +286,7 @@ npx skills add <source> --skill <name> --agent openclaw --copy -y
 
 | 類型 | 可攜性 |
 | --- | --- |
-| communication and reasoning preferences | 高 |
-| decisions and research principles | 中高 |
-| shopping preferences (relevant physical-product tasks) | 中高 |
-| engineering principles | 中高 |
+| 共通常駐規則（`instructions/core.md`） | 高 |
 | skill semantics | 中高 |
 | skill invocation | 不保證 |
 | harness policy | 不可攜 |
@@ -305,7 +300,8 @@ Project-local instructions 可以補充或覆蓋個人偏好。實際 precedence
 
 - 共通溝通、推理、決策、研究、購物偏好與工程原則拆到 `preferences/`；execution、tool-specific interaction、model routing 等依 harness 能力拆到 `harnesses/<harness>/`。
 - `scripts/setup-claude.sh` 曾由多 harness `scripts/setup.sh` 取代；目前以 `dot-agents setup` 作為 bootstrap，日常則使用 explicit `dot-agents check`／`dot-agents sync`。
-- 所有 harness deployment 都不再 symlink 回 repository；Always-on instructions 從精簡 Core 生成，一般 Skills 採 directory copy，衍生 Skills 採 file generation，mutable JSON settings 採 managed merge。
+- 所有 harness deployment 都不再 symlink 回 repository；Always-on instructions 由 core 加上 harness policy 生成，Skills 採 directory copy，mutable JSON settings 採 managed merge。
+- 2026-11 把六份 `preferences/`（Core 標記、未部署的 Detailed reference，以及由程式產生的兩個研究 skill）整併成手寫的 `instructions/core.md` 加上 SOP skills；自維護內容改用台灣繁體中文，三份 harness policy 統一章節骨架。
 - `clean-backups.sh` 與 `doctor.sh` 併入 `dot-agents backups`／`dot-agents doctor`；CLI 拆成 `lib/` 模組，介面改為繁中，並加入互動選單、`status`、`skills` 與 `harness` 指令。Sync 開始記錄自己寫入的內容，canonical 刪除的 key 與停止管理的 harness 會依紀錄清理。
 - Pi CLI 與 Node.js extension 不恢復；目前 `dot-agents` 只是 repository-local sync CLI，不是 agent framework 或發布套件。
 

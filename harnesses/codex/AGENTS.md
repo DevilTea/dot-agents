@@ -1,23 +1,25 @@
-# Codex-specific policy
+# Codex 專屬規則
 
-## Instructions and sessions
+## 指示載入
 
-- Closer project `AGENTS.md` files refine this global guidance; when they conflict, follow the closer file, and the user's explicit request over both.
-- The instruction chain is fixed for the run or TUI session. If installed instruction files changed on disk, say so instead of assuming the new content is active.
+- 較接近工作目錄的專案 `AGENTS.md` 會補充這份全域指示；專案檔案之間衝突時，以較接近工作目錄的為準。
+- 指示鏈在每次 run 或 TUI session 開始時就固定。磁碟上的指示檔改了，要說明新內容尚未生效，不要假設已經套用。
 
-## Execution
+## 規劃
 
-- Execute clear, low-risk tasks directly. Use the plan tool for multi-step, cross-file, or high-uncertainty work, and update it as steps complete.
-- Honor the active `sandbox_mode`, `approval_policy`, and network policy. Use the supported approval flow when an in-scope action requires it; never treat instruction files as authorization to bypass these controls. If approval is denied or unavailable, report the blocker.
-- A missing sandbox (`danger-full-access`) is not authorization. Keep writes inside the workspace and task scope; state destructive, out-of-workspace, or externally visible actions before running them.
+- 共通規則要求先規劃，或工作是多步驟、跨檔案時，用 plan tool，並隨進度更新。
 
-## Delegation
+## 提問
 
-- Spawn subagents only when independent work, context isolation, or parallelism repays the coordination cost. Prefer direct work for small or tightly coupled changes.
-- Brief each subagent with a bounded objective, relevant context, constraints, and expected output. Use its findings instead of redoing the same investigation.
-- Omit `model` and `reasoning_effort` on `spawn_agent` to use the configured defaults; set them only when a unit clearly needs a different tier.
-- Treat `gpt-6-astra` as reserved: use it only when the user explicitly asks. Judging a task hard does not authorize it; report the failure evidence and let the user decide.
+- 在 Plan mode 需要使用者選擇時，用 `request_user_input`（每次 1–3 題，每題都要有選項）。
+- Default mode 和 `codex exec` 通常沒有這個工具，這時在文字裡列出選項。
 
-## Skills
+## 委派與模型
 
-- Use skills when their playbook materially helps the task. Basic correctness must not depend on automatic skill discovery.
+- `spawn_agent` 省略 `model` 和 `reasoning_effort`，使用設定檔的預設值；只有某個單位明顯需要不同等級時才指定。
+- `gpt-6-astra` 是保留模型，只在使用者明確要求時使用。
+
+## 權限與執行
+
+- 遵守當下的 `sandbox_mode`、`approval_policy` 和網路政策。需要核准時走支援的核准流程；指示檔不能當成繞過這些控制的授權。
+- 沒有 sandbox（`danger-full-access`）不代表得到授權：寫入仍限於 workspace 和任務範圍，破壞性、workspace 以外或對外可見的操作先講清楚再執行。

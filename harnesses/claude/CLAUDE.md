@@ -1,28 +1,17 @@
-# Claude Code-specific policy
+# Claude Code 專屬規則
 
-## Choosing a workflow
+## 規劃
 
-- Execute clear, low-risk, reversible tasks directly.
-- Use plan mode when the task has meaningful sequencing, architectural choices, permission-sensitive operations, or unclear acceptance criteria. Do not require it for routine work.
-- Preserve unrelated user changes in the working tree.
-- Multi-agent orchestration requires the user's explicit opt-in and cannot be self-authorized. When a task genuinely warrants it — wide independent fan-out, adversarial verification, or scale one context cannot hold — say so, outline the shape and rough cost, and let the user decide. Do not silently downgrade such a task to a single-agent pass.
+- 共通規則要求先規劃時，用 plan mode；例行工作不用。
 
-## Delegation and skills
+## 提問
 
-- Delegate only when independent work, context isolation, or parallelism is likely to repay the coordination cost.
-- Do not require delegation for every task. Prefer direct work for small or tightly coupled changes.
-- Brief subagents with a bounded objective, relevant context, constraints, and expected output. Use their findings instead of redoing the same investigation without new evidence.
-- Use skills when their playbook materially helps the task. Basic correctness must not depend on automatic skill discovery.
+- 需要使用者選擇時，用 `AskUserQuestion`。
+- 在 plan mode 裡，用 `ExitPlanMode` 請使用者核准計畫，不要用 `AskUserQuestion` 問「這樣可以嗎」。
 
-## Model selection
+## 委派與模型
 
-- Reserve the top tier (`fable`) for orchestration — planning, decomposition, cross-agent integration, final synthesis — and for hard research the user has explicitly asked it to handle. Do not use it for implementation, review, search, mechanical edits, or documentation.
-- Do not self-authorize a top-tier escalation. When a unit looks harder than its assigned tier, attempt it at that tier; if it fails, report the evidence and let the user decide whether to escalate.
-- Subagents and workflow agents inherit the main session's model when the `model` option is omitted. Whenever the main session runs a tier above the delegated task class, set `model` explicitly on every delegated unit — an omitted option silently runs the entire fan-out at the session's tier.
-- Default delegated work to Opus with effort matched to the task; use Haiku only for low-judgment search and reporting; do not use Sonnet.
-- Take model, effort, agent type and brief contents from the `delegation-presets` skill rather than from memory.
-
-## Tools and permissions
-
-- Prefer parallel tool calls only for independent read-only or safely isolated work.
-- Respect the active permission model. Make permission-sensitive or destructive actions visible and obtain approval where required.
+- 最高階的 `fable` 只用於編排（規劃、拆解、整合多個 agent 的結果、最終彙整），以及使用者明確指派的困難研究；不要用在實作、review、搜尋、機械性修改或文件。`fable` 只作為主 session 執行，不要把任何委派單位設成 `fable`。
+- 每個 subagent 和 workflow agent 都明確設定 `model`。沒有指定時會繼承主 session 的模型，從 `fable` session 派出的整批 fan-out 就會全部用 `fable` 執行。
+- 委派的工作預設用 Opus，effort 依任務調整；Haiku 只用於低判斷的搜尋和回報；不使用 Sonnet。
+- model、effort、agent type 和 brief 內容依 `delegation-presets` skill 設定，不要憑記憶。
