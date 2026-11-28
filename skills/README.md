@@ -19,7 +19,7 @@
 | `evidence-research` | 多來源研究與證據評估 |
 | `product-research` | 實體商品選購研究 |
 | `delegation-presets` | Claude Code 的委派預設（只部署到 Claude Code） |
-| `zh-tw-writing` | 台灣繁體中文寫作與編修，附 278 條 Don't／Do 範例 |
+| `zh-tw-writing` | 台灣繁體中文寫作與編修，附 279 條 Don't／Do 範例 |
 | `maintain-skill` | 建立、審查與驗證 skill |
 
 ## Portability notes
