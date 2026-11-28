@@ -242,7 +242,7 @@ test("harness policies share one section skeleton and name their question tool",
   }
 });
 
-test("Taiwan Chinese rules are always-on while 278 editorial examples stay on-demand", () => {
+test("Taiwan Chinese rules are always-on while 279 editorial examples stay on-demand", () => {
   const core = coreInstructions(SOURCE_REPO);
   assert.match(core, /所有對使用者的回覆.*日常對話/);
   assert.match(core, /API、SDK、PR、commit/);
@@ -267,7 +267,7 @@ test("Taiwan Chinese rules are always-on while 278 editorial examples stay on-de
       seen.add(id);
     }
   }
-  assert.equal(seen.size, 278);
+  assert.equal(seen.size, 279);
 
   const fixture = makeFixture();
   try {
